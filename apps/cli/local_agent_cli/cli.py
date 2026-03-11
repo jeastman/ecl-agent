@@ -66,6 +66,9 @@ def send_rpc(command: list[str], request: JsonRpcRequest) -> dict[str, Any]:
         capture_output=True,
         check=False,
     )
+    if completed.stderr:
+        sys.stderr.write(completed.stderr)
+        sys.stderr.flush()
     if completed.returncode != 0:
         stderr = completed.stderr.strip()
         raise RuntimeClientError(
@@ -103,7 +106,8 @@ def handle_health(config_path: str) -> int:
     )
     print(
         f"identity={result['identity']['path']} "
-        f"hash={result['identity']['sha256'][:12]} transport={result['transport']}"
+        f"hash={result['identity']['sha256'][:12]} transport={result['transport']} "
+        f"protocol={result['protocol_version']}"
     )
     return 0
 
@@ -127,7 +131,7 @@ def handle_submit(
         f"task_id={result['task']['task_id']} status={result['task']['status']} "
         f"correlation_id={result['correlation_id']}"
     )
-    print(f"message={result['message']}")
+    print(f"message={result['message']} protocol={result['protocol_version']}")
     return 0
 
 

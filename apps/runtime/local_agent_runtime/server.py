@@ -8,17 +8,23 @@ from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
 from packages.observability.local_agent_observability.logging import emit_event, log_record
 from packages.protocol.local_agent_protocol.models import (
+    EventSource,
+    EventSourceKind,
     EventEnvelope,
     JsonRpcError,
     JsonRpcRequest,
     JsonRpcResponse,
+    PROTOCOL_VERSION,
     RuntimeHealthResult,
+    RuntimeEvent,
     TaskSubmitParams,
     TaskSubmitResult,
+    utc_now_timestamp,
 )
 from packages.task_model.local_agent_task_model.ids import new_event_id, new_run_id, new_task_id
 from packages.task_model.local_agent_task_model.models import (
     ActionDescriptor,
+    EventType,
     TaskSnapshot,
     TaskStatus,
 )
@@ -93,6 +99,7 @@ class RuntimeServer:
 
     def runtime_health(self, correlation_id: str | None) -> RuntimeHealthResult:
         return RuntimeHealthResult(
+            protocol_version=PROTOCOL_VERSION,
             runtime_name=self.config.runtime.name,
             runtime_version="0.1.0",
             status="ok",
@@ -124,15 +131,38 @@ class RuntimeServer:
             ],
         )
 
-        event = EventEnvelope(
-            event_id=new_event_id(),
-            event_type="task.accepted",
-            correlation_id=correlation_id,
-            task_id=task.task_id,
-            run_id=task.run_id,
-            payload=task.to_dict(),
+        source = EventSource(
+            kind=EventSourceKind.RUNTIME,
+            component="task-orchestration",
         )
-        emit_event(event)
+        emit_event(
+            RuntimeEvent(
+                event=EventEnvelope(
+                    event_id=new_event_id(),
+                    event_type=EventType.TASK_CREATED.value,
+                    timestamp=utc_now_timestamp(),
+                    correlation_id=correlation_id,
+                    task_id=task.task_id,
+                    run_id=task.run_id,
+                    source=source,
+                    payload={"status": TaskStatus.CREATED.value, "objective": task.objective},
+                )
+            )
+        )
+        emit_event(
+            RuntimeEvent(
+                event=EventEnvelope(
+                    event_id=new_event_id(),
+                    event_type=EventType.TASK_ACCEPTED.value,
+                    timestamp=utc_now_timestamp(),
+                    correlation_id=correlation_id,
+                    task_id=task.task_id,
+                    run_id=task.run_id,
+                    source=source,
+                    payload=task.to_dict(),
+                )
+            )
+        )
         log_record(
             level="info",
             message="task accepted",
@@ -142,6 +172,7 @@ class RuntimeServer:
         )
 
         return TaskSubmitResult(
+            protocol_version=PROTOCOL_VERSION,
             correlation_id=correlation_id,
             message="Task accepted by runtime shell. Execution remains stubbed in Milestone 0.",
             task=task,

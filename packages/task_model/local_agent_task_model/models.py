@@ -5,6 +5,15 @@ from enum import StrEnum
 from typing import Any
 
 
+class EventType(StrEnum):
+    TASK_CREATED = "task.created"
+    TASK_ACCEPTED = "task.accepted"
+    TASK_STARTED = "task.started"
+    TASK_FAILED = "task.failed"
+    TASK_COMPLETED = "task.completed"
+    RUNTIME_WARNING = "runtime.warning"
+
+
 class TaskStatus(StrEnum):
     CREATED = "created"
     ACCEPTED = "accepted"

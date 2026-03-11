@@ -1,9 +1,44 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
+from datetime import UTC, datetime
+from enum import StrEnum
 from typing import Any
 
 from packages.task_model.local_agent_task_model.models import TaskSnapshot
+
+PROTOCOL_VERSION = "1.0.0"
+
+
+def utc_now_timestamp() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+class EventSourceKind(StrEnum):
+    RUNTIME = "runtime"
+    SUBAGENT = "subagent"
+    TOOL = "tool"
+    SANDBOX = "sandbox"
+    MEMORY = "memory"
+    POLICY = "policy"
+
+
+@dataclass(slots=True)
+class EventSource:
+    kind: EventSourceKind
+    name: str | None = None
+    role: str | None = None
+    component: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {"kind": self.kind.value}
+        if self.name is not None:
+            payload["name"] = self.name
+        if self.role is not None:
+            payload["role"] = self.role
+        if self.component is not None:
+            payload["component"] = self.component
+        return payload
 
 
 @dataclass(slots=True)
@@ -113,17 +148,36 @@ class TaskSubmitParams:
 class EventEnvelope:
     event_id: str
     event_type: str
+    timestamp: str
     correlation_id: str | None
     task_id: str | None
     run_id: str | None
+    source: EventSource
     payload: dict[str, Any]
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        payload["source"] = self.source.to_dict()
+        return payload
+
+
+@dataclass(slots=True)
+class RuntimeEvent:
+    event: EventEnvelope
+    type: str = "runtime.event"
+    protocol_version: str = PROTOCOL_VERSION
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "type": self.type,
+            "protocol_version": self.protocol_version,
+            "event": self.event.to_dict(),
+        }
 
 
 @dataclass(slots=True)
 class RuntimeHealthResult:
+    protocol_version: str
     runtime_name: str
     runtime_version: str
     status: str
@@ -137,6 +191,7 @@ class RuntimeHealthResult:
 
 @dataclass(slots=True)
 class TaskSubmitResult:
+    protocol_version: str
     correlation_id: str | None
     message: str
     task: TaskSnapshot | dict[str, Any]
