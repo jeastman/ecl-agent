@@ -7,44 +7,58 @@ from typing import Any
 
 class EventType(StrEnum):
     TASK_CREATED = "task.created"
-    TASK_ACCEPTED = "task.accepted"
     TASK_STARTED = "task.started"
-    TASK_FAILED = "task.failed"
+    PLAN_UPDATED = "plan.updated"
+    SUBAGENT_STARTED = "subagent.started"
+    TOOL_CALLED = "tool.called"
+    ARTIFACT_CREATED = "artifact.created"
     TASK_COMPLETED = "task.completed"
-    RUNTIME_WARNING = "runtime.warning"
+    TASK_FAILED = "task.failed"
 
 
 class TaskStatus(StrEnum):
     CREATED = "created"
     ACCEPTED = "accepted"
-    RUNNING = "running"
-    AWAITING_APPROVAL = "awaiting_approval"
+    PLANNING = "planning"
+    EXECUTING = "executing"
     COMPLETED = "completed"
     FAILED = "failed"
-    CANCELLED = "cancelled"
 
 
 @dataclass(slots=True)
-class ActionDescriptor:
-    action: str
-    label: str
-    description: str
+class FailureInfo:
+    message: str
+    code: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        payload = asdict(self)
+        if self.code is None:
+            payload.pop("code")
+        return payload
 
 
 @dataclass(slots=True)
-class TaskSnapshot:
+class RunState:
     task_id: str
     run_id: str
     status: TaskStatus
     objective: str
+    created_at: str
+    updated_at: str
+    accepted_at: str
+    workspace_roots: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
-    available_actions: list[ActionDescriptor] = field(default_factory=list)
+    current_phase: str | None = None
+    latest_summary: str | None = None
+    artifact_count: int = 0
+    last_event_at: str | None = None
+    failure: FailureInfo | None = None
+    links: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         payload = asdict(self)
         payload["status"] = self.status.value
+        if self.failure is not None:
+            payload["failure"] = self.failure.to_dict()
         return payload

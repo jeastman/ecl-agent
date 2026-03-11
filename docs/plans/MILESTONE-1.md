@@ -338,6 +338,20 @@ inspect artifact
 
 # 15. Next Milestone
 
+---
+
+# 16. Phased Delivery Plan
+
+Milestone 1 should be executed in phases so the team can validate architecture seams incrementally instead of attempting the full vertical slice in one step.
+
+Phase documents:
+
+- [Phase 1 — Runtime Contracts and Task Orchestration Skeleton](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-1.phase-1.md)
+- [Phase 2 — Sandbox and Artifact Infrastructure](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-1.phase-2.md)
+- [Phase 3 — Agent Harness Integration and Reference Task Execution](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-1.phase-3.md)
+- [Phase 4 — CLI Streaming and Inspection Workflows](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-1.phase-4.md)
+- [Phase 5 — Stabilization, Acceptance, and Documentation Closure](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-1.phase-5.md)
+
 Milestone 2 introduces:
 
 durable project memory  

@@ -10,7 +10,10 @@ from typing import Any
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcError,
     JsonRpcRequest,
-    TaskSubmitParams,
+    METHOD_RUNTIME_HEALTH,
+    METHOD_TASK_CREATE,
+    TaskCreateParams,
+    TaskCreateRequest,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
 
@@ -31,8 +34,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("health", help="Check runtime health.")
 
-    submit = subparsers.add_parser("submit", help="Submit a task stub.")
+    submit = subparsers.add_parser("submit", help="Create a task through the runtime.")
     submit.add_argument("objective", help="Task objective.")
+    submit.add_argument(
+        "--workspace-root",
+        action="append",
+        default=[],
+        help="Workspace root the runtime should associate with the task.",
+    )
     submit.add_argument(
         "--constraint",
         action="append",
@@ -93,7 +102,7 @@ def send_rpc(command: list[str], request: JsonRpcRequest) -> dict[str, Any]:
 
 def handle_health(config_path: str) -> int:
     request = JsonRpcRequest(
-        method="runtime.health",
+        method=METHOD_RUNTIME_HEALTH,
         params={},
         id="1",
         correlation_id=new_correlation_id(),
@@ -113,14 +122,21 @@ def handle_health(config_path: str) -> int:
 
 
 def handle_submit(
-    config_path: str, objective: str, constraints: list[str], success_criteria: list[str]
+    config_path: str,
+    objective: str,
+    workspace_roots: list[str],
+    constraints: list[str],
+    success_criteria: list[str],
 ) -> int:
     request = JsonRpcRequest(
-        method="task.submit",
-        params=TaskSubmitParams(
-            objective=objective,
-            constraints=constraints,
-            success_criteria=success_criteria,
+        method=METHOD_TASK_CREATE,
+        params=TaskCreateParams(
+            task=TaskCreateRequest(
+                objective=objective,
+                workspace_roots=workspace_roots,
+                constraints=constraints,
+                success_criteria=success_criteria,
+            )
         ).to_dict(),
         id="1",
         correlation_id=new_correlation_id(),
@@ -128,10 +144,10 @@ def handle_submit(
     payload = send_rpc(runtime_command(config_path), request)
     result = payload["result"]
     print(
-        f"task_id={result['task']['task_id']} status={result['task']['status']} "
+        f"task_id={result['task_id']} run_id={result['run_id']} status={result['status']} "
         f"correlation_id={result['correlation_id']}"
     )
-    print(f"message={result['message']} protocol={result['protocol_version']}")
+    print(f"accepted_at={result['accepted_at']}")
     return 0
 
 
@@ -147,6 +163,7 @@ def main(argv: list[str] | None = None) -> int:
             return handle_submit(
                 config_path=config_path,
                 objective=args.objective,
+                workspace_roots=args.workspace_root,
                 constraints=args.constraint,
                 success_criteria=args.success_criteria,
             )
