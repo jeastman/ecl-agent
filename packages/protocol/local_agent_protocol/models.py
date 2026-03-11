@@ -119,7 +119,9 @@ class JsonRpcResponse:
         if self.error is not None:
             payload["error"] = self.error.to_dict()
         else:
-            payload["result"] = self.result.to_dict() if hasattr(self.result, "to_dict") else self.result
+            payload["result"] = (
+                self.result.to_dict() if hasattr(self.result, "to_dict") else self.result
+            )
         return payload
 
 
@@ -151,13 +153,17 @@ class TaskCreateRequest:
             isinstance(item, str) and item.strip() for item in workspace_roots
         ):
             raise ValueError("task.workspace_roots must be a list of non-empty strings")
+        if not workspace_roots:
+            raise ValueError("task.create requires task.workspace_roots")
         if not isinstance(scope, list) or not all(isinstance(item, str) for item in scope):
             raise ValueError("task.scope must be a list of strings")
         if not isinstance(success_criteria, list) or not all(
             isinstance(item, str) for item in success_criteria
         ):
             raise ValueError("task.success_criteria must be a list of strings")
-        if not isinstance(constraints, list) or not all(isinstance(item, str) for item in constraints):
+        if not isinstance(constraints, list) or not all(
+            isinstance(item, str) for item in constraints
+        ):
             raise ValueError("task.constraints must be a list of strings")
         if not isinstance(allowed_capabilities, list) or not all(
             isinstance(item, str) for item in allowed_capabilities

@@ -19,5 +19,9 @@ def new_event_id() -> str:
     return _new_id("evt")
 
 
+def new_artifact_id() -> str:
+    return _new_id("artifact")
+
+
 def new_correlation_id() -> str:
     return _new_id("corr")

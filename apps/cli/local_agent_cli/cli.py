@@ -128,12 +128,13 @@ def handle_submit(
     constraints: list[str],
     success_criteria: list[str],
 ) -> int:
+    resolved_workspace_roots = workspace_roots or [str(Path.cwd())]
     request = JsonRpcRequest(
         method=METHOD_TASK_CREATE,
         params=TaskCreateParams(
             task=TaskCreateRequest(
                 objective=objective,
-                workspace_roots=workspace_roots,
+                workspace_roots=resolved_workspace_roots,
                 constraints=constraints,
                 success_criteria=success_criteria,
             )
@@ -145,7 +146,7 @@ def handle_submit(
     result = payload["result"]
     print(
         f"task_id={result['task_id']} run_id={result['run_id']} status={result['status']} "
-        f"correlation_id={result['correlation_id']}"
+        f"correlation_id={payload['correlation_id']}"
     )
     print(f"accepted_at={result['accepted_at']}")
     return 0

@@ -58,20 +58,46 @@ class RuntimeServer:
 
         try:
             if request.method == METHOD_RUNTIME_HEALTH:
-                result = self.handlers.runtime_health(correlation_id)
-                return JsonRpcResponse(id=request.id, correlation_id=correlation_id, result=result), []
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.runtime_health(correlation_id),
+                    ),
+                    [],
+                )
             if request.method == METHOD_TASK_CREATE:
-                result = self.handlers.task_create(request.params, correlation_id)
-                return JsonRpcResponse(id=request.id, correlation_id=correlation_id, result=result), []
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_create(request.params, correlation_id),
+                    ),
+                    [],
+                )
             if request.method == METHOD_TASK_GET:
-                result = self.handlers.task_get(request.params)
-                return JsonRpcResponse(id=request.id, correlation_id=correlation_id, result=result), []
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_get(request.params),
+                    ),
+                    [],
+                )
             if request.method == METHOD_TASK_ARTIFACTS_LIST:
-                result = self.handlers.task_artifacts_list(request.params)
-                return JsonRpcResponse(id=request.id, correlation_id=correlation_id, result=result), []
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_artifacts_list(request.params),
+                    ),
+                    [],
+                )
             if request.method == METHOD_TASK_LOGS_STREAM:
                 result, events = self.handlers.task_logs_stream(request.params)
-                return JsonRpcResponse(id=request.id, correlation_id=correlation_id, result=result), events
+                return JsonRpcResponse(
+                    id=request.id, correlation_id=correlation_id, result=result
+                ), events
             return (
                 JsonRpcResponse(
                     id=request.id,

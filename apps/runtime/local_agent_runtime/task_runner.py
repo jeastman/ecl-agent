@@ -15,7 +15,16 @@ from packages.protocol.local_agent_protocol.models import (
     utc_now_timestamp,
 )
 from packages.task_model.local_agent_task_model.ids import new_event_id, new_run_id, new_task_id
-from packages.task_model.local_agent_task_model.models import EventType, FailureInfo, RunState, TaskStatus
+from packages.task_model.local_agent_task_model.models import (
+    EventType,
+    FailureInfo,
+    RunState,
+    TaskStatus,
+)
+from services.sandbox_service.local_agent_sandbox_service.sandbox import (
+    ExecutionSandbox,
+    LocalExecutionSandboxFactory,
+)
 
 
 @dataclass(slots=True)
@@ -25,6 +34,7 @@ class AgentExecutionRequest:
     objective: str
     workspace_roots: list[str]
     identity_bundle_text: str
+    sandbox: ExecutionSandbox
     allowed_capabilities: list[str]
     metadata: dict[str, Any]
     constraints: list[str] = field(default_factory=list)
@@ -44,14 +54,22 @@ class AgentHarness(Protocol):
         self,
         request: AgentExecutionRequest,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
-    ) -> AgentExecutionResult:
-        ...
+    ) -> AgentExecutionResult: ...
 
 
 class StubAgentHarness:
-    def __init__(self, *, success: bool = True, summary: str | None = None) -> None:
+    def __init__(
+        self,
+        *,
+        success: bool = True,
+        summary: str | None = None,
+        output_artifact_path: str | None = None,
+        output_artifact_content: str = "# Runtime Artifact\n",
+    ) -> None:
         self._success = success
         self._summary = summary
+        self._output_artifact_path = output_artifact_path
+        self._output_artifact_content = output_artifact_content
 
     def execute(
         self,
@@ -59,8 +77,18 @@ class StubAgentHarness:
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> AgentExecutionResult:
         if self._success:
+            output_artifacts: list[str] = []
+            if self._output_artifact_path is not None:
+                request.sandbox.write_text(
+                    self._output_artifact_path, self._output_artifact_content
+                )
+                output_artifacts.append(request.sandbox.normalize_path(self._output_artifact_path))
             summary = self._summary or "Stub harness completed without external execution."
-            return AgentExecutionResult(success=True, summary=summary, output_artifacts=[])
+            return AgentExecutionResult(
+                success=True,
+                summary=summary,
+                output_artifacts=output_artifacts,
+            )
         summary = self._summary or "Stub harness failed before external execution."
         return AgentExecutionResult(
             success=False,
@@ -76,11 +104,13 @@ class TaskRunner:
         run_state_store: RunStateStore,
         event_bus: EventBus,
         artifact_store: ArtifactStore,
+        sandbox_factory: LocalExecutionSandboxFactory,
         agent_harness: AgentHarness,
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
         self._artifact_store = artifact_store
+        self._sandbox_factory = sandbox_factory
         self._agent_harness = agent_harness
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
 
@@ -145,6 +175,11 @@ class TaskRunner:
             payload={"status": TaskStatus.EXECUTING.value, "started_at": started_at},
         )
 
+        sandbox = self._sandbox_factory.for_run(
+            task_id=task_id,
+            run_id=run_id,
+            workspace_roots=workspace_roots,
+        )
         result = self._agent_harness.execute(
             AgentExecutionRequest(
                 task_id=task_id,
@@ -152,12 +187,38 @@ class TaskRunner:
                 objective=objective,
                 workspace_roots=list(workspace_roots),
                 identity_bundle_text=identity_bundle_text,
+                sandbox=sandbox,
                 allowed_capabilities=list(allowed_capabilities or []),
                 metadata=dict(metadata or {}),
                 constraints=list(constraints or []),
                 success_criteria=list(success_criteria or []),
             )
         )
+
+        artifact_count = 0
+        for sandbox_path in result.output_artifacts:
+            artifact = self._artifact_store.register_artifact(
+                task_id=task_id,
+                run_id=run_id,
+                sandbox_path=sandbox_path,
+            )
+            artifact_count += 1
+            registered_at = utc_now_timestamp()
+            self._run_state_store.update(
+                task_id,
+                run_id,
+                updated_at=registered_at,
+                artifact_count=artifact_count,
+                last_event_at=registered_at,
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.ARTIFACT_CREATED.value,
+                timestamp=registered_at,
+                payload={"artifact": artifact.to_dict()},
+            )
 
         if result.success:
             completed_at = utc_now_timestamp()
@@ -168,6 +229,7 @@ class TaskRunner:
                 updated_at=completed_at,
                 current_phase="completed",
                 latest_summary=result.summary,
+                artifact_count=artifact_count,
                 last_event_at=completed_at,
             )
             self._publish(
@@ -181,6 +243,7 @@ class TaskRunner:
                     "completed_at": completed_at,
                     "summary": result.summary,
                     "outcome": "success",
+                    "artifact_count": artifact_count,
                 },
             )
         else:
@@ -192,6 +255,7 @@ class TaskRunner:
                 updated_at=failed_at,
                 current_phase="failed",
                 latest_summary=result.summary,
+                artifact_count=artifact_count,
                 last_event_at=failed_at,
                 failure=FailureInfo(message=result.error_message or result.summary),
             )
@@ -231,8 +295,19 @@ class TaskRunner:
             links=state.links or None,
         )
 
-    def list_artifacts(self, task_id: str, run_id: str | None = None) -> list:
-        return self._artifact_store.list_artifacts(task_id, run_id)
+    def list_artifacts(
+        self,
+        task_id: str,
+        run_id: str | None = None,
+        persistence_class: str | None = None,
+        content_type_prefix: str | None = None,
+    ) -> list:
+        return self._artifact_store.list_artifacts(
+            task_id,
+            run_id,
+            persistence_class=persistence_class,
+            content_type_prefix=content_type_prefix,
+        )
 
     def _publish(
         self,

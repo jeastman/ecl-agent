@@ -1,20 +1,18 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from typing import Any
 from typing import Protocol
 
 from packages.task_model.local_agent_task_model.models import RunState
 
 
 class RunStateStore(Protocol):
-    def create(self, state: RunState) -> None:
-        ...
+    def create(self, state: RunState) -> None: ...
 
-    def get(self, task_id: str, run_id: str | None = None) -> RunState:
-        ...
+    def get(self, task_id: str, run_id: str | None = None) -> RunState: ...
 
-    def update(self, task_id: str, run_id: str, **changes: object) -> RunState:
-        ...
+    def update(self, task_id: str, run_id: str, **changes: Any) -> RunState: ...
 
 
 class InMemoryRunStateStore:
@@ -35,7 +33,7 @@ class InMemoryRunStateStore:
         except KeyError as exc:
             raise KeyError(f"unknown task/run: {task_id}/{resolved_run_id}") from exc
 
-    def update(self, task_id: str, run_id: str, **changes: object) -> RunState:
+    def update(self, task_id: str, run_id: str, **changes: Any) -> RunState:
         state = self.get(task_id, run_id)
         updated = replace(state, **changes)
         self._states[(task_id, run_id)] = updated

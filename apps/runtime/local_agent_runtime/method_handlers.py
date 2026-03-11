@@ -67,12 +67,19 @@ class MethodHandlers:
 
     def task_get(self, params: dict) -> TaskGetResult:
         request = TaskGetParams.from_dict(params)
-        return TaskGetResult(task=self.task_runner.get_task_snapshot(request.task_id, request.run_id))
+        return TaskGetResult(
+            task=self.task_runner.get_task_snapshot(request.task_id, request.run_id)
+        )
 
     def task_artifacts_list(self, params: dict) -> TaskArtifactsListResult:
         request = TaskArtifactsListParams.from_dict(params)
         return TaskArtifactsListResult(
-            artifacts=self.task_runner.list_artifacts(request.task_id, request.run_id)
+            artifacts=self.task_runner.list_artifacts(
+                request.task_id,
+                request.run_id,
+                persistence_class=request.persistence_class,
+                content_type_prefix=request.content_type_prefix,
+            )
         )
 
     def task_logs_stream(self, params: dict) -> tuple[TaskLogsStreamResult, list]:

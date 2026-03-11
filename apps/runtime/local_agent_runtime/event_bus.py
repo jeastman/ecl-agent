@@ -7,16 +7,14 @@ from packages.protocol.local_agent_protocol.models import RuntimeEvent
 
 
 class EventBus(Protocol):
-    def publish(self, event: RuntimeEvent) -> None:
-        ...
+    def publish(self, event: RuntimeEvent) -> None: ...
 
     def list_events(
         self,
         task_id: str,
         run_id: str | None = None,
         from_event_id: str | None = None,
-    ) -> list[RuntimeEvent]:
-        ...
+    ) -> list[RuntimeEvent]: ...
 
 
 class InMemoryEventBus:
