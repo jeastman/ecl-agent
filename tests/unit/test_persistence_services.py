@@ -96,6 +96,21 @@ class ThreadRegistryTests(unittest.TestCase):
             self.assertEqual(handle.thread_id, "thread_b")
             self.assertEqual(handle.latest_checkpoint_id, "ckpt_1")
 
+    def test_checkpoint_store_create_thread_and_empty_resume_handle(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            database_path = str(Path(temp_dir) / "runtime.db")
+            registry = SQLiteThreadRegistry(database_path)
+            store = SQLiteCheckpointStore(database_path, thread_registry=registry)
+
+            thread_id = store.create_thread("task_1", "run_1")
+            handle = store.get_resume_handle("task_1", "run_1")
+
+            self.assertTrue(thread_id.startswith("thread_"))
+            self.assertIsNotNone(handle)
+            assert handle is not None
+            self.assertEqual(handle.thread_id, thread_id)
+            self.assertIsNone(handle.latest_checkpoint_id)
+
 
 class MemoryStoreTests(unittest.TestCase):
     def test_memory_store_round_trip(self) -> None:
@@ -194,6 +209,7 @@ class EventStoreTests(unittest.TestCase):
 
             self.assertEqual(len(events), 1)
             self.assertEqual(events[0].event_id, "evt_1")
+            self.assertEqual(store.list_run_keys(), [("task_1", "run_1")])
 
 
 class RunMetricsStoreTests(unittest.TestCase):

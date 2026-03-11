@@ -80,7 +80,11 @@ class LocalExecutionSandboxFactory(SandboxPathMapper):
         resolved = _resolve_host_path(roots, normalized)
         if not resolved.is_file():
             raise ValueError(f"artifact path is not a file: {normalized.logical_path}")
-        return _artifact_logical_path(normalized), resolved, _default_persistence_class(normalized.zone)
+        return (
+            _artifact_logical_path(normalized),
+            resolved,
+            _default_persistence_class(normalized.zone),
+        )
 
 
 class LocalExecutionSandbox:

@@ -4,6 +4,8 @@ from apps.runtime.local_agent_runtime.artifact_store import InMemoryArtifactStor
 from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
+from apps.runtime.local_agent_runtime.recovery_service import RecoveryService
+from apps.runtime.local_agent_runtime.resume_service import ResumeService
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.runtime_server import RuntimeServer
 from apps.runtime.local_agent_runtime.task_runner import AgentHarness, TaskRunner
@@ -31,7 +33,7 @@ def create_runtime_server(
         config,
         runtime_root_override=runtime_root,
     )
-    resolved_runtime_root = runtime_root or config.persistence.root_path
+    resolved_runtime_root = durable_services.root_path
     sandbox_factory = LocalExecutionSandboxFactory(runtime_root=resolved_runtime_root)
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)
     task_runner = TaskRunner(
@@ -46,6 +48,18 @@ def create_runtime_server(
             model_provider=config.default_model.provider,
         ),
     )
+    checkpoint_adapter = task_runner.checkpoint_adapter
+    assert checkpoint_adapter is not None
+    recovery_service = RecoveryService(
+        run_state_store=run_state_store,
+        event_store=durable_services.event_store,
+        checkpoint_adapter=checkpoint_adapter,
+    )
+    recovery_service.recover()
+    resume_service = ResumeService(
+        task_runner=task_runner,
+        identity_bundle_text=identity.content,
+    )
     handlers = MethodHandlers(
         config=config,
         identity=identity,
@@ -54,5 +68,6 @@ def create_runtime_server(
         artifact_store=artifact_store,
         task_runner=task_runner,
         durable_services=durable_services,
+        resume_service=resume_service,
     )
     return RuntimeServer(handlers=handlers)

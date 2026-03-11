@@ -16,16 +16,18 @@ The comparison below was verified against:
 - runtime example configuration at [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml)
 - test suite under `tests/*`
 
-Verification command executed in this workspace:
+Verification commands executed in this workspace:
 
 ```bash
-uv run pytest
+.venv/bin/pytest
+.venv/bin/ruff check apps packages services tests
 ```
 
-Observed result:
+Observed results:
 
 ```text
-50 passed in 0.88s
+55 passed in 0.80s
+All checks passed!
 ```
 
 ## Executive Summary
@@ -40,10 +42,13 @@ The repository now implements the Milestone 0 and Milestone 1 vertical slice des
 - identity ingestion exists and is wired into runtime startup and prompt construction
 - runtime event streaming and artifact registration exist
 
-The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the first Milestone 2 durability substrate:
+The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the Milestone 2 durability substrate plus Phase 2 checkpoint/resume behavior:
 
 - durable memory/query contracts and storage seams
 - checkpoint metadata and thread registry seams
+- checkpoint-backed pause/resume execution flow
+- restart-time recovery of resumable runs
+- `task.resume` protocol and CLI support
 - persistent event/diagnostic/run-metrics storage seams
 - approval and policy storage seams
 - task cancellation
@@ -57,7 +62,7 @@ The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
-- **Milestone 2:** Phase 1 durability foundations implemented; later Milestone 2 behavior still mostly not implemented
+- **Milestone 2:** Phase 1 durability foundations and Phase 2 checkpoint/resume/recovery implemented; later governance and memory phases still incomplete
 - **Milestone 3 and later:** mostly not implemented
 
 ## Status Legend
@@ -146,6 +151,7 @@ Implemented and wired end to end:
 - `runtime.health`
 - `task.create`
 - `task.get`
+- `task.resume`
 - `task.logs.stream`
 - `task.artifacts.list`
 
@@ -175,6 +181,10 @@ Implemented and emitted:
 
 - `task.created`
 - `task.started`
+- `checkpoint.saved`
+- `task.paused`
+- `task.resumed`
+- `recovery.discovered`
 - `plan.updated`
 - `subagent.started`
 - `tool.called`
@@ -258,6 +268,7 @@ Important implementation detail:
 - `task.created` is emitted as an event payload/status rather than persisted as the authoritative stored status.
 - planning is represented through `current_phase` updates and `plan.updated` events, not a durable top-level `TaskStatus.PLANNING` transition.
 - `RunState` and `TaskSnapshot` now include resumability and approval-oriented fields such as `awaiting_approval`, `pending_approval_id`, `is_resumable`, `pause_reason`, `checkpoint_thread_id`, and `latest_checkpoint_id`.
+- paused runs are resumed through the explicit `task.resume` runtime path rather than by reissuing `task.create`.
 
 Evidence:
 
@@ -267,7 +278,7 @@ Evidence:
 
 Assessment:
 
-- The task model still does not implement the full future lifecycle, but it now includes the Milestone 2 Phase 1 state extensions needed for pause/resume and approval-aware execution.
+- The task model still does not implement the full future lifecycle, but it now includes the Phase 1 state extensions plus the Phase 2 runtime-backed pause/resume lifecycle.
 
 ## 6. DeepAgent Adapter Boundary
 
@@ -622,16 +633,20 @@ Verified deliverables:
 
 **Observed status:** `Partial`.
 
-Implemented in Phase 1:
+Implemented in Phase 1 and Phase 2:
 
 - persistent service packages for checkpoints, memory, policy, and observability
 - runtime-owned SQLite-backed seams for checkpoint metadata, thread bindings, approvals, memory records, persisted events, diagnostics, and run metrics
 - persistence config and runtime bootstrap wiring
 - pause/resume/approval-oriented run state extensions
+- DeepAgent-side checkpoint adapter binding runtime-owned `thread_id` to framework-native checkpoint flows
+- runtime-owned pause/resume lifecycle in `TaskRunner`
+- `resume_service` and `recovery_service`
+- restart recovery that reconstructs resumable runs from persisted events and checkpoint metadata
+- `task.resume` protocol plumbing and minimal CLI support
 
 Still absent or incomplete:
 
-- real checkpoint-backed resume behavior
 - approval workflow and policy enforcement
 - richer observability behavior on top of the new stores
 - memory inspection support
@@ -681,13 +696,12 @@ These are the main verified gaps between the current implementation and the broa
 1. Missing protocol methods: `task.cancel`, `task.approve`, `config.get`, `memory.inspect`.
 2. Missing event types: `subagent.completed`, `approval.requested`, `memory.updated`.
 3. No end-to-end durable project memory retrieval, promotion, or inspection behavior.
-4. No checkpoint-backed resume execution flow, despite the new metadata and thread-registry seams.
-5. No policy enforcement or approval workflow, despite the new runtime-owned policy and approval boundaries.
-6. No approval request events or CLI approval handling yet.
-7. No sub-agent registry or multi-role orchestration.
-8. No actual use of `subagent_model_overrides` for model routing.
-9. No skill discovery or loading subsystem.
-10. No web client or client SDK packages.
+4. No policy enforcement or approval workflow, despite the new runtime-owned policy and approval boundaries.
+5. No approval request events or CLI approval handling yet.
+6. No sub-agent registry or multi-role orchestration.
+7. No actual use of `subagent_model_overrides` for model routing.
+8. No skill discovery or loading subsystem.
+9. No web client or client SDK packages.
 
 ## 19. Bottom Line
 

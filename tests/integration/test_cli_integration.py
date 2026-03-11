@@ -27,14 +27,25 @@ class CliIntegrationTests(unittest.TestCase):
 
             with patch.object(cli, "make_client", side_effect=fake_make_client):
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0)
+                    self.assertEqual(
+                        cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0
+                    )
                     output = stdout.getvalue()
                 self.assertIn("task_id=task_123", output)
                 self.assertIn("hint=agent logs task_123", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
-                        cli.main(["--config", "ignored.toml", "status", "task_123", "--run-id", "run_456"]),
+                        cli.main(
+                            [
+                                "--config",
+                                "ignored.toml",
+                                "status",
+                                "task_123",
+                                "--run-id",
+                                "run_456",
+                            ]
+                        ),
                         0,
                     )
                     output = stdout.getvalue()
@@ -44,7 +55,9 @@ class CliIntegrationTests(unittest.TestCase):
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
-                        cli.main(["--config", "ignored.toml", "logs", "task_123", "--run-id", "run_456"]),
+                        cli.main(
+                            ["--config", "ignored.toml", "logs", "task_123", "--run-id", "run_456"]
+                        ),
                         0,
                     )
                     output = stdout.getvalue()
@@ -56,7 +69,14 @@ class CliIntegrationTests(unittest.TestCase):
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
                         cli.main(
-                            ["--config", "ignored.toml", "artifacts", "task_123", "--run-id", "run_456"]
+                            [
+                                "--config",
+                                "ignored.toml",
+                                "artifacts",
+                                "task_123",
+                                "--run-id",
+                                "run_456",
+                            ]
                         ),
                         0,
                     )

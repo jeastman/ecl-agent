@@ -12,6 +12,7 @@ PROTOCOL_VERSION = "1.0.0"
 METHOD_RUNTIME_HEALTH = "runtime.health"
 METHOD_TASK_CREATE = "task.create"
 METHOD_TASK_GET = "task.get"
+METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
 
@@ -263,6 +264,33 @@ class TaskGetParams:
 
 @dataclass(slots=True)
 class TaskGetResult:
+    task: TaskSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class TaskResumeParams:
+    task_id: str
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskResumeParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.resume requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.resume run_id must be a string when provided")
+        return cls(task_id=task_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class TaskResumeResult:
     task: TaskSnapshot
 
     def to_dict(self) -> dict[str, Any]:

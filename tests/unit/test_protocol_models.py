@@ -14,6 +14,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCreateRequest,
     TaskGetParams,
     TaskLogsStreamParams,
+    TaskResumeParams,
     TaskSnapshot,
     utc_now_timestamp,
 )
@@ -59,6 +60,7 @@ class ProtocolModelTests(unittest.TestCase):
 
     def test_task_query_params_validate(self) -> None:
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
+        self.assertEqual(TaskResumeParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(
             TaskArtifactsListParams.from_dict({"task_id": "task_1"}).task_id,
             "task_1",
@@ -68,6 +70,8 @@ class ProtocolModelTests(unittest.TestCase):
                 {"task_id": "task_1", "include_history": True}
             ).include_history
         )
+        with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
+            TaskResumeParams.from_dict({})
 
     def test_runtime_event_serialization(self) -> None:
         event = RuntimeEvent(

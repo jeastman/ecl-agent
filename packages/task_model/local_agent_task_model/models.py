@@ -8,6 +8,10 @@ from typing import Any
 class EventType(StrEnum):
     TASK_CREATED = "task.created"
     TASK_STARTED = "task.started"
+    CHECKPOINT_SAVED = "checkpoint.saved"
+    TASK_PAUSED = "task.paused"
+    TASK_RESUMED = "task.resumed"
+    RECOVERY_DISCOVERED = "recovery.discovered"
     PLAN_UPDATED = "plan.updated"
     SUBAGENT_STARTED = "subagent.started"
     TOOL_CALLED = "tool.called"
@@ -49,6 +53,8 @@ class RunState:
     updated_at: str
     accepted_at: str
     workspace_roots: list[str] = field(default_factory=list)
+    allowed_capabilities: list[str] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
     current_phase: str | None = None

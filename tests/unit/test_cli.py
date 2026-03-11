@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import unittest
 from pathlib import Path
+from typing import cast
 from unittest.mock import patch
 
 from apps.cli.local_agent_cli import cli
@@ -34,7 +35,7 @@ class _FakeClient:
 
     def send(self, request: object) -> dict[str, object]:
         self.requests.append(request)
-        return self.response
+        return cast(dict[str, object], self.response)
 
     def stream(self, request: object) -> StreamResponse:
         self.requests.append(request)
@@ -47,7 +48,7 @@ class _FakeClient:
         if on_event is not None:
             for event in self.stream_response.events:
                 on_event(event)
-        return self.stream_response.response
+        return cast(dict[str, object], self.stream_response.response)
 
 
 class CliTests(unittest.TestCase):
@@ -170,6 +171,35 @@ class CliTests(unittest.TestCase):
         self.assertIn("artifact_id=artifact_1", output)
         self.assertIn("logical_path=artifacts/repo_summary.md", output)
         self.assertIn("persistence_class=run", output)
+
+    def test_handle_resume_renders_updated_task_snapshot(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "task": {
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "status": "completed",
+                    "objective": "Inspect the repo",
+                    "current_phase": "completed",
+                    "latest_summary": "Resumed successfully.",
+                    "latest_checkpoint_id": "ckpt_2",
+                }
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_resume(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("status=completed", output)
+        self.assertIn("latest_summary=Resumed successfully.", output)
+        self.assertIn("latest_checkpoint_id=ckpt_2", output)
 
 
 if __name__ == "__main__":

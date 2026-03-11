@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
+from apps.runtime.local_agent_runtime.recovery_service import persisted_event_to_runtime_event
+from apps.runtime.local_agent_runtime.resume_service import ResumeService
 from apps.runtime.local_agent_runtime.run_state_store import RunStateStore
 from apps.runtime.local_agent_runtime.task_runner import TaskRunner
 from packages.config.local_agent_config.models import RuntimeConfig
@@ -18,6 +20,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCreateResult,
     TaskGetParams,
     TaskGetResult,
+    TaskResumeParams,
+    TaskResumeResult,
     TaskLogsStreamParams,
     TaskLogsStreamResult,
 )
@@ -32,6 +36,7 @@ class MethodHandlers:
     artifact_store: ArtifactStore
     task_runner: TaskRunner
     durable_services: DurableRuntimeServices
+    resume_service: ResumeService
 
     def runtime_health(self, correlation_id: str | None) -> RuntimeHealthResult:
         return RuntimeHealthResult(
@@ -73,6 +78,10 @@ class MethodHandlers:
             task=self.task_runner.get_task_snapshot(request.task_id, request.run_id)
         )
 
+    def task_resume(self, params: dict) -> TaskResumeResult:
+        request = TaskResumeParams.from_dict(params)
+        return TaskResumeResult(task=self.resume_service.resume(request.task_id, request.run_id))
+
     def task_artifacts_list(self, params: dict) -> TaskArtifactsListResult:
         request = TaskArtifactsListParams.from_dict(params)
         return TaskArtifactsListResult(
@@ -89,11 +98,14 @@ class MethodHandlers:
         state = self.run_state_store.get(request.task_id, request.run_id)
         history = []
         if request.include_history:
-            history = self.event_bus.list_events(
-                task_id=request.task_id,
-                run_id=state.run_id,
-                from_event_id=request.from_event_id,
-            )
+            history = [
+                persisted_event_to_runtime_event(record)
+                for record in self.durable_services.event_store.get_events(
+                    task_id=request.task_id,
+                    run_id=state.run_id,
+                    from_event_id=request.from_event_id,
+                )
+            ]
         return (
             TaskLogsStreamResult(
                 task_id=request.task_id,

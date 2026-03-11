@@ -42,6 +42,9 @@ def render_task_snapshot(task: dict[str, Any]) -> list[str]:
         ("active_subagent", "active_subagent"),
         ("artifact_count", "artifact_count"),
         ("last_event_at", "last_event_at"),
+        ("pause_reason", "pause_reason"),
+        ("checkpoint_thread_id", "checkpoint_thread_id"),
+        ("latest_checkpoint_id", "latest_checkpoint_id"),
     )
     for label, key in optional_fields:
         if task.get(key) is not None:
@@ -68,6 +71,14 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
         return f"objective={payload.get('objective', '<unknown>')}"
     if event_type == "task.started":
         return "execution started"
+    if event_type == "checkpoint.saved":
+        return str(payload.get("checkpoint_id") or "checkpoint recorded")
+    if event_type == "task.paused":
+        return str(payload.get("reason") or payload.get("summary") or "paused")
+    if event_type == "task.resumed":
+        return str(payload.get("summary") or "execution resumed")
+    if event_type == "recovery.discovered":
+        return str(payload.get("summary") or "recovered resumable run")
     if event_type == "plan.updated":
         return str(payload.get("summary") or payload.get("plan") or "plan updated")
     if event_type == "subagent.started":

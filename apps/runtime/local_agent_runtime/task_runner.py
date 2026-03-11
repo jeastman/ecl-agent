@@ -22,6 +22,13 @@ from packages.task_model.local_agent_task_model.models import (
     RunState,
     TaskStatus,
 )
+from services.deepagent_runtime.local_agent_deepagent_runtime.checkpoint_adapter import (
+    CheckpointController,
+    LangGraphCheckpointAdapter,
+)
+from services.observability_service.local_agent_observability_service.observability_models import (
+    RunMetricsRecord,
+)
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     ExecutionSandbox,
     LocalExecutionSandboxFactory,
@@ -40,6 +47,8 @@ class AgentExecutionRequest:
     metadata: dict[str, Any]
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
+    checkpoint_controller: CheckpointController | None = None
+    resume_from_checkpoint_id: str | None = None
 
 
 @dataclass(slots=True)
@@ -48,6 +57,8 @@ class AgentExecutionResult:
     summary: str
     output_artifacts: list[str]
     error_message: str | None = None
+    paused: bool = False
+    pause_reason: str | None = None
 
 
 class AgentHarness(Protocol):
@@ -116,6 +127,11 @@ class TaskRunner:
         self._agent_harness = agent_harness
         self._durable_services = durable_services
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
+        self._checkpoint_adapter = (
+            LangGraphCheckpointAdapter(durable_services.checkpoint_store)
+            if durable_services is not None
+            else None
+        )
 
     def start_run(
         self,
@@ -140,14 +156,18 @@ class TaskRunner:
             updated_at=accepted_at,
             accepted_at=accepted_at,
             workspace_roots=list(workspace_roots),
+            allowed_capabilities=list(allowed_capabilities or []),
+            metadata=dict(metadata or {}),
             constraints=list(constraints or []),
             success_criteria=list(success_criteria or []),
             current_phase="accepted",
             latest_summary="Task accepted by runtime.",
             awaiting_approval=False,
             is_resumable=False,
+            checkpoint_thread_id=self._new_checkpoint_thread(task_id, run_id),
             links={
                 "artifacts": "task.artifacts.list",
+                "resume": "task.resume",
                 "events": "task.logs.stream",
             },
         )
@@ -159,160 +179,48 @@ class TaskRunner:
             event_type=EventType.TASK_CREATED.value,
             timestamp=accepted_at,
             source=self._source,
-            payload={"status": TaskStatus.CREATED.value, "objective": objective},
+            payload={
+                "status": TaskStatus.CREATED.value,
+                "objective": objective,
+                "workspace_roots": list(workspace_roots),
+                "allowed_capabilities": list(allowed_capabilities or []),
+                "metadata": dict(metadata or {}),
+                "constraints": list(constraints or []),
+                "success_criteria": list(success_criteria or []),
+            },
         )
-
-        started_at = utc_now_timestamp()
-        self._run_state_store.update(
-            task_id,
-            run_id,
-            status=TaskStatus.EXECUTING,
-            updated_at=started_at,
-            current_phase="executing",
-            latest_summary="Agent harness execution started.",
-            last_event_at=started_at,
-        )
-        self._publish(
+        self._execute_run(
             task_id=task_id,
             run_id=run_id,
             correlation_id=correlation_id,
-            event_type=EventType.TASK_STARTED.value,
-            timestamp=started_at,
-            source=self._source,
-            payload={"status": TaskStatus.EXECUTING.value, "started_at": started_at},
+            identity_bundle_text=identity_bundle_text,
+            resume=False,
         )
-
-        sandbox = self._sandbox_factory.for_run(
-            task_id=task_id,
-            run_id=run_id,
-            workspace_roots=workspace_roots,
-        )
-        try:
-            result = self._agent_harness.execute(
-                AgentExecutionRequest(
-                    task_id=task_id,
-                    run_id=run_id,
-                    objective=objective,
-                    workspace_roots=list(workspace_roots),
-                    identity_bundle_text=identity_bundle_text,
-                    sandbox=sandbox,
-                    allowed_capabilities=list(allowed_capabilities or []),
-                    metadata=dict(metadata or {}),
-                    constraints=list(constraints or []),
-                    success_criteria=list(success_criteria or []),
-                ),
-                on_event=lambda event_type, payload: self._handle_harness_event(
-                    task_id=task_id,
-                    run_id=run_id,
-                    correlation_id=correlation_id,
-                    event_type=event_type,
-                    payload=payload,
-                ),
-            )
-        except Exception as exc:
-            self._append_diagnostic(
-                task_id=task_id,
-                run_id=run_id,
-                kind="agent_harness_error",
-                message=str(exc),
-                details={"phase": "execute"},
-            )
-            result = AgentExecutionResult(
-                success=False,
-                summary="Agent harness raised an unexpected error.",
-                output_artifacts=[],
-                error_message=str(exc),
-            )
-
-        artifact_count = 0
-        for sandbox_path in result.output_artifacts:
-            artifact = self._artifact_store.register_artifact(
-                task_id=task_id,
-                run_id=run_id,
-                sandbox_path=sandbox_path,
-            )
-            artifact_count += 1
-            registered_at = utc_now_timestamp()
-            self._run_state_store.update(
-                task_id,
-                run_id,
-                updated_at=registered_at,
-                artifact_count=artifact_count,
-                last_event_at=registered_at,
-            )
-            self._publish(
-                task_id=task_id,
-                run_id=run_id,
-                correlation_id=correlation_id,
-                event_type=EventType.ARTIFACT_CREATED.value,
-                timestamp=registered_at,
-                source=EventSource(kind=EventSourceKind.RUNTIME, component="artifact-store"),
-                payload={"artifact": artifact.to_dict()},
-            )
-
-        if result.success:
-            completed_at = utc_now_timestamp()
-            self._run_state_store.update(
-                task_id,
-                run_id,
-                status=TaskStatus.COMPLETED,
-                updated_at=completed_at,
-                current_phase="completed",
-                latest_summary=result.summary,
-                artifact_count=artifact_count,
-                last_event_at=completed_at,
-            )
-            self._publish(
-                task_id=task_id,
-                run_id=run_id,
-                correlation_id=correlation_id,
-                event_type=EventType.TASK_COMPLETED.value,
-                timestamp=completed_at,
-                source=self._source,
-                payload={
-                    "status": TaskStatus.COMPLETED.value,
-                    "completed_at": completed_at,
-                    "summary": result.summary,
-                    "outcome": "success",
-                    "artifact_count": artifact_count,
-                },
-            )
-        else:
-            failed_at = utc_now_timestamp()
-            self._append_diagnostic(
-                task_id=task_id,
-                run_id=run_id,
-                kind="task_failure",
-                message=result.error_message or result.summary,
-                details={"summary": result.summary},
-            )
-            self._run_state_store.update(
-                task_id,
-                run_id,
-                status=TaskStatus.FAILED,
-                updated_at=failed_at,
-                current_phase="failed",
-                latest_summary=result.summary,
-                artifact_count=artifact_count,
-                last_event_at=failed_at,
-                failure=FailureInfo(message=result.error_message or result.summary),
-            )
-            self._publish(
-                task_id=task_id,
-                run_id=run_id,
-                correlation_id=correlation_id,
-                event_type=EventType.TASK_FAILED.value,
-                timestamp=failed_at,
-                source=self._source,
-                payload={
-                    "status": TaskStatus.FAILED.value,
-                    "failed_at": failed_at,
-                    "summary": result.summary,
-                    "error": result.error_message or result.summary,
-                },
-            )
 
         return task_id, run_id, accepted_at
+
+    def resume_run(
+        self,
+        task_id: str,
+        run_id: str | None = None,
+        *,
+        identity_bundle_text: str,
+    ) -> TaskSnapshot:
+        state = self._run_state_store.get(task_id, run_id)
+        if state.status == TaskStatus.COMPLETED:
+            raise ValueError("task.resume cannot resume a completed run")
+        if state.status == TaskStatus.FAILED:
+            raise ValueError("task.resume cannot resume a failed run")
+        if not state.is_resumable:
+            raise ValueError("task.resume requires a paused or resumable run")
+        self._execute_run(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            correlation_id=None,
+            identity_bundle_text=identity_bundle_text,
+            resume=True,
+        )
+        return self.get_task_snapshot(state.task_id, state.run_id)
 
     def get_task_snapshot(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
         state = self._run_state_store.get(task_id, run_id)
@@ -353,6 +261,244 @@ class TaskRunner:
             run_id,
             persistence_class=persistence_class,
             content_type_prefix=content_type_prefix,
+        )
+
+    @property
+    def checkpoint_adapter(self) -> LangGraphCheckpointAdapter | None:
+        return self._checkpoint_adapter
+
+    def _execute_run(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        identity_bundle_text: str,
+        resume: bool,
+    ) -> None:
+        state = self._run_state_store.get(task_id, run_id)
+        started_at = utc_now_timestamp()
+        checkpoint_controller = self._checkpoint_controller_for_run(task_id, run_id, resume)
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            status=TaskStatus.EXECUTING,
+            updated_at=started_at,
+            current_phase="executing",
+            latest_summary="Agent harness execution started."
+            if not resume
+            else "Runtime resumed execution from the latest checkpoint metadata.",
+            last_event_at=started_at,
+            awaiting_approval=False,
+            is_resumable=False,
+            pause_reason=None,
+            checkpoint_thread_id=(
+                checkpoint_controller.thread_id
+                if checkpoint_controller is not None
+                else state.checkpoint_thread_id
+            ),
+            latest_checkpoint_id=(
+                checkpoint_controller.latest_checkpoint_id
+                if checkpoint_controller is not None
+                else state.latest_checkpoint_id
+            ),
+        )
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.TASK_RESUMED.value if resume else EventType.TASK_STARTED.value,
+            timestamp=started_at,
+            source=self._source,
+            payload={
+                "status": TaskStatus.EXECUTING.value,
+                "started_at": started_at,
+                "thread_id": checkpoint_controller.thread_id
+                if checkpoint_controller is not None
+                else None,
+                "latest_checkpoint_id": (
+                    checkpoint_controller.latest_checkpoint_id
+                    if checkpoint_controller is not None
+                    else state.latest_checkpoint_id
+                ),
+                "summary": (
+                    "Execution resumed from the latest checkpoint."
+                    if resume
+                    else "Agent harness execution started."
+                ),
+            },
+        )
+        if resume:
+            self._increment_resume_metrics(task_id, run_id)
+
+        sandbox = self._sandbox_factory.for_run(
+            task_id=task_id,
+            run_id=run_id,
+            workspace_roots=state.workspace_roots,
+        )
+        try:
+            result = self._agent_harness.execute(
+                AgentExecutionRequest(
+                    task_id=task_id,
+                    run_id=run_id,
+                    objective=state.objective,
+                    workspace_roots=list(state.workspace_roots),
+                    identity_bundle_text=identity_bundle_text,
+                    sandbox=sandbox,
+                    allowed_capabilities=list(state.allowed_capabilities),
+                    metadata=dict(state.metadata),
+                    constraints=list(state.constraints),
+                    success_criteria=list(state.success_criteria),
+                    checkpoint_controller=checkpoint_controller,
+                    resume_from_checkpoint_id=(
+                        checkpoint_controller.latest_checkpoint_id
+                        if checkpoint_controller is not None
+                        else None
+                    ),
+                ),
+                on_event=lambda event_type, payload: self._handle_harness_event(
+                    task_id=task_id,
+                    run_id=run_id,
+                    correlation_id=correlation_id,
+                    event_type=event_type,
+                    payload=payload,
+                ),
+            )
+        except Exception as exc:
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="agent_harness_error",
+                message=str(exc),
+                details={"phase": "execute", "resume": resume},
+            )
+            result = AgentExecutionResult(
+                success=False,
+                summary="Agent harness raised an unexpected error.",
+                output_artifacts=[],
+                error_message=str(exc),
+            )
+
+        artifact_count = state.artifact_count
+        for sandbox_path in result.output_artifacts:
+            artifact = self._artifact_store.register_artifact(
+                task_id=task_id,
+                run_id=run_id,
+                sandbox_path=sandbox_path,
+            )
+            artifact_count += 1
+            registered_at = utc_now_timestamp()
+            self._run_state_store.update(
+                task_id,
+                run_id,
+                updated_at=registered_at,
+                artifact_count=artifact_count,
+                last_event_at=registered_at,
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.ARTIFACT_CREATED.value,
+                timestamp=registered_at,
+                source=EventSource(kind=EventSourceKind.RUNTIME, component="artifact-store"),
+                payload={"artifact": artifact.to_dict()},
+            )
+
+        if result.paused:
+            paused_at = utc_now_timestamp()
+            self._run_state_store.update(
+                task_id,
+                run_id,
+                status=TaskStatus.PAUSED,
+                updated_at=paused_at,
+                current_phase="paused",
+                latest_summary=result.summary,
+                artifact_count=artifact_count,
+                last_event_at=paused_at,
+                is_resumable=True,
+                pause_reason=result.pause_reason or "execution paused",
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.TASK_PAUSED.value,
+                timestamp=paused_at,
+                source=self._source,
+                payload={
+                    "status": TaskStatus.PAUSED.value,
+                    "reason": result.pause_reason or "execution paused",
+                    "summary": result.summary,
+                },
+            )
+            return
+
+        if result.success:
+            completed_at = utc_now_timestamp()
+            self._run_state_store.update(
+                task_id,
+                run_id,
+                status=TaskStatus.COMPLETED,
+                updated_at=completed_at,
+                current_phase="completed",
+                latest_summary=result.summary,
+                artifact_count=artifact_count,
+                last_event_at=completed_at,
+                is_resumable=False,
+                pause_reason=None,
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.TASK_COMPLETED.value,
+                timestamp=completed_at,
+                source=self._source,
+                payload={
+                    "status": TaskStatus.COMPLETED.value,
+                    "completed_at": completed_at,
+                    "summary": result.summary,
+                    "outcome": "success",
+                    "artifact_count": artifact_count,
+                },
+            )
+            return
+
+        failed_at = utc_now_timestamp()
+        self._append_diagnostic(
+            task_id=task_id,
+            run_id=run_id,
+            kind="task_failure",
+            message=result.error_message or result.summary,
+            details={"summary": result.summary, "resume": resume},
+        )
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            status=TaskStatus.FAILED,
+            updated_at=failed_at,
+            current_phase="failed",
+            latest_summary=result.summary,
+            artifact_count=artifact_count,
+            last_event_at=failed_at,
+            failure=FailureInfo(message=result.error_message or result.summary),
+            is_resumable=False,
+            pause_reason=None,
+        )
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.TASK_FAILED.value,
+            timestamp=failed_at,
+            source=self._source,
+            payload={
+                "status": TaskStatus.FAILED.value,
+                "failed_at": failed_at,
+                "summary": result.summary,
+                "error": result.error_message or result.summary,
+            },
         )
 
     def _publish(
@@ -409,6 +555,15 @@ class TaskRunner:
         summary = payload.get("summary")
         if isinstance(summary, str) and summary.strip():
             updates["latest_summary"] = summary.strip()
+        if event_type == EventType.CHECKPOINT_SAVED.value:
+            checkpoint_id = payload.get("checkpoint_id")
+            thread_id = payload.get("thread_id")
+            if isinstance(checkpoint_id, str) and checkpoint_id.strip():
+                updates["latest_checkpoint_id"] = checkpoint_id
+                updates["is_resumable"] = True
+            if isinstance(thread_id, str) and thread_id.strip():
+                updates["checkpoint_thread_id"] = thread_id
+            self._increment_checkpoint_metrics(task_id, run_id)
         self._run_state_store.update(task_id, run_id, **updates)
         self._publish(
             task_id=task_id,
@@ -439,6 +594,74 @@ class TaskRunner:
             details=details or {},
         )
 
+    def _new_checkpoint_thread(self, task_id: str, run_id: str) -> str | None:
+        if self._checkpoint_adapter is None:
+            return None
+        return self._checkpoint_adapter.begin_run(task_id, run_id).thread_id
+
+    def _checkpoint_controller_for_run(
+        self,
+        task_id: str,
+        run_id: str,
+        resume: bool,
+    ) -> CheckpointController | None:
+        if self._checkpoint_adapter is None:
+            return None
+        if resume:
+            return self._checkpoint_adapter.resume_run(task_id, run_id)
+        state = self._run_state_store.get(task_id, run_id)
+        if state.checkpoint_thread_id is not None:
+            return self._checkpoint_adapter.attach_thread(
+                task_id,
+                run_id,
+                state.checkpoint_thread_id,
+            )
+        return self._checkpoint_adapter.begin_run(task_id, run_id)
+
+    def _increment_checkpoint_metrics(self, task_id: str, run_id: str) -> None:
+        if self._durable_services is None:
+            return
+        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        checkpoint_count = 1 if metrics is None else metrics.checkpoint_count + 1
+        approval_count = 0 if metrics is None else metrics.approval_count
+        resume_count = 0 if metrics is None else metrics.resume_count
+        self._durable_services.run_metrics_store.write_metrics(
+            record=type(metrics)(
+                task_id=task_id,
+                run_id=run_id,
+                checkpoint_count=checkpoint_count,
+                approval_count=approval_count,
+                resume_count=resume_count,
+                last_updated_at=utc_now_timestamp(),
+            )
+            if metrics is not None
+            else _run_metrics_record(
+                task_id, run_id, checkpoint_count, approval_count, resume_count
+            )
+        )
+
+    def _increment_resume_metrics(self, task_id: str, run_id: str) -> None:
+        if self._durable_services is None:
+            return
+        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        checkpoint_count = 0 if metrics is None else metrics.checkpoint_count
+        approval_count = 0 if metrics is None else metrics.approval_count
+        resume_count = 1 if metrics is None else metrics.resume_count + 1
+        self._durable_services.run_metrics_store.write_metrics(
+            record=type(metrics)(
+                task_id=task_id,
+                run_id=run_id,
+                checkpoint_count=checkpoint_count,
+                approval_count=approval_count,
+                resume_count=resume_count,
+                last_updated_at=utc_now_timestamp(),
+            )
+            if metrics is not None
+            else _run_metrics_record(
+                task_id, run_id, checkpoint_count, approval_count, resume_count
+            )
+        )
+
 
 def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> EventSource:
     if event_type == EventType.SUBAGENT_STARTED.value:
@@ -455,3 +678,20 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
             component="sandbox-tool-bindings",
         )
     return EventSource(kind=EventSourceKind.RUNTIME, component="langchain-deepagent-harness")
+
+
+def _run_metrics_record(
+    task_id: str,
+    run_id: str,
+    checkpoint_count: int,
+    approval_count: int,
+    resume_count: int,
+) -> RunMetricsRecord:
+    return RunMetricsRecord(
+        task_id=task_id,
+        run_id=run_id,
+        checkpoint_count=checkpoint_count,
+        approval_count=approval_count,
+        resume_count=resume_count,
+        last_updated_at=utc_now_timestamp(),
+    )

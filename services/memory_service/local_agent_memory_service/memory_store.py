@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Protocol
+from typing import Protocol, cast
 
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 
@@ -99,7 +99,7 @@ class SQLiteMemoryStore:
                 """,
                 (scope, scope, namespace, namespace),
             ).fetchall()
-        return [_row_to_memory(row) for row in rows if row is not None]
+        return [cast(MemoryRecord, _row_to_memory(row)) for row in rows if row is not None]
 
     def delete_memory(self, memory_id: str) -> None:
         with sqlite3.connect(self._database_path) as connection:

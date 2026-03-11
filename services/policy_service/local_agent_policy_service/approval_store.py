@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Protocol
+from typing import Protocol, cast
 
 from services.policy_service.local_agent_policy_service.policy_models import ApprovalRequest
 
@@ -81,7 +81,7 @@ class SQLiteApprovalStore:
                 """,
                 (task_id, run_id, run_id),
             ).fetchall()
-        return [_row_to_approval(row) for row in rows if row is not None]
+        return [cast(ApprovalRequest, _row_to_approval(row)) for row in rows if row is not None]
 
     def decide(self, approval_id: str, decision: str, decided_at: str) -> ApprovalRequest:
         with sqlite3.connect(self._database_path) as connection:

@@ -11,6 +11,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
+    METHOD_TASK_RESUME,
     METHOD_TASK_LOGS_STREAM,
     JsonRpcError,
     JsonRpcRequest,
@@ -81,6 +82,15 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.task_get(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_TASK_RESUME:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_resume(request.params),
                     ),
                     [],
                 )

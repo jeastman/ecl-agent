@@ -13,6 +13,8 @@ from services.observability_service.local_agent_observability_service.observabil
 class EventStore(Protocol):
     def append_event(self, event: EventEnvelope | PersistedEvent) -> None: ...
 
+    def list_run_keys(self) -> list[tuple[str, str]]: ...
+
     def get_events(
         self,
         task_id: str,
@@ -55,6 +57,17 @@ class SQLiteEventStore:
                 ),
             )
             connection.commit()
+
+    def list_run_keys(self) -> list[tuple[str, str]]:
+        with sqlite3.connect(self._database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT task_id, run_id
+                FROM persisted_events
+                ORDER BY task_id ASC, run_id ASC
+                """
+            ).fetchall()
+        return [(str(row[0]), str(row[1])) for row in rows]
 
     def get_events(
         self,
@@ -116,6 +129,8 @@ class SQLiteEventStore:
 def _coerce_event(event: EventEnvelope | PersistedEvent) -> PersistedEvent:
     if isinstance(event, PersistedEvent):
         return event
+    if event.task_id is None or event.run_id is None:
+        raise ValueError("persisted runtime events must include task_id and run_id")
     return PersistedEvent(
         event_id=event.event_id,
         event_type=event.event_type,

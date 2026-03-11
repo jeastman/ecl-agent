@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from tempfile import gettempdir
 
 from packages.config.local_agent_config.models import RuntimeConfig
 from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_store import (
@@ -57,8 +58,7 @@ def create_durable_runtime_services(
     *,
     runtime_root_override: str | None = None,
 ) -> DurableRuntimeServices:
-    root_path = Path(runtime_root_override or config.persistence.root_path).expanduser().resolve()
-    root_path.mkdir(parents=True, exist_ok=True)
+    root_path = _resolve_runtime_root(runtime_root_override or config.persistence.root_path)
     metadata_root = root_path / "metadata"
     metadata_root.mkdir(parents=True, exist_ok=True)
     database_path = metadata_root / "runtime.db"
@@ -77,3 +77,19 @@ def create_durable_runtime_services(
         diagnostic_store=SQLiteDiagnosticStore(str(database_path)),
         run_metrics_store=SQLiteRunMetricsStore(str(database_path)),
     )
+
+
+def _resolve_runtime_root(configured_root: str) -> Path:
+    candidate = Path(configured_root).expanduser()
+    fallback = Path(gettempdir()) / "local-agent-harness"
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        metadata_root = candidate / "metadata"
+        metadata_root.mkdir(parents=True, exist_ok=True)
+        probe = metadata_root / ".write-probe"
+        probe.touch(exist_ok=True)
+        probe.unlink(missing_ok=True)
+        return candidate.resolve()
+    except PermissionError:
+        fallback.mkdir(parents=True, exist_ok=True)
+        return fallback.resolve()

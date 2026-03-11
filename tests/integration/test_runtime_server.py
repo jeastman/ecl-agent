@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from apps.runtime.local_agent_runtime.bootstrap import create_runtime_server
+from apps.runtime.local_agent_runtime.task_runner import AgentExecutionResult
 from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness
 from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
@@ -19,6 +20,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_RESUME,
     PROTOCOL_VERSION,
     TaskCreateParams,
     TaskCreateRequest,
@@ -200,6 +202,103 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(output_lines[1]["type"], "runtime.event")
             self.assertEqual(output_lines[1]["event"]["event_type"], "task.created")
 
+    def test_runtime_restart_recovers_paused_run_and_resumes_it(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            runtime_root = str(Path(temp_dir) / "runtime")
+            correlation_id = new_correlation_id()
+
+            first_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_pause_then_resume_harness(),
+                runtime_root=runtime_root,
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Pause and resume the repo task",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="1",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = first_server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+
+            paused_response, _ = first_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertEqual(paused_response.to_dict()["result"]["task"]["status"], "paused")
+
+            recovered_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_pause_then_resume_harness(),
+                runtime_root=runtime_root,
+            )
+            recovered_status, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="3",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            recovered_task = recovered_status.to_dict()["result"]["task"]
+            self.assertEqual(recovered_task["status"], "paused")
+            self.assertTrue(recovered_task["is_resumable"])
+            self.assertIsNotNone(recovered_task["latest_checkpoint_id"])
+            self.assertEqual(recovered_task["links"]["resume"], "task.resume")
+            self.assertEqual(recovered_task["latest_summary"], "Paused awaiting resume.")
+
+            resumed_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_RESUME,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="4",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            resumed_task = resumed_response.to_dict()["result"]["task"]
+            self.assertEqual(resumed_task["status"], "completed")
+            self.assertEqual(resumed_task["artifact_count"], 1)
+
+            logs_response, stream_events = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                        id="5",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertIn("task.paused", event_types)
+            self.assertIn("recovery.discovered", event_types)
+            self.assertIn("task.resumed", event_types)
+            self.assertIn("task.completed", event_types)
+
 
 def _fake_langchain_harness() -> LangChainDeepAgentHarness:
     return LangChainDeepAgentHarness(
@@ -217,7 +316,11 @@ class _FakeCompiledAgent:
     def __init__(self, tools: list[Any]) -> None:
         self._tools = tools
 
-    def invoke(self, input: dict[str, Any]) -> dict[str, Any]:
+    def invoke(
+        self,
+        input: dict[str, Any],
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
         listing = self._invoke("list_files", {"root": "workspace"})
         readme = self._invoke("read_file", {"path": "workspace/README.md"})
         self._invoke(
@@ -242,6 +345,41 @@ class _FakeCompiledAgent:
             if tool.name == name:
                 return tool.invoke(arguments)
         raise AssertionError(f"missing tool: {name}")
+
+
+class _PauseThenResumeHarness:
+    def execute(self, request, on_event=None) -> Any:
+        controller = request.checkpoint_controller
+        if controller is None:
+            raise AssertionError("checkpoint controller is required")
+        if request.resume_from_checkpoint_id is None:
+            metadata = controller.record_checkpoint("pause_requested")
+            if on_event is not None:
+                on_event("checkpoint.saved", metadata.to_dict())
+            return AgentExecutionResult(
+                success=False,
+                summary="Paused awaiting resume.",
+                output_artifacts=[],
+                error_message=None,
+                paused=True,
+                pause_reason="awaiting resume",
+            )
+        metadata = controller.record_checkpoint("resumed")
+        if on_event is not None:
+            on_event("checkpoint.saved", metadata.to_dict())
+        request.sandbox.write_text("workspace/artifacts/resumed.md", "# Recovered\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Recovered run completed.",
+            output_artifacts=["workspace/artifacts/resumed.md"],
+            error_message=None,
+            paused=False,
+            pause_reason=None,
+        )
+
+
+def _pause_then_resume_harness() -> _PauseThenResumeHarness:
+    return _PauseThenResumeHarness()
 
 
 if __name__ == "__main__":

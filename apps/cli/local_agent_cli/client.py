@@ -126,7 +126,8 @@ class RuntimeClient:
         if completed.returncode != 0:
             stderr = completed.stderr.strip()
             raise RuntimeClientError(
-                f"runtime exited with code {completed.returncode}" + (f": {stderr}" if stderr else "")
+                f"runtime exited with code {completed.returncode}"
+                + (f": {stderr}" if stderr else "")
             )
         lines = [line for line in completed.stdout.splitlines() if line.strip()]
         if not lines:
@@ -144,7 +145,9 @@ class RuntimeClient:
         events: list[dict[str, Any]] = []
         for payload in payloads[1:]:
             if payload.get("type") != "runtime.event":
-                raise RuntimeClientError("runtime returned unexpected non-event payload after response")
+                raise RuntimeClientError(
+                    "runtime returned unexpected non-event payload after response"
+                )
             events.append(payload)
         return StreamResponse(response=response, events=events)
 

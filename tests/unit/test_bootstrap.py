@@ -28,9 +28,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(services.root_path, str(runtime_root.resolve()))
             self.assertTrue(Path(services.database_path).is_file())
             self.assertEqual(
-                services.policy_engine.evaluate(
-                    context=_operation_context()
-                ).decision,
+                services.policy_engine.evaluate(context=_operation_context()).decision,
                 "ALLOW",
             )
 

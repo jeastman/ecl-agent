@@ -19,8 +19,26 @@ if TYPE_CHECKING:
 EventCallback = Callable[[str, dict[str, Any]], None]
 
 
+class ModelFactory(Protocol):
+    def __call__(self, model_name: str, *, model_provider: str) -> Any: ...
+
+
+class AgentFactory(Protocol):
+    def __call__(
+        self,
+        *,
+        model: Any,
+        tools: list[Any],
+        system_prompt: str,
+        name: str,
+        **kwargs: Any,
+    ) -> "CompiledAgent": ...
+
+
 class CompiledAgent(Protocol):
-    def invoke(self, input: dict[str, Any]) -> dict[str, Any]: ...
+    def invoke(
+        self, input: dict[str, Any], config: dict[str, Any] | None = None
+    ) -> dict[str, Any]: ...
 
 
 class LangChainDeepAgentHarness:
@@ -30,14 +48,14 @@ class LangChainDeepAgentHarness:
         model_name: str,
         model_provider: str,
         prompt_builder: PromptBuilder | None = None,
-        model_factory: Callable[..., Any] = init_chat_model,
-        agent_factory: Callable[..., CompiledAgent] = create_deep_agent,
+        model_factory: ModelFactory | None = None,
+        agent_factory: AgentFactory | None = None,
     ) -> None:
         self._model_name = model_name
         self._model_provider = model_provider
         self._prompt_builder = prompt_builder or PromptBuilder()
-        self._model_factory = model_factory
-        self._agent_factory = agent_factory
+        self._model_factory = model_factory or init_chat_model
+        self._agent_factory = agent_factory or create_deep_agent
 
     def execute(
         self,
@@ -76,7 +94,15 @@ class LangChainDeepAgentHarness:
             allowed_capabilities=request.allowed_capabilities,
         )
         try:
+            if request.checkpoint_controller is not None:
+                metadata = request.checkpoint_controller.record_checkpoint(
+                    "resumed_before_invoke" if request.resume_from_checkpoint_id else "run_started"
+                )
+                callback("checkpoint.saved", metadata.to_dict())
             artifact_path, summary = self._run_reference_task(request, tools, prompt, callback)
+            if request.checkpoint_controller is not None:
+                metadata = request.checkpoint_controller.record_checkpoint("run_completed")
+                callback("checkpoint.saved", metadata.to_dict())
             return AgentExecutionResult(
                 success=True,
                 summary=summary,
@@ -109,6 +135,11 @@ class LangChainDeepAgentHarness:
             tools=tools.as_langchain_tools(),
             system_prompt=prompt,
             name="primary",
+            **(
+                request.checkpoint_controller.build_agent_kwargs()
+                if request.checkpoint_controller is not None
+                else {}
+            ),
         )
         callback(
             "plan.updated",
@@ -117,7 +148,8 @@ class LangChainDeepAgentHarness:
                 "summary": "Executing the DeepAgent reference task inside the governed sandbox.",
             },
         )
-        result = agent.invoke(
+        result = _invoke_agent(
+            agent,
             {
                 "messages": [
                     {
@@ -125,11 +157,18 @@ class LangChainDeepAgentHarness:
                         "content": _reference_task_prompt(request.objective),
                     }
                 ]
-            }
+            },
+            config=(
+                request.checkpoint_controller.build_invoke_config()
+                if request.checkpoint_controller is not None
+                else None
+            ),
         )
         artifact_path = "workspace/artifacts/repo_summary.md"
         if not request.sandbox.exists(artifact_path):
-            raise RuntimeError("DeepAgent run completed without creating workspace/artifacts/repo_summary.md")
+            raise RuntimeError(
+                "DeepAgent run completed without creating workspace/artifacts/repo_summary.md"
+            )
         summary = _extract_summary(result)
         return artifact_path, summary
 
@@ -168,3 +207,14 @@ def _extract_summary(result: dict[str, Any]) -> str:
             if isinstance(dict_content, str) and dict_content.strip():
                 return _truncate(dict_content.strip(), 280)
     return "Generated artifacts/repo_summary.md from the governed workspace."
+
+
+def _invoke_agent(
+    agent: Any, payload: dict[str, Any], config: dict[str, Any] | None
+) -> dict[str, Any]:
+    if config is None:
+        return agent.invoke(payload)
+    try:
+        return agent.invoke(payload, config=config)
+    except TypeError:
+        return agent.invoke(payload)

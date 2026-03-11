@@ -247,6 +247,7 @@ Initial task status values:
 - `accepted`
 - `planning`
 - `executing`
+- `paused`
 - `awaiting_approval`
 - `resuming`
 - `completed`
@@ -620,7 +621,27 @@ Cancellation is best-effort. Final confirmation arrives through events and subse
 
 ---
 
-## 14.6 `task.approve`
+## 14.6 `task.resume`
+
+### Purpose
+Resumes a paused or otherwise resumable task/run using the runtime-owned checkpoint path.
+
+### Params
+- `correlation_id`
+- `task_id`
+
+Optional:
+- `run_id`
+
+### Result
+- `task` (TaskSnapshot)
+
+### Notes
+This method returns the updated task snapshot after the runtime attempts to continue execution from the latest checkpoint metadata for the requested run.
+
+---
+
+## 14.7 `task.approve`
 
 ### Purpose
 Submits an approval decision.
@@ -640,7 +661,7 @@ Submits an approval decision.
 
 ---
 
-## 14.7 `task.artifacts.list`
+## 14.8 `task.artifacts.list`
 
 ### Purpose
 Lists artifacts associated with a task/run.
@@ -659,7 +680,7 @@ Optional:
 
 ---
 
-## 14.8 `task.logs.stream`
+## 14.9 `task.logs.stream`
 
 ### Purpose
 Subscribes the client to runtime events for a task or run.
@@ -979,6 +1000,7 @@ This protocol specification is satisfied for v1 when:
 1. The runtime exposes JSON-RPC methods over stdio for the defined initial method set.
 2. The runtime emits event envelopes that conform to the common event contract.
 3. `task.create`, `task.get`, `task.cancel`, `task.approve`, `task.artifacts.list`, `task.logs.stream`, `config.get`, `memory.inspect`, and `runtime.health` exist.
+3. `task.create`, `task.get`, `task.resume`, `task.cancel`, `task.approve`, `task.artifacts.list`, `task.logs.stream`, `config.get`, `memory.inspect`, and `runtime.health` exist.
 4. Task snapshots, artifact references, and approval prompts use stable structured shapes.
 5. Errors are structured and category-bearing.
 6. Clients can correlate requests, task state, runs, approvals, artifacts, and events.
@@ -1112,7 +1134,7 @@ Request:
 
 1. Should `task.logs.stream` be replaced with a broader `task.events.subscribe` name before implementation?
 2. Should v1 include a dedicated `artifact.get` or only `task.artifacts.list`?
-3. Should a future `task.resume` method be reserved now?
+3. Should `task.resume` return only the updated task snapshot, or also include explicit resume/checkpoint metadata?
 4. Should idempotency keys be required for `task.create` in Milestone 1 or deferred?
 
 ---

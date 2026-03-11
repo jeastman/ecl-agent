@@ -19,11 +19,13 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_RESUME,
     TaskArtifactsListParams,
     TaskCreateParams,
     TaskCreateRequest,
     TaskGetParams,
     TaskLogsStreamParams,
+    TaskResumeParams,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
 
@@ -40,7 +42,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("health", help="Check runtime health.")
 
-    run = subparsers.add_parser("run", aliases=["submit"], help="Create a task through the runtime.")
+    run = subparsers.add_parser(
+        "run", aliases=["submit"], help="Create a task through the runtime."
+    )
     run.add_argument("objective", help="Task objective.")
     run.add_argument(
         "--workspace-root",
@@ -71,6 +75,10 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts = subparsers.add_parser("artifacts", help="List runtime-owned artifacts for a task.")
     artifacts.add_argument("task_id", help="Task identifier.")
     artifacts.add_argument("--run-id", help="Optional run identifier.")
+
+    resume = subparsers.add_parser("resume", help="Resume a paused or resumable task.")
+    resume.add_argument("task_id", help="Task identifier.")
+    resume.add_argument("--run-id", help="Optional run identifier.")
     return parser
 
 
@@ -171,6 +179,20 @@ def handle_artifacts(config_path: str, task_id: str, run_id: str | None) -> int:
     return 0
 
 
+def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_RESUME,
+        params=TaskResumeParams(task_id=task_id, run_id=run_id).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_task_snapshot(payload["result"]["task"]):
+        print(line)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -193,6 +215,12 @@ def main(argv: list[str] | None = None) -> int:
             return handle_logs(config_path=config_path, task_id=args.task_id, run_id=args.run_id)
         if args.command == "artifacts":
             return handle_artifacts(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+            )
+        if args.command == "resume":
+            return handle_resume(
                 config_path=config_path,
                 task_id=args.task_id,
                 run_id=args.run_id,

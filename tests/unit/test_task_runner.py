@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.task_runner import (
@@ -11,6 +12,7 @@ from apps.runtime.local_agent_runtime.task_runner import (
     StubAgentHarness,
     TaskRunner,
 )
+from packages.config.local_agent_config.loader import load_runtime_config
 from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
@@ -159,6 +161,62 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(failure.message, "boom")
         self.assertEqual(bus.list_events(task_id, run_id)[-1].event.event_type, "task.failed")
 
+    def test_task_runner_pauses_and_resumes_from_checkpoint_metadata(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=PauseThenResumeHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        paused_snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(paused_snapshot.status, TaskStatus.PAUSED)
+        self.assertTrue(paused_snapshot.is_resumable)
+        self.assertEqual(paused_snapshot.pause_reason, "awaiting resume")
+        self.assertIsNotNone(paused_snapshot.latest_checkpoint_id)
+        self.assertIsNotNone(paused_snapshot.checkpoint_thread_id)
+
+        resumed_snapshot = runner.resume_run(
+            task_id,
+            run_id,
+            identity_bundle_text="identity",
+        )
+        self.assertEqual(resumed_snapshot.status, TaskStatus.COMPLETED)
+        self.assertFalse(resumed_snapshot.is_resumable)
+        self.assertIsNotNone(resumed_snapshot.latest_checkpoint_id)
+        self.assertEqual(
+            [event.event.event_type for event in bus.list_events(task_id, run_id)],
+            [
+                "task.created",
+                "task.started",
+                "checkpoint.saved",
+                "task.paused",
+                "task.resumed",
+                "checkpoint.saved",
+                "artifact.created",
+                "task.completed",
+            ],
+        )
+        metrics = durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        self.assertIsNotNone(metrics)
+        assert metrics is not None
+        self.assertEqual(metrics.checkpoint_count, 2)
+        self.assertEqual(metrics.resume_count, 1)
+
 
 class EventingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
@@ -190,6 +248,33 @@ class EventingHarness:
 class RaisingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
         raise RuntimeError("boom")
+
+
+class PauseThenResumeHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        controller = request.checkpoint_controller
+        if controller is None:
+            raise AssertionError("checkpoint controller is required for pause/resume tests")
+        if request.resume_from_checkpoint_id is None:
+            metadata = controller.record_checkpoint("pause_requested")
+            if on_event is not None:
+                on_event("checkpoint.saved", metadata.to_dict())
+            return AgentExecutionResult(
+                success=False,
+                summary="Paused until explicitly resumed.",
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting resume",
+            )
+        metadata = controller.record_checkpoint("resumed")
+        if on_event is not None:
+            on_event("checkpoint.saved", metadata.to_dict())
+        request.sandbox.write_text("workspace/artifacts/resumed.md", "# Resumed\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Completed after resume.",
+            output_artifacts=["workspace/artifacts/resumed.md"],
+        )
 
 
 if __name__ == "__main__":
