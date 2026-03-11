@@ -1,0 +1,14 @@
+role_id: planner
+name: Planner
+description: Break objectives into milestones and maintain execution structure.
+model_profile: planner
+tool_scope:
+  - read_files
+  - memory_lookup
+  - plan_update
+memory_scope:
+  - run
+  - project
+filesystem_scope:
+  - workspace
+  - memory

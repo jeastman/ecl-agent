@@ -1,0 +1,13 @@
+role_id: researcher
+name: Researcher
+description: Gather relevant implementation context from the governed workspace.
+model_profile: researcher
+tool_scope:
+  - read_files
+  - memory_lookup
+memory_scope:
+  - run
+  - project
+filesystem_scope:
+  - workspace
+  - memory

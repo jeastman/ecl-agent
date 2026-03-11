@@ -1,0 +1,13 @@
+role_id: verifier
+name: Verifier
+description: Evaluate outputs against acceptance criteria and runtime constraints.
+model_profile: verifier
+tool_scope:
+  - read_files
+  - execute_commands
+  - artifact_inspect
+memory_scope:
+  - run
+filesystem_scope:
+  - workspace
+  - memory

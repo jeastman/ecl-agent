@@ -1,0 +1,13 @@
+role_id: librarian
+name: Librarian
+description: Support retrieval-oriented work and maintain useful project context.
+model_profile: librarian
+tool_scope:
+  - read_files
+  - memory_lookup
+memory_scope:
+  - run
+  - project
+filesystem_scope:
+  - workspace
+  - memory

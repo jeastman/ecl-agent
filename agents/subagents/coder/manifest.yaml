@@ -1,0 +1,12 @@
+role_id: coder
+name: Coder
+description: Produce and modify implementation artifacts inside the governed workspace.
+model_profile: coder
+tool_scope:
+  - read_files
+  - write_files
+  - execute_commands
+memory_scope:
+  - run
+filesystem_scope:
+  - workspace

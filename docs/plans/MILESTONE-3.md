@@ -560,3 +560,16 @@ Runtime Events
 ```
 
 The Local Agent Harness will now function as a **governed multi-agent runtime** built on Deep Agent.
+
+---
+
+# 15. Phased Delivery Plan
+
+Milestone 3 should be executed in phases so the runtime gains governed subagent behavior incrementally, with architecture seams validated before Deep Agent compilation and end-to-end verification.
+
+Phase documents:
+
+- [Phase 1 — Subagent Assets and Registry Foundations](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-3.phase-1.md)
+- [Phase 2 — Routing, Tool Governance, and Skill Discovery](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-3.phase-2.md)
+- [Phase 3 — Deep Agent Compilation and Runtime Wiring](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-3.phase-3.md)
+- [Phase 4 — Eventing, Verification, and Documentation Closure](/Users/jeastman/Projects/e/ecl-agent/docs/plans/milestone-3.phase-4.md)

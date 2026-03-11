@@ -60,7 +60,7 @@ The main remaining gaps against the spec are:
 - the recommended future-client structure remains only partially realized (`apps/web`, `packages/sdk-client`, and `packages/sdk-runtime` do not exist)
 - the protocol surface still omits `task.cancel`
 - the event vocabulary still omits `subagent.completed` and `memory.updated`
-- sub-agent registry, skills loading, and role-specific agent assets remain absent
+- sub-agent execution, skills loading, and adapter-side role compilation remain absent
 
 The net result is:
 
@@ -88,8 +88,9 @@ What exists:
 - `apps/cli` with the user-facing CLI entrypoint and runtime client
 - `apps/runtime` with runtime bootstrap, handlers, task runner, and stdio server
 - `packages/config`, `packages/identity`, `packages/observability`, `packages/protocol`, `packages/task_model`
-- `services/artifact_service`, `services/checkpoint_service`, `services/deepagent_runtime`, `services/memory_service`, `services/observability_service`, `services/policy_service`, `services/sandbox_service`
+- `services/artifact_service`, `services/checkpoint_service`, `services/deepagent_runtime`, `services/memory_service`, `services/observability_service`, `services/policy_service`, `services/sandbox_service`, `services/subagent_registry`
 - `agents/primary-agent/IDENTITY.md`
+- `agents/subagents/*`
 - `docs/adr`, `docs/specs`, `docs/plans`, `docs/architecture`
 
 What does not exist from the recommended shape in the master spec:
@@ -97,9 +98,8 @@ What does not exist from the recommended shape in the master spec:
 - `apps/web`
 - `packages/sdk-client`
 - `packages/sdk-runtime`
-- `agents/subagents/*`
 - `agents/primary-agent/SYSTEM_PROMPT.md`
-- `agents/*/skills/`
+- `agents/primary-agent/skills/`
 
 Assessment:
 
@@ -435,10 +435,14 @@ Assessment:
 
 **Spec expectation:** explicit roles such as Planner, Researcher, Coder, Verifier, and Librarian; role-specific tools, model profiles, prompts, and observability.
 
-**Observed implementation:** `Not Implemented` as a real subsystem, with one minimal placeholder signal.
+**Observed implementation:** `Partial`.
 
 What exists:
 
+- a runtime-owned `SubagentDefinition` / `SubagentAssetBundle` contract
+- a `SubagentRegistry` port and filesystem-backed registry implementation
+- baseline role directories under `agents/subagents/` for planner, researcher, coder, verifier, and librarian
+- manifest validation for role IDs, tool scopes, memory scopes, filesystem scopes, and optional assets
 - `subagent.started` events are emitted
 - the adapter synthesizes a single role `"primary"` with name `"repo-summarizer"`
 - `TaskSnapshot.active_subagent` can store the current role
@@ -446,22 +450,23 @@ What exists:
 
 What does not exist:
 
-- sub-agent registry
-- multiple role directories under `agents/subagents/`
-- role-specific tool scopes
-- role-specific prompts or overlays
+- runtime use of registry-loaded roles during execution
+- role-specific tool scopes wired into live tool binding
+- role-specific prompt assembly inside the adapter
 - subagent completion events
 - planner/researcher/coder/verifier/librarian execution flow
 
 Evidence:
 
+- [subagents.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/subagents.py)
+- [filesystem_subagent_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_registry/local_agent_subagent_registry/filesystem_subagent_registry.py)
 - [deepagent_harness.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/deepagent_harness.py)
 - [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py)
 - [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml)
 
 Assessment:
 
-- The codebase exposes a small amount of vocabulary for sub-agents, but the actual sub-agent system described by the master spec has not been built.
+- The codebase now has the Phase 1 asset and registry foundation, but execution still behaves as a single-agent system.
 
 ## 11. Model Routing
 
@@ -496,12 +501,12 @@ Assessment:
 
 **Spec expectation:** project-owned skill directories for primary and sub-agents, runtime-owned discovery/loading/exposure.
 
-**Observed implementation:** `Not Implemented`.
+**Observed implementation:** `Partial`.
 
 Verified:
 
 - there is no `skills/` directory under `agents/primary-agent`
-- there are no `agents/subagents/*` directories
+- there are reserved `skills/` directories under `agents/subagents/*`
 - there is no skill loader or skill registry in runtime or services code
 
 Evidence:
@@ -666,14 +671,20 @@ Explicitly deferred beyond Milestone 2:
 
 ### 16.4 Milestone 3
 
-**Observed status:** `Not Implemented`, except for placeholder config/event vocabulary.
+**Observed status:** `Partial`.
 
-Absent:
+Implemented foundations:
 
-- sub-agent registry
-- role-based tool scopes
+- runtime-owned subagent asset contracts and filesystem registry
+- baseline role assets under `agents/subagents/`
+- manifest validation for role IDs and declared scopes
+
+Still absent:
+
+- role-based tool scopes in live execution
 - model routing by role
 - planner/researcher/coder/verifier flow
+- adapter compilation of runtime-owned subagents
 
 ### 16.5 Milestone 4
 
@@ -719,7 +730,7 @@ These are the main verified gaps between the current implementation and the broa
 2. Missing event types: `subagent.completed`, `memory.updated`.
 3. No retrieval precedence or richer policy-governed memory behavior beyond current promotion/storage support.
 4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
-5. No sub-agent registry or multi-role orchestration.
+5. No multi-role orchestration or adapter compilation of registry-loaded subagents.
 6. No actual use of `subagent_model_overrides` for model routing.
 7. No skill discovery or loading subsystem.
 8. No web client or client SDK packages.
@@ -746,7 +757,7 @@ What remains future work relative to the master spec:
 
 - separate runtime-owned model routing for primary and sub-agent roles
 - sub-agents and role-based routing
-- skills loading and role-specific agent assets
+- skills loading and adapter-side use of role-specific agent assets
 - richer memory policy semantics
 - cancellation
 - additional clients
