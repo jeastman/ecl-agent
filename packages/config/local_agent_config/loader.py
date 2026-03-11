@@ -61,6 +61,7 @@ def load_runtime_config(path: str) -> RuntimeConfig:
     transport_payload = _required_table(payload, "transport")
     identity_payload = _required_table(payload, "identity")
     model_payload = _required_table(payload, "models")
+    default_model_payload = model_payload.get("default")
     primary_model_payload = _required_table(model_payload, "primary")
     persistence_payload = payload.get("persistence", {})
     policy_payload = payload.get("policy", {})
@@ -72,6 +73,8 @@ def load_runtime_config(path: str) -> RuntimeConfig:
     subagent_overrides_payload = model_payload.get("subagents", {})
     if not isinstance(subagent_overrides_payload, dict):
         raise ValueError("models.subagents must be a table")
+    if default_model_payload is not None and not isinstance(default_model_payload, dict):
+        raise ValueError("models.default must be a table")
 
     resolved_identity_path = _resolve_path(
         config_path.parent, _required_str(identity_payload, "path")
@@ -98,6 +101,14 @@ def load_runtime_config(path: str) -> RuntimeConfig:
         primary_model=ModelConfig(
             provider=_required_str(primary_model_payload, "provider"),
             model=_required_str(primary_model_payload, "model"),
+        ),
+        default_model=(
+            None
+            if default_model_payload is None
+            else ModelConfig(
+                provider=_required_str(default_model_payload, "provider"),
+                model=_required_str(default_model_payload, "model"),
+            )
         ),
         persistence=PersistenceConfig(
             root_path=str(resolved_root_path),

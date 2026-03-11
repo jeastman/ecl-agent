@@ -33,10 +33,44 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
 
             config = load_runtime_config(str(config_path))
 
+            self.assertIsNone(config.default_model)
             self.assertEqual(config.persistence.metadata_backend, "sqlite")
             self.assertEqual(config.persistence.event_backend, "sqlite")
             self.assertEqual(config.persistence.diagnostic_backend, "sqlite")
             self.assertTrue(config.persistence.root_path.endswith(".local-agent-harness"))
+
+    def test_loader_parses_optional_default_model(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.default]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5-mini'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_runtime_config(str(config_path))
+
+            assert config.default_model is not None
+            self.assertEqual(config.default_model.provider, "openai")
+            self.assertEqual(config.default_model.model, "gpt-5-mini")
 
     def test_loader_resolves_explicit_relative_persistence_root(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

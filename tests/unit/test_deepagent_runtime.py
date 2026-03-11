@@ -214,13 +214,13 @@ class SubagentCompilerTests(unittest.TestCase):
         compiled = compiler.compile_subagents(
             resolved_subagents=[resolved],
             identity_bundle_text="Primary identity",
-            task_objective="Inspect the repository",
+            delegation_description="Inspect the repository",
             run_id="run_1",
             tool_bindings=bindings,
         )
 
         self.assertEqual(len(compiled), 1)
-        self.assertEqual(compiled[0]["name"], "researcher")
+        self.assertEqual(compiled[0]["name"], "Researcher")
         self.assertIn("Researcher identity", compiled[0]["system_prompt"])
         self.assertEqual(captures, [("gpt-5-mini", "openai")])
         self.assertEqual(_tool_names(compiled[0]["tools"]), ["list_files", "read_file"])
@@ -264,7 +264,7 @@ class SubagentCompilerTests(unittest.TestCase):
                 ),
             ],
             identity_bundle_text="Primary identity",
-            task_objective="Inspect the repository",
+            delegation_description="Inspect the repository",
             run_id="run_1",
             tool_bindings=bindings,
         )
@@ -310,7 +310,7 @@ class SubagentCompilerTests(unittest.TestCase):
                     )
                 ],
                 identity_bundle_text="Primary identity",
-                task_objective="Inspect the repository",
+                delegation_description="Inspect the repository",
                 run_id="run_1",
                 tool_bindings=bindings,
             )
@@ -374,14 +374,15 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(result.output_artifacts, ["workspace/artifacts/result.md"])
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
         self.assertEqual(captures["agent_kwargs"]["skills"], ["# Skill\nUse it."])
-        self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "researcher")
+        self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "Researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
         self.assertIn("subagent.started", [event_type for event_type, _ in events])
         self.assertIn("subagent.completed", [event_type for event_type, _ in events])
         self.assertTrue(
             any(
                 payload.get("subagentId") == "researcher"
-                and payload.get("taskDescription") == "Inspect the repository"
+                and payload.get("taskDescription")
+                == "Delegated researcher work for objective: Inspect the repository"
                 and payload.get("runId") == "run_1"
                 for event_type, payload in events
                 if event_type == "subagent.started"
@@ -396,6 +397,52 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
                 if event_type == "subagent.completed"
             )
         )
+
+    def test_harness_emits_failed_completion_when_subagent_raises(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[_resolved_subagent(role_id="researcher")],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {
+                "model_name": model_name,
+                "model_provider": model_provider,
+            },
+            agent_factory=lambda **kwargs: FailingCompiledAgent(kwargs, {}),
+        ).execute(
+            request,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_message, "delegated failure")
+        started_events = [
+            payload for event_type, payload in events if event_type == "subagent.started"
+        ]
+        completed_events = [
+            payload for event_type, payload in events if event_type == "subagent.completed"
+        ]
+        self.assertEqual(len(started_events), 1)
+        self.assertEqual(len(completed_events), 1)
+        self.assertEqual(
+            started_events[0]["taskDescription"],
+            "Delegated researcher work for objective: Inspect the repository",
+        )
+        self.assertEqual(completed_events[0]["status"], "failed")
+        self.assertEqual(completed_events[0]["subagentId"], "researcher")
 
     def test_harness_pauses_cleanly_when_runtime_requests_approval(self) -> None:
         request = AgentExecutionRequest(
@@ -514,6 +561,24 @@ class FakeCompiledAgent:
     def _invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
         tool = next(tool for tool in self._tools if tool.name == tool_name)
         return tool.invoke(arguments)
+
+
+class FailingCompiledAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._subagents = kwargs.get("subagents") or []
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        for subagent in self._subagents:
+            for middleware in subagent.get("middleware", []):
+                middleware.wrap_model_call(
+                    FakeModelRequest(),
+                    lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
+                )
+        raise AssertionError("expected delegated failure before agent completion")
 
 
 class FakeCheckpointController:

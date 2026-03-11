@@ -8,6 +8,10 @@ mode = "stdio-jsonrpc"
 [identity]
 path = "../../agents/primary-agent/IDENTITY.md"
 
+[models.default]
+provider = "openai"
+model = "gpt-5-nano"
+
 [models.primary]
 provider = "openai"
 model = "gpt-5"

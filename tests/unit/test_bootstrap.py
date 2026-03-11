@@ -46,6 +46,10 @@ class BootstrapTests(unittest.TestCase):
             )
             self.assertEqual(researcher.model_route.source, "subagent_override")
             self.assertEqual(researcher.model_route.model, "gpt-5-mini")
+            default_model = config.default_model
+            self.assertIsNotNone(default_model)
+            assert default_model is not None
+            self.assertEqual(default_model.model, "gpt-5-nano")
             self.assertEqual(
                 [binding.tool_id for binding in researcher.tool_bindings],
                 ["read_files", "memory_lookup"],

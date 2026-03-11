@@ -37,7 +37,7 @@ class SubagentCompiler:
         *,
         resolved_subagents: list[ResolvedSubagentConfiguration],
         identity_bundle_text: str,
-        task_objective: str,
+        delegation_description: str,
         run_id: str,
         tool_bindings: SandboxToolBindings,
         on_event: EventCallback | None = None,
@@ -61,13 +61,16 @@ class SubagentCompiler:
                     _SubagentEventMiddleware(
                         role=definition.role_id,
                         run_id=run_id,
-                        task_objective=task_objective,
+                        delegation_description=_delegated_task_description(
+                            definition.role_id,
+                            delegation_description,
+                        ),
                         on_event=on_event,
                     )
                 )
             compiled.append(
                 {
-                    "name": definition.role_id,
+                    "name": definition.name,
                     "description": definition.description,
                     "system_prompt": self.prompt_builder.build_subagent_prompt(
                         resolved=resolved,
@@ -114,13 +117,13 @@ class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
         *,
         role: str,
         run_id: str,
-        task_objective: str,
+        delegation_description: str,
         on_event: EventCallback,
     ) -> None:
         super().__init__()
         self.role = role
         self.run_id = run_id
-        self.task_objective = task_objective
+        self.delegation_description = delegation_description
         self.on_event = on_event
         self._emitted = False
         self._completed = False
@@ -138,22 +141,34 @@ class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
                 {
                     "runId": self.run_id,
                     "subagentId": self.role,
-                    "taskDescription": self.task_objective,
+                    "taskDescription": self.delegation_description,
                     "timestamp": utc_now_timestamp(),
                 },
             )
             self._emitted = True
-        response = handler(request)
-        if not self._completed:
-            self.on_event(
-                "subagent.completed",
-                {
-                    "runId": self.run_id,
-                    "subagentId": self.role,
-                    "status": "success",
-                    "duration": round(max(monotonic() - (self._started_at or 0.0), 0.0), 6),
-                    "timestamp": utc_now_timestamp(),
-                },
-            )
-            self._completed = True
+        try:
+            response = handler(request)
+        except Exception:
+            self._emit_completed(status="failed")
+            raise
+        self._emit_completed(status="success")
         return response
+
+    def _emit_completed(self, *, status: str) -> None:
+        if self._completed:
+            return
+        self.on_event(
+            "subagent.completed",
+            {
+                "runId": self.run_id,
+                "subagentId": self.role,
+                "status": status,
+                "duration": round(max(monotonic() - (self._started_at or 0.0), 0.0), 6),
+                "timestamp": utc_now_timestamp(),
+            },
+        )
+        self._completed = True
+
+
+def _delegated_task_description(role_id: str, objective: str) -> str:
+    return f"Delegated {role_id} work for objective: {objective.strip()}"

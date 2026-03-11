@@ -187,7 +187,7 @@ class LangChainDeepAgentHarness:
         compiled_subagents = self._subagent_compiler.compile_subagents(
             resolved_subagents=request.resolved_subagents,
             identity_bundle_text=request.identity_bundle_text,
-            task_objective=request.objective,
+            delegation_description=_delegation_description(request.objective),
             run_id=request.run_id,
             tool_bindings=tools,
             on_event=callback,
@@ -285,6 +285,10 @@ def _execution_prompt(request: "AgentExecutionRequest") -> str:
 
 def _skill_payloads(skills: tuple[SkillDescriptor, ...]) -> list[str]:
     return [skill.prompt_text for skill in skills]
+
+
+def _delegation_description(objective: str) -> str:
+    return objective.strip()
 
 
 def _noop_event(_: str, __: dict[str, Any]) -> None:

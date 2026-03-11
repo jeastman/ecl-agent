@@ -9,6 +9,16 @@ from services.subagent_runtime.local_agent_subagent_runtime.model_routing import
 
 
 class RuntimeModelResolverTests(unittest.TestCase):
+    def test_resolve_default_uses_explicit_default_model_when_present(self) -> None:
+        config = load_runtime_config("docs/architecture/runtime.example.toml")
+
+        route = RuntimeModelResolver(config).resolve_default()
+
+        self.assertEqual(route.provider, "openai")
+        self.assertEqual(route.model, "gpt-5-nano")
+        self.assertEqual(route.profile_name, "default")
+        self.assertEqual(route.source, "default_model")
+
     def test_role_override_wins_when_present(self) -> None:
         config = load_runtime_config("docs/architecture/runtime.example.toml")
         config.subagent_model_overrides["coder"] = config.subagent_model_overrides["researcher"]
@@ -34,6 +44,17 @@ class RuntimeModelResolverTests(unittest.TestCase):
         config = load_runtime_config("docs/architecture/runtime.example.toml")
 
         route = RuntimeModelResolver(config).resolve_subagent("verifier", "verifier")
+
+        self.assertEqual(route.provider, config.primary_model.provider)
+        self.assertEqual(route.model, config.primary_model.model)
+        self.assertEqual(route.profile_name, "primary")
+        self.assertEqual(route.source, "primary_model")
+
+    def test_resolve_default_falls_back_to_primary_when_default_is_not_configured(self) -> None:
+        config = load_runtime_config("docs/architecture/runtime.example.toml")
+        config.default_model = None
+
+        route = RuntimeModelResolver(config).resolve_default()
 
         self.assertEqual(route.provider, config.primary_model.provider)
         self.assertEqual(route.model, config.primary_model.model)

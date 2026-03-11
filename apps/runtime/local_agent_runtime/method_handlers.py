@@ -234,6 +234,14 @@ class MethodHandlers:
                 "identity": {"path": self.config.identity_path},
                 "transport": {"mode": self.config.transport.mode},
                 "models": {
+                    "default": (
+                        None
+                        if self.config.default_model is None
+                        else {
+                            "provider": self.config.default_model.provider,
+                            "model": self.config.default_model.model,
+                        }
+                    ),
                     "primary": {
                         "provider": self.config.primary_model.provider,
                         "model": self.config.primary_model.model,
@@ -243,6 +251,21 @@ class MethodHandlers:
                         for role, model in self.config.subagent_model_overrides.items()
                     },
                     "resolved": {
+                        "default": (
+                            {
+                                "provider": self.config.default_model.provider,
+                                "model": self.config.default_model.model,
+                                "profile_name": "default",
+                                "source": "default_model",
+                            }
+                            if self.config.default_model is not None
+                            else {
+                                "provider": self.config.primary_model.provider,
+                                "model": self.config.primary_model.model,
+                                "profile_name": "primary",
+                                "source": "primary_model",
+                            }
+                        ),
                         "primary": {
                             "provider": self.config.primary_model.provider,
                             "model": self.config.primary_model.model,

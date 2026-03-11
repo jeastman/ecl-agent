@@ -215,12 +215,12 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["status"], "accepted")
             self.assertEqual(
                 [subagent["name"] for subagent in captures["agent_kwargs"]["subagents"]],
-                ["coder", "librarian", "planner", "researcher", "verifier"],
+                ["Coder", "Librarian", "Planner", "Researcher", "Verifier"],
             )
             researcher = next(
                 subagent
                 for subagent in captures["agent_kwargs"]["subagents"]
-                if subagent["name"] == "researcher"
+                if subagent["name"] == "Researcher"
             )
             self.assertEqual(researcher["model"]["model_name"], "gpt-5-mini")
             self.assertTrue((workspace_root / "artifacts" / "phase3-result.md").is_file())
@@ -249,11 +249,86 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(started_event.payload["runId"], payload["run_id"])
             self.assertEqual(started_event.payload["subagentId"], "researcher")
-            self.assertEqual(started_event.payload["taskDescription"], "Inspect the repo")
+            self.assertEqual(
+                started_event.payload["taskDescription"],
+                "Delegated researcher work for objective: Inspect the repo",
+            )
             self.assertEqual(completed_event.payload["runId"], payload["run_id"])
             self.assertEqual(completed_event.payload["subagentId"], "researcher")
             self.assertEqual(completed_event.payload["status"], "success")
             self.assertGreaterEqual(completed_event.payload["duration"], 0.0)
+
+    def test_runtime_persists_failed_subagent_completion_events(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            captures: dict[str, Any] = {}
+            harness = LangChainDeepAgentHarness(
+                model_name=config.primary_model.model,
+                model_provider=config.primary_model.provider,
+                model_factory=lambda model_name, *, model_provider: {
+                    "model_name": model_name,
+                    "model_provider": model_provider,
+                },
+                agent_factory=lambda **kwargs: _FailingCompiledAgent(kwargs, captures),
+            )
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=harness,
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Inspect the repo",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="phase3-failed",
+                correlation_id=new_correlation_id(),
+            )
+
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            payload = create_response.to_dict()["result"]
+            self.assertEqual(payload["status"], "accepted")
+
+            logs_request = JsonRpcRequest(
+                method=METHOD_TASK_LOGS_STREAM,
+                params={
+                    "task_id": payload["task_id"],
+                    "run_id": payload["run_id"],
+                    "include_history": True,
+                },
+                id="phase3-failed-logs",
+                correlation_id=new_correlation_id(),
+            )
+            logs_response, stream_events = server.handle_line(json.dumps(logs_request.to_dict()))
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            started_event = next(
+                event.event
+                for event in stream_events
+                if event.event.event_type == "subagent.started"
+            )
+            completed_event = next(
+                event.event
+                for event in stream_events
+                if event.event.event_type == "subagent.completed"
+            )
+            failed_task_event = next(
+                event.event for event in stream_events if event.event.event_type == "task.failed"
+            )
+            self.assertEqual(
+                started_event.payload["taskDescription"],
+                "Delegated researcher work for objective: Inspect the repo",
+            )
+            self.assertEqual(completed_event.payload["subagentId"], "researcher")
+            self.assertEqual(completed_event.payload["status"], "failed")
+            self.assertEqual(failed_task_event.payload["error"], "delegated failure")
 
     def test_runtime_server_streams_events_on_stdout_after_ack(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -564,6 +639,19 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 )
             )
             payload = response.to_dict()["result"]
+            self.assertEqual(
+                payload["effective_config"]["models"]["default"],
+                {"provider": "openai", "model": "gpt-5-nano"},
+            )
+            self.assertEqual(
+                payload["effective_config"]["models"]["resolved"]["default"],
+                {
+                    "provider": "openai",
+                    "model": "gpt-5-nano",
+                    "profile_name": "default",
+                    "source": "default_model",
+                },
+            )
             self.assertEqual(payload["effective_config"]["policy"]["api_token"], "***REDACTED***")
             self.assertEqual(
                 payload["effective_config"]["models"]["resolved"]["primary"]["source"],
@@ -999,7 +1087,7 @@ class _CapturingCompiledAgent:
         self._captures["invoke_payload"] = input
         self._captures["invoke_config"] = config
         for subagent in self._subagents:
-            if subagent.get("name") == "researcher":
+            if subagent.get("name") == "Researcher":
                 for middleware in subagent.get("middleware", []):
                     middleware.wrap_model_call(_FakeModelRequest(), lambda request: {"ok": True})
                 break
@@ -1015,6 +1103,25 @@ class _CapturingCompiledAgent:
 
 class _FakeModelRequest:
     system_message = None
+
+
+class _FailingCompiledAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._subagents = kwargs.get("subagents") or []
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_payload"] = input
+        self._captures["invoke_config"] = config
+        for subagent in self._subagents:
+            if subagent.get("name") == "Researcher":
+                for middleware in subagent.get("middleware", []):
+                    middleware.wrap_model_call(
+                        _FakeModelRequest(),
+                        lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
+                    )
+        raise AssertionError("expected delegated failure to abort execution")
 
 
 if __name__ == "__main__":

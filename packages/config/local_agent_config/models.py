@@ -35,5 +35,6 @@ class RuntimeConfig:
     transport: TransportConfig
     primary_model: ModelConfig
     persistence: PersistenceConfig
+    default_model: ModelConfig | None = None
     subagent_model_overrides: dict[str, ModelConfig] = field(default_factory=dict)
     policy: dict[str, object] = field(default_factory=dict)

@@ -16,6 +16,16 @@ class RuntimeModelResolver:
             source="primary_model",
         )
 
+    def resolve_default(self) -> ResolvedModelRoute:
+        if self._config.default_model is not None:
+            return ResolvedModelRoute(
+                provider=self._config.default_model.provider,
+                model=self._config.default_model.model,
+                profile_name="default",
+                source="default_model",
+            )
+        return self.resolve_primary()
+
     def resolve_subagent(self, role_id: str, model_profile: str | None) -> ResolvedModelRoute:
         if role_id in self._config.subagent_model_overrides:
             override = self._config.subagent_model_overrides[role_id]
@@ -36,10 +46,4 @@ class RuntimeModelResolver:
                 source="role_profile",
             )
 
-        primary = self.resolve_primary()
-        return ResolvedModelRoute(
-            provider=primary.provider,
-            model=primary.model,
-            profile_name=primary.profile_name,
-            source=primary.source,
-        )
+        return self.resolve_primary()
