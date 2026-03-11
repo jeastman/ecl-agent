@@ -23,5 +23,7 @@ event_backend = "sqlite"
 diagnostic_backend = "sqlite"
 
 [policy]
-approval_mode = "placeholder"
-sandbox_mode = "placeholder"
+approval_mode = "boundary"
+sandbox_mode = "governed"
+safe_command_classes = ["safe_read", "safe_exec"]
+deny_command_classes = ["network", "destructive", "secrets"]

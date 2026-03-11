@@ -19,20 +19,20 @@ The comparison below was verified against:
 Verification commands executed in this workspace:
 
 ```bash
-.venv/bin/pytest
-.venv/bin/ruff check apps packages services tests
+uv run pytest
+uv run ruff check apps packages services tests
 ```
 
 Observed results:
 
 ```text
-55 passed in 0.80s
+87 passed in 1.02s
 All checks passed!
 ```
 
 ## Executive Summary
 
-The repository now implements the Milestone 0 and Milestone 1 vertical slice described by the master spec:
+The repository now implements the Milestone 0 and Milestone 1 vertical slice described by the master spec, and it has also delivered most of the Milestone 2 durable-runtime work:
 
 - the monorepo has separate CLI and runtime applications
 - the runtime exposes a transport-neutral JSON-RPC-style contract over stdio
@@ -42,28 +42,34 @@ The repository now implements the Milestone 0 and Milestone 1 vertical slice des
 - identity ingestion exists and is wired into runtime startup and prompt construction
 - runtime event streaming and artifact registration exist
 
-The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the Milestone 2 durability substrate plus Phase 5 inspection/config/CLI completion:
+The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 2, but it now includes the Milestone 2 durability, governance, recovery, and inspection baseline:
 
-- durable memory/query contracts and storage seams
-- checkpoint metadata and thread registry seams
-- checkpoint-backed pause/resume execution flow
+- durable memory storage and inspection
+- checkpoint metadata, thread registry, and checkpoint-backed pause/resume execution flow
 - restart-time recovery of resumable runs
 - `task.resume`, `task.approve`, `task.approvals.list`, `task.diagnostics.list`, `memory.inspect`, and `config.get` protocol support
 - CLI support for approvals, diagnostics, approval decisions, resume, memory inspection, and redacted config inspection
-- persistent event/diagnostic/run-metrics storage with restart-safe inspection
-- approval and policy storage seams
-- task cancellation
-- policy engine behavior beyond a placeholder runtime-owned boundary
-- sub-agent registry and real multi-role orchestration
-- model routing beyond a single default model plus unused config placeholders
-- future clients such as web
+- persistent event, diagnostic, and run-metric storage with restart-safe inspection
+- runtime-owned policy engine, durable approval state, and run-scoped boundary grants
+
+However, the repository still does **not** fully satisfy the master spec's initial architecture baseline as written.
+
+The main remaining gaps against the spec are:
+
+- model routing does not yet support separate runtime-owned profiles for the primary agent and multiple sub-agent roles
+- the recommended future-client structure remains only partially realized (`apps/web`, `packages/sdk-client`, and `packages/sdk-runtime` do not exist)
+- the protocol surface still omits `task.cancel`
+- the event vocabulary still omits `subagent.completed` and `memory.updated`
+- sub-agent registry, skills loading, and role-specific agent assets remain absent
 
 The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
-- **Milestone 2:** durable memory, approval-governed pause/resume, restart recovery, and inspection-oriented protocol/CLI surfaces implemented; some later-spec behaviors still incomplete
+- **Milestone 2:** implemented as the durable, resumable, governed, and inspectable single-agent runtime baseline
 - **Milestone 3 and later:** mostly not implemented
+
+In master-spec terms, the repository is **substantially aligned** with the intended architecture, but it is **not yet fully compliant** with every acceptance item in section 28.
 
 ## Status Legend
 
@@ -635,9 +641,9 @@ Verified deliverables:
 
 ### 16.3 Milestone 2
 
-**Observed status:** `Partial`.
+**Observed status:** `Implemented`.
 
-Implemented in Phase 1 and Phase 2:
+Verified Milestone 2 deliverables:
 
 - persistent service packages for checkpoints, memory, policy, and observability
 - runtime-owned SQLite-backed seams for checkpoint metadata, thread bindings, approvals, memory records, persisted events, diagnostics, and run metrics
@@ -647,19 +653,16 @@ Implemented in Phase 1 and Phase 2:
 - runtime-owned pause/resume lifecycle in `TaskRunner`
 - `resume_service` and `recovery_service`
 - restart recovery that reconstructs resumable runs from persisted events and checkpoint metadata
-- `task.resume` protocol plumbing and minimal CLI support
-
-Implemented in Phase 3:
-
 - durable memory CRUD plus promotion from `run_state` and `scratch` into `project`
 - runtime-seeded inspectable identity memory records
-- `memory.inspect` protocol plumbing and runtime handler support
+- persistent event history, diagnostics, and run-metric inspection
+- `task.resume`, `task.approve`, `task.approvals.list`, `task.diagnostics.list`, `memory.inspect`, and `config.get`
+- CLI support for approvals, diagnostics, approval decisions, resume, memory inspection, and redacted config inspection
 
-Still absent or incomplete:
+Explicitly deferred beyond Milestone 2:
 
-- richer observability behavior on top of the new stores
-- CLI memory inspection support
-- policy-governed memory promotion and artifact publishing rules
+- policy-driven artifact publishing rules
+- retrieval precedence and richer memory policy semantics beyond current promotion/storage behavior
 
 ### 16.4 Milestone 3
 
@@ -686,13 +689,22 @@ Absent:
 
 Master spec section 28 says the initial architecture baseline is satisfied when ten conditions hold. Current status:
 
+- Fully implemented: 8 of 10
+- Partially implemented: 2 of 10
+- Not implemented: 0 of 10
+
+Conclusion:
+
+- The repository does **not yet** satisfy the master spec's initial architecture baseline in full.
+- The remaining blockers are criterion 7 (separate model routing profiles for primary and sub-agents) and criterion 10 (codebase structure clearly supports future clients).
+
 | Acceptance criterion | Status | Notes |
 | --- | --- | --- |
 | Distinct runtime and CLI applications exist | Implemented | `apps/runtime` and `apps/cli` are present and separate |
 | Runtime exposes a transport-neutral protocol contract implemented over stdio | Implemented | JSON-RPC 2.0 over stdio is implemented |
 | Task execution responsibility resides in the runtime | Implemented | `TaskRunner` owns execution flow |
 | LangChain DeepAgent is isolated behind project-owned ports/adapters | Implemented | confined to `services/deepagent_runtime` |
-| Memory taxonomy exists as explicit concepts in the codebase | Partial | run-local and identity exist; project memory and promotion logic do not |
+| Memory taxonomy exists as explicit concepts in the codebase | Implemented | run-state, scratch, project, and identity memory concepts exist with durable storage and inspection |
 | Sandbox/filesystem access is mediated by a dedicated abstraction | Implemented | `ExecutionSandbox`/`LocalExecutionSandbox` |
 | Model routing supports separate profiles for primary and sub-agents | Partial | config parses subagent overrides, runtime does not use them |
 | `IDENTITY.md` ingestion exists as a runtime concern | Implemented | loaded at runtime startup and injected into prompts |
@@ -705,7 +717,7 @@ These are the main verified gaps between the current implementation and the broa
 
 1. Missing protocol method: `task.cancel`.
 2. Missing event types: `subagent.completed`, `memory.updated`.
-3. No retrieval precedence or policy-governed promotion behavior for durable memory yet.
+3. No retrieval precedence or richer policy-governed memory behavior beyond current promotion/storage support.
 4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
 5. No sub-agent registry or multi-role orchestration.
 6. No actual use of `subagent_model_overrides` for model routing.
@@ -714,7 +726,7 @@ These are the main verified gaps between the current implementation and the broa
 
 ## 19. Bottom Line
 
-The repository currently satisfies the master spec as a **Milestone 0 + Milestone 1 implementation**, not as a full realization of the entire future platform described across the rest of the document.
+The repository currently implements a credible **Milestone 0 + Milestone 1 + Milestone 2 runtime baseline**, but it does **not** fully satisfy the master spec as written.
 
 What is real today:
 
@@ -724,17 +736,19 @@ What is real today:
 - a real DeepAgent-backed harness behind a project boundary
 - a governed sandbox
 - runtime-owned artifact registration
-- event streaming and task inspection
+- event streaming and persisted task inspection
 - identity ingestion
+- durable memory and memory inspection
+- approval-governed pause/resume with restart recovery
+- persisted diagnostics and redacted config inspection
 
 What remains future work relative to the master spec:
 
-- approvals
-- durable memory
-- policy engine behavior
+- separate runtime-owned model routing for primary and sub-agent roles
 - sub-agents and role-based routing
-- memory/config inspection
-- cancellation/resumption
+- skills loading and role-specific agent assets
+- richer memory policy semantics
+- cancellation
 - additional clients
 
-That makes the current codebase a credible implementation of the first vertical slice envisioned by the master spec, while leaving the post-Milestone-1 platform capabilities explicitly unfinished.
+That makes the current codebase a strong single-agent governed runtime with durable Milestone 2 capabilities, while leaving several master-spec structural and multi-agent requirements explicitly unfinished.

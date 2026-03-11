@@ -1,7 +1,7 @@
 ## Local Agent Harness — Durable Runtime, Memory, and Approval Governance
 
-**Status:** Draft
-**Date:** 2026-03-10
+**Status:** Implemented through Phase 6 closure
+**Date:** 2026-03-11
 **Audience:** Runtime engineers, CLI engineers, AI coding agents
 **Purpose:** Concrete implementation blueprint for delivering Milestone 2
 
@@ -23,6 +23,11 @@ It defines:
 - test and rollout order
 
 This document is intentionally practical. It should be usable as a build map for human developers and AI coding agents.
+
+Phase 6 closure validated the final build-order steps:
+
+- **Crash/restart recovery validation:** implemented and covered by runtime restart/recovery tests
+- **Acceptance testing:** completed through repository test and lint passes plus milestone acceptance audit
 
 ---
 

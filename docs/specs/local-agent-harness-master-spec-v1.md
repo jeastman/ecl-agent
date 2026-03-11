@@ -1,8 +1,8 @@
 # Local Agent Harness — Master Specification v1
 
-**Status:** Draft v1  
-**Date:** 2026-03-10  
-**Audience:** Architects, platform engineers, runtime engineers, CLI/client engineers, AI coding agents  
+**Status:** Draft v1
+**Date:** 2026-03-10
+**Audience:** Architects, platform engineers, runtime engineers, CLI/client engineers, AI coding agents
 **Scope:** Foundational architecture and Milestone 0–1 implementation guidance for a local AI agent harness and initial CLI client
 
 ---
@@ -601,6 +601,7 @@ The system should define explicit architectural roles:
 - **Researcher**
   - gathers facts, docs, and constraints
   - synthesizes relevant information
+  - can use web search and web fetch tools
 
 - **Coder**
   - writes and modifies implementation artifacts

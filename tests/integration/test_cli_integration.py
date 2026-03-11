@@ -122,6 +122,25 @@ class CliIntegrationTests(unittest.TestCase):
                             [
                                 "--config",
                                 "ignored.toml",
+                                "resume",
+                                "task_123",
+                                "--run-id",
+                                "run_456",
+                            ]
+                        ),
+                        0,
+                    )
+                    output = stdout.getvalue()
+                self.assertIn("task_id=task_123", output)
+                self.assertIn("status=completed", output)
+                self.assertIn("latest_summary=Run resumed and completed.", output)
+
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(
+                        cli.main(
+                            [
+                                "--config",
+                                "ignored.toml",
                                 "memory",
                                 "--scope",
                                 "project",
@@ -291,6 +310,24 @@ def _fake_runtime_script() -> str:
                         "status": "completed",
                         "objective": "Inspect repo",
                     },
+                },
+            }
+            print(json.dumps(response))
+        elif method == "task.resume":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "task": {
+                        "task_id": "task_123",
+                        "run_id": "run_456",
+                        "status": "completed",
+                        "objective": "Inspect repo",
+                        "current_phase": "completed",
+                        "latest_summary": "Run resumed and completed.",
+                        "artifact_count": 1,
+                    }
                 },
             }
             print(json.dumps(response))

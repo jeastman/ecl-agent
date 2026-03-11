@@ -1,8 +1,8 @@
 # MILESTONE-2.md
 ## Local Agent Harness — Durable Runtime, Memory, and Approval Governance
 
-**Status:** Planned
-**Date:** 2026-03-10
+**Status:** Implemented
+**Date:** 2026-03-11
 **Milestone Theme:** Durable, Governed, and Resumable Agent Runtime
 
 ---
@@ -531,7 +531,25 @@ The system will be capable of supporting **long-running autonomous tasks safely*
 
 ---
 
-# 15. Next Milestone Preview
+# 15. Phase 6 Closure Evidence
+
+Milestone 2 closure was validated on **2026-03-11** using the repository test suite, lint checks, and direct documentation/code audit.
+
+| Acceptance criterion | Verification method | Result |
+|---|---|---|
+| durable memory store exists | verified `services/memory_service`, runtime bootstrap wiring, and persistence tests | Pass |
+| `memory.inspect` works | runtime integration coverage plus CLI/unit rendering coverage | Pass |
+| checkpoint store integrated with DeepAgent | verified `services/deepagent_runtime/checkpoint_adapter.py` and restart/resume integration tests | Pass |
+| tasks survive runtime restart | runtime restart recovery integration tests for paused and approval-blocked runs | Pass |
+| approval workflow works end-to-end | task runner and runtime integration tests for approve and reject paths | Pass |
+| policy engine governs runtime actions | policy unit coverage plus denied-operation diagnostics tests | Pass |
+| event history persists | persisted event replay and restart inspection integration coverage | Pass |
+| CLI can inspect approvals and memory | CLI integration and unit coverage for approvals, memory, diagnostics, resume, and config inspection | Pass |
+| runtime/client separation preserved | code audit of `apps/runtime`, `apps/cli`, `packages/protocol`, and adapter boundaries | Pass |
+
+---
+
+# 16. Next Milestone Preview
 
 Milestone 3 will introduce:
 
