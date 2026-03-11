@@ -31,6 +31,9 @@ class BootstrapTests(unittest.TestCase):
                 services.policy_engine.evaluate(context=_operation_context()).decision,
                 "ALLOW",
             )
+            identity_records = services.memory_store.list_memory(scope="identity")
+            self.assertEqual(len(identity_records), 1)
+            self.assertEqual(identity_records[0].namespace, "identity.bundle")
 
 
 def _operation_context():

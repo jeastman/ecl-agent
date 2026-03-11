@@ -4,6 +4,7 @@ from apps.runtime.local_agent_runtime.artifact_store import InMemoryArtifactStor
 from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
+from apps.runtime.local_agent_runtime.memory_seed import seed_identity_memory
 from apps.runtime.local_agent_runtime.recovery_service import RecoveryService
 from apps.runtime.local_agent_runtime.resume_service import ResumeService
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
@@ -33,6 +34,7 @@ def create_runtime_server(
         config,
         runtime_root_override=runtime_root,
     )
+    seed_identity_memory(identity, durable_services.memory_store)
     resolved_runtime_root = durable_services.root_path
     sandbox_factory = LocalExecutionSandboxFactory(runtime_root=resolved_runtime_root)
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)

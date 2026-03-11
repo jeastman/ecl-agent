@@ -21,6 +21,13 @@ from services.checkpoint_service.local_agent_checkpoint_service.thread_registry 
     SQLiteThreadRegistry,
 )
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
+from services.memory_service.local_agent_memory_service.memory_promotion import (
+    MEMORY_SCOPE_IDENTITY,
+    MEMORY_SCOPE_PROJECT,
+    MEMORY_SCOPE_RUN_STATE,
+    MEMORY_SCOPE_SCRATCH,
+    MemoryPromotionService,
+)
 from services.memory_service.local_agent_memory_service.memory_store import SQLiteMemoryStore
 from services.observability_service.local_agent_observability_service.event_store import (
     SQLiteEventStore,
@@ -137,6 +144,151 @@ class MemoryStoreTests(unittest.TestCase):
             self.assertEqual(loaded.summary, record.summary)
             self.assertEqual(len(listed), 1)
 
+    def test_memory_store_orders_and_filters_entries(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteMemoryStore(str(Path(temp_dir) / "runtime.db"))
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="mem_b",
+                    scope=MEMORY_SCOPE_PROJECT,
+                    namespace="project.conventions",
+                    content="Second",
+                    summary="Second",
+                    provenance={"task_id": "task_1"},
+                    created_at="2026-03-10T00:00:01Z",
+                    updated_at="2026-03-10T00:00:01Z",
+                )
+            )
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="mem_a",
+                    scope=MEMORY_SCOPE_PROJECT,
+                    namespace="project.conventions",
+                    content="First",
+                    summary="First",
+                    provenance={"task_id": "task_1"},
+                    created_at="2026-03-10T00:00:01Z",
+                    updated_at="2026-03-10T00:00:01Z",
+                )
+            )
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="scratch_1",
+                    scope=MEMORY_SCOPE_SCRATCH,
+                    namespace="scratch.notes",
+                    content="Scratch",
+                    summary="Scratch",
+                    provenance={"task_id": "task_1"},
+                    created_at="2026-03-10T00:00:02Z",
+                    updated_at="2026-03-10T00:00:02Z",
+                )
+            )
+
+            listed = store.list_memory(scope=MEMORY_SCOPE_PROJECT, namespace="project.conventions")
+
+            self.assertEqual([record.memory_id for record in listed], ["mem_a", "mem_b"])
+
+    def test_memory_store_deletes_records(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteMemoryStore(str(Path(temp_dir) / "runtime.db"))
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="mem_1",
+                    scope=MEMORY_SCOPE_PROJECT,
+                    namespace="project.conventions",
+                    content="Delete me",
+                    summary="Delete me",
+                    provenance={"task_id": "task_1"},
+                    created_at="2026-03-10T00:00:00Z",
+                    updated_at="2026-03-10T00:00:00Z",
+                )
+            )
+
+            store.delete_memory("mem_1")
+
+            self.assertIsNone(store.read_memory("mem_1"))
+            self.assertEqual(store.list_memory(scope=MEMORY_SCOPE_PROJECT), [])
+
+    def test_memory_store_promotes_run_state_record_to_project(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteMemoryStore(str(Path(temp_dir) / "runtime.db"))
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="mem_1",
+                    scope=MEMORY_SCOPE_RUN_STATE,
+                    namespace="run.notes",
+                    content="Observed repository convention",
+                    summary="Convention",
+                    provenance={"task_id": "task_1", "run_id": "run_1"},
+                    created_at="2026-03-10T00:00:00Z",
+                    updated_at="2026-03-10T00:00:00Z",
+                    source_run="run_1",
+                    confidence=0.9,
+                )
+            )
+
+            promoted = store.promote_memory("mem_1")
+
+            self.assertIsNotNone(promoted)
+            assert promoted is not None
+            self.assertEqual(promoted.scope, MEMORY_SCOPE_PROJECT)
+            self.assertEqual(promoted.source_run, "run_1")
+            self.assertEqual(promoted.confidence, 0.9)
+            self.assertEqual(promoted.provenance["promotion"]["from_scope"], MEMORY_SCOPE_RUN_STATE)
+            self.assertEqual(store.read_memory("mem_1").scope, MEMORY_SCOPE_PROJECT)  # type: ignore[union-attr]
+
+    def test_memory_store_promotes_scratch_record_to_project(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteMemoryStore(str(Path(temp_dir) / "runtime.db"))
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="mem_1",
+                    scope=MEMORY_SCOPE_SCRATCH,
+                    namespace="scratch.notes",
+                    content="Useful scratch fact",
+                    summary="Scratch fact",
+                    provenance={"task_id": "task_1"},
+                    created_at="2026-03-10T00:00:00Z",
+                    updated_at="2026-03-10T00:00:00Z",
+                )
+            )
+
+            promoted = store.promote_memory("mem_1")
+
+            self.assertIsNotNone(promoted)
+            assert promoted is not None
+            self.assertEqual(promoted.scope, MEMORY_SCOPE_PROJECT)
+
+    def test_memory_store_rejects_invalid_promotions(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteMemoryStore(str(Path(temp_dir) / "runtime.db"))
+            store.write_memory(
+                MemoryRecord(
+                    memory_id="identity_1",
+                    scope=MEMORY_SCOPE_IDENTITY,
+                    namespace="identity.bundle",
+                    content="Identity",
+                    summary="Identity",
+                    provenance={"source_path": "IDENTITY.md"},
+                    created_at="2026-03-10T00:00:00Z",
+                    updated_at="2026-03-10T00:00:00Z",
+                )
+            )
+
+            self.assertIsNone(store.promote_memory("missing"))
+            with self.assertRaisesRegex(ValueError, "not promotable"):
+                store.promote_memory("identity_1")
+            with self.assertRaisesRegex(ValueError, "target must be project"):
+                store.promote_memory("identity_1", target_scope=MEMORY_SCOPE_RUN_STATE)
+
+    def test_memory_promotion_service_limits_agent_writable_scopes(self) -> None:
+        service = MemoryPromotionService()
+
+        self.assertTrue(service.can_agent_write(MEMORY_SCOPE_RUN_STATE))
+        self.assertTrue(service.can_agent_write(MEMORY_SCOPE_SCRATCH))
+        self.assertFalse(service.can_agent_write(MEMORY_SCOPE_PROJECT))
+        self.assertFalse(service.can_agent_write(MEMORY_SCOPE_IDENTITY))
+
 
 class RuntimeStateTests(unittest.TestCase):
     def test_task_snapshot_exposes_phase_one_resumability_fields(self) -> None:
@@ -174,6 +326,7 @@ class InterfaceIsolationTests(unittest.TestCase):
             "services.checkpoint_service.local_agent_checkpoint_service.checkpoint_store",
             "services.checkpoint_service.local_agent_checkpoint_service.thread_registry",
             "services.memory_service.local_agent_memory_service.memory_store",
+            "services.memory_service.local_agent_memory_service.memory_promotion",
             "services.policy_service.local_agent_policy_service.policy_engine",
             "services.policy_service.local_agent_policy_service.approval_store",
             "services.observability_service.local_agent_observability_service.event_store",

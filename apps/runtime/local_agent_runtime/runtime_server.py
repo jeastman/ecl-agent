@@ -7,6 +7,7 @@ from typing import TextIO
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
 from packages.observability.local_agent_observability.logging import log_record
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
@@ -108,6 +109,15 @@ class RuntimeServer:
                 return JsonRpcResponse(
                     id=request.id, correlation_id=correlation_id, result=result
                 ), events
+            if request.method == METHOD_MEMORY_INSPECT:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.memory_inspect(request.params),
+                    ),
+                    [],
+                )
             return (
                 JsonRpcResponse(
                     id=request.id,

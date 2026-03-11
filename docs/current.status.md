@@ -154,6 +154,7 @@ Implemented and wired end to end:
 - `task.resume`
 - `task.logs.stream`
 - `task.artifacts.list`
+- `memory.inspect`
 
 Evidence:
 
@@ -166,7 +167,6 @@ Specified by the master spec but not implemented:
 - `task.cancel`
 - `task.approve`
 - `config.get`
-- `memory.inspect`
 
 Evidence of absence:
 
@@ -359,8 +359,7 @@ Implemented:
 Not implemented:
 
 - memory retrieval precedence logic
-- promotion rules
-- `memory.inspect` protocol method
+- policy-governed promotion decisions
 
 Important nuance:
 
@@ -372,11 +371,11 @@ Evidence:
 - [run_state_store.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/run_state_store.py)
 - [memory_models.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_models.py)
 - [memory_store.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_store.py)
-- absence of durable memory inspection methods in `packages/protocol`
+- runtime-facing `memory.inspect` models and handler path in the protocol/runtime packages
 
 Assessment:
 
-- Memory taxonomy now exists in code shape with durable storage seams, but retrieval, promotion, and inspection behavior are still unfinished.
+- Memory taxonomy now exists in code shape with durable storage, explicit promotion mechanics, identity inspection seeding, and runtime inspection support, but retrieval precedence and policy-governed promotion remain unfinished.
 
 ## 9. Identity and Policy
 
@@ -645,11 +644,17 @@ Implemented in Phase 1 and Phase 2:
 - restart recovery that reconstructs resumable runs from persisted events and checkpoint metadata
 - `task.resume` protocol plumbing and minimal CLI support
 
+Implemented in Phase 3:
+
+- durable memory CRUD plus promotion from `run_state` and `scratch` into `project`
+- runtime-seeded inspectable identity memory records
+- `memory.inspect` protocol plumbing and runtime handler support
+
 Still absent or incomplete:
 
 - approval workflow and policy enforcement
 - richer observability behavior on top of the new stores
-- memory inspection support
+- CLI memory inspection support
 
 ### 16.4 Milestone 3
 
@@ -693,9 +698,9 @@ Master spec section 28 says the initial architecture baseline is satisfied when 
 
 These are the main verified gaps between the current implementation and the broader master spec:
 
-1. Missing protocol methods: `task.cancel`, `task.approve`, `config.get`, `memory.inspect`.
+1. Missing protocol methods: `task.cancel`, `task.approve`, `config.get`.
 2. Missing event types: `subagent.completed`, `approval.requested`, `memory.updated`.
-3. No end-to-end durable project memory retrieval, promotion, or inspection behavior.
+3. No retrieval precedence or policy-governed promotion behavior for durable memory yet.
 4. No policy enforcement or approval workflow, despite the new runtime-owned policy and approval boundaries.
 5. No approval request events or CLI approval handling yet.
 6. No sub-agent registry or multi-role orchestration.

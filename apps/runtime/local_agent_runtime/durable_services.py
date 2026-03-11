@@ -17,6 +17,9 @@ from services.memory_service.local_agent_memory_service.memory_store import (
     MemoryStore,
     SQLiteMemoryStore,
 )
+from services.memory_service.local_agent_memory_service.memory_promotion import (
+    MemoryPromotionService,
+)
 from services.observability_service.local_agent_observability_service.diagnostic_store import (
     DiagnosticStore,
     SQLiteDiagnosticStore,
@@ -46,6 +49,7 @@ class DurableRuntimeServices:
     checkpoint_store: CheckpointStore
     thread_registry: ThreadRegistry
     memory_store: MemoryStore
+    memory_promotion_service: MemoryPromotionService
     approval_store: ApprovalStore
     policy_engine: PolicyEngine
     event_store: EventStore
@@ -71,6 +75,7 @@ def create_durable_runtime_services(
         checkpoint_store=SQLiteCheckpointStore(str(database_path), thread_registry=thread_registry),
         thread_registry=thread_registry,
         memory_store=SQLiteMemoryStore(str(database_path)),
+        memory_promotion_service=MemoryPromotionService(),
         approval_store=SQLiteApprovalStore(str(database_path)),
         policy_engine=PlaceholderPolicyEngine(),
         event_store=SQLiteEventStore(str(database_path)),

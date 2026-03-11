@@ -6,7 +6,11 @@ from packages.protocol.local_agent_protocol.models import (
     EventEnvelope,
     EventSource,
     EventSourceKind,
+    METHOD_MEMORY_INSPECT,
     METHOD_TASK_LOGS_STREAM,
+    MemoryInspectEntry,
+    MemoryInspectParams,
+    MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeEvent,
     TaskArtifactsListParams,
@@ -72,6 +76,39 @@ class ProtocolModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
+
+    def test_memory_inspect_params_validate(self) -> None:
+        params = MemoryInspectParams.from_dict(
+            {"task_id": "task_1", "run_id": "run_1", "scope": "run_state"}
+        )
+        self.assertEqual(params.task_id, "task_1")
+        self.assertEqual(params.run_id, "run_1")
+        self.assertEqual(params.scope, "run_state")
+        self.assertEqual(METHOD_MEMORY_INSPECT, "memory.inspect")
+        with self.assertRaisesRegex(ValueError, "memory.inspect run_id requires task_id"):
+            MemoryInspectParams.from_dict({"run_id": "run_1"})
+
+    def test_memory_inspect_result_serialization(self) -> None:
+        result = MemoryInspectResult(
+            entries=[
+                MemoryInspectEntry(
+                    memory_id="mem_1",
+                    scope="project",
+                    namespace="project.conventions",
+                    content="Prefer explicit dataclasses.",
+                    summary="Coding conventions",
+                    provenance={"task_id": "task_1"},
+                    created_at=utc_now_timestamp(),
+                    updated_at=utc_now_timestamp(),
+                )
+            ],
+            scope="project",
+            count=1,
+        )
+        payload = result.to_dict()
+        self.assertEqual(payload["scope"], "project")
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["entries"][0]["memory_id"], "mem_1")
 
     def test_runtime_event_serialization(self) -> None:
         event = RuntimeEvent(

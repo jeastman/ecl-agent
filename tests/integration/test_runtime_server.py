@@ -16,6 +16,7 @@ from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
+    METHOD_MEMORY_INSPECT,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
@@ -24,8 +25,10 @@ from packages.protocol.local_agent_protocol.models import (
     PROTOCOL_VERSION,
     TaskCreateParams,
     TaskCreateRequest,
+    utc_now_timestamp,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
+from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
     LangChainDeepAgentHarness,
 )
@@ -201,6 +204,197 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(output_lines[0]["result"]["stream_open"], True)
             self.assertEqual(output_lines[1]["type"], "runtime.event")
             self.assertEqual(output_lines[1]["event"]["event_type"], "task.created")
+
+    def test_memory_inspect_returns_project_and_run_state_by_default(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            correlation_id = new_correlation_id()
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Inspect the repo",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="1",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+            memory_store = server.handlers.durable_services.memory_store
+            timestamp = utc_now_timestamp()
+            memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="project_1",
+                    scope="project",
+                    namespace="project.conventions",
+                    content="Prefer explicit dataclasses.",
+                    summary="Convention",
+                    provenance={"task_id": task_id},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+            memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="run_1",
+                    scope="run_state",
+                    namespace="run.notes",
+                    content="Observed useful detail.",
+                    summary="Run note",
+                    provenance={"task_id": task_id, "run_id": run_id},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    source_run=run_id,
+                )
+            )
+            memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="scratch_1",
+                    scope="scratch",
+                    namespace="scratch.notes",
+                    content="Do not show by default.",
+                    summary="Scratch",
+                    provenance={"task_id": task_id, "run_id": run_id},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    source_run=run_id,
+                )
+            )
+
+            inspect_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            payload = inspect_response.to_dict()["result"]
+            self.assertEqual(payload["scope"], "default")
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(
+                {entry["memory_id"] for entry in payload["entries"]},
+                {"project_1", "run_1"},
+            )
+
+    def test_memory_inspect_supports_identity_scope_and_restart_persistence(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            runtime_root = str(Path(temp_dir) / "runtime")
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=runtime_root,
+            )
+            timestamp = utc_now_timestamp()
+            server.handlers.durable_services.memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="project_1",
+                    scope="project",
+                    namespace="project.outcomes",
+                    content="Outcome persisted across restart.",
+                    summary="Outcome",
+                    provenance={"task_id": "task_1"},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+
+            recovered_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=runtime_root,
+            )
+
+            identity_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"scope": "identity"},
+                        id="3",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            identity_payload = identity_response.to_dict()["result"]
+            self.assertEqual(identity_payload["count"], 1)
+            self.assertEqual(identity_payload["entries"][0]["scope"], "identity")
+
+            project_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"scope": "project"},
+                        id="4",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            project_payload = project_response.to_dict()["result"]
+            self.assertEqual(project_payload["count"], 1)
+            self.assertEqual(project_payload["entries"][0]["memory_id"], "project_1")
+
+    def test_memory_inspect_returns_scratch_only_when_explicitly_requested(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            timestamp = utc_now_timestamp()
+            server.handlers.durable_services.memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="scratch_1",
+                    scope="scratch",
+                    namespace="scratch.notes",
+                    content="Scratch detail",
+                    summary="Scratch detail",
+                    provenance={"task_id": "task_1", "run_id": "run_1"},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                    source_run="run_1",
+                )
+            )
+
+            response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"scope": "scratch", "task_id": "task_1", "run_id": "run_1"},
+                        id="5",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            payload = response.to_dict()["result"]
+            self.assertEqual(payload["scope"], "scratch")
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["entries"][0]["namespace"], "scratch.notes")
 
     def test_runtime_restart_recovers_paused_run_and_resumes_it(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

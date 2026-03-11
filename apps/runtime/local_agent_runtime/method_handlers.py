@@ -12,6 +12,9 @@ from apps.runtime.local_agent_runtime.task_runner import TaskRunner
 from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
 from packages.protocol.local_agent_protocol.models import (
+    MemoryInspectEntry,
+    MemoryInspectParams,
+    MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeHealthResult,
     TaskArtifactsListParams,
@@ -24,6 +27,13 @@ from packages.protocol.local_agent_protocol.models import (
     TaskResumeResult,
     TaskLogsStreamParams,
     TaskLogsStreamResult,
+)
+from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
+from services.memory_service.local_agent_memory_service.memory_promotion import (
+    MEMORY_SCOPE_IDENTITY,
+    MEMORY_SCOPE_PROJECT,
+    MEMORY_SCOPE_RUN_STATE,
+    MEMORY_SCOPE_SCRATCH,
 )
 
 
@@ -114,3 +124,76 @@ class MethodHandlers:
             ),
             history,
         )
+
+    def memory_inspect(self, params: dict) -> MemoryInspectResult:
+        request = MemoryInspectParams.from_dict(params)
+        entries = self._select_memory_entries(request)
+        return MemoryInspectResult(
+            entries=[_memory_record_to_entry(entry) for entry in entries],
+            scope=request.scope or "default",
+            count=len(entries),
+        )
+
+    def _select_memory_entries(self, request: MemoryInspectParams) -> list[MemoryRecord]:
+        store = self.durable_services.memory_store
+        if request.scope is None:
+            entries = list(store.list_memory(scope=MEMORY_SCOPE_PROJECT))
+            if request.task_id is not None:
+                entries.extend(
+                    entry
+                    for entry in store.list_memory(scope=MEMORY_SCOPE_RUN_STATE)
+                    if _matches_memory_context(entry, request.task_id, request.run_id)
+                )
+            return sorted(entries, key=lambda entry: (entry.created_at, entry.memory_id))
+
+        if request.scope == MEMORY_SCOPE_PROJECT:
+            return store.list_memory(scope=MEMORY_SCOPE_PROJECT)
+        if request.scope == MEMORY_SCOPE_IDENTITY:
+            return store.list_memory(scope=MEMORY_SCOPE_IDENTITY)
+        if request.scope == MEMORY_SCOPE_RUN_STATE:
+            entries = store.list_memory(scope=MEMORY_SCOPE_RUN_STATE)
+            if request.task_id is None:
+                return entries
+            return [
+                entry
+                for entry in entries
+                if _matches_memory_context(entry, request.task_id, request.run_id)
+            ]
+        if request.scope == MEMORY_SCOPE_SCRATCH:
+            entries = store.list_memory(scope=MEMORY_SCOPE_SCRATCH)
+            if request.task_id is None:
+                return entries
+            return [
+                entry
+                for entry in entries
+                if _matches_memory_context(entry, request.task_id, request.run_id)
+            ]
+        raise ValueError(
+            "memory.inspect scope must be one of project, identity, run_state, scratch"
+        )
+
+
+def _memory_record_to_entry(record: MemoryRecord) -> MemoryInspectEntry:
+    return MemoryInspectEntry(
+        memory_id=record.memory_id,
+        scope=record.scope,
+        namespace=record.namespace,
+        content=record.content,
+        summary=record.summary,
+        provenance=dict(record.provenance),
+        created_at=record.created_at,
+        updated_at=record.updated_at,
+        source_run=record.source_run,
+        confidence=record.confidence,
+    )
+
+
+def _matches_memory_context(record: MemoryRecord, task_id: str, run_id: str | None) -> bool:
+    provenance_task_id = record.provenance.get("task_id")
+    provenance_run_id = record.provenance.get("run_id")
+    task_matches = provenance_task_id == task_id if provenance_task_id is not None else True
+    if not task_matches:
+        return False
+    if run_id is None:
+        return True
+    return record.source_run == run_id or provenance_run_id == run_id

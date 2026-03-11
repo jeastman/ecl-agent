@@ -15,6 +15,7 @@ METHOD_TASK_GET = "task.get"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
+METHOD_MEMORY_INSPECT = "memory.inspect"
 
 
 def utc_now_timestamp() -> str:
@@ -399,6 +400,59 @@ class TaskLogsStreamResult:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class MemoryInspectEntry:
+    memory_id: str
+    scope: str
+    namespace: str
+    content: str
+    summary: str
+    provenance: dict[str, Any]
+    created_at: str
+    updated_at: str
+    source_run: str | None = None
+    confidence: float | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass(slots=True)
+class MemoryInspectParams:
+    task_id: str | None = None
+    run_id: str | None = None
+    scope: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "MemoryInspectParams":
+        task_id = payload.get("task_id")
+        run_id = payload.get("run_id")
+        scope = payload.get("scope")
+        for name, value in (("task_id", task_id), ("run_id", run_id), ("scope", scope)):
+            if value is not None and not isinstance(value, str):
+                raise ValueError(f"memory.inspect {name} must be a string when provided")
+        if run_id is not None and task_id is None:
+            raise ValueError("memory.inspect run_id requires task_id")
+        return cls(task_id=task_id, run_id=run_id, scope=scope)
+
+
+@dataclass(slots=True)
+class MemoryInspectResult:
+    entries: list[MemoryInspectEntry]
+    scope: str
+    count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "entries": [entry.to_dict() for entry in self.entries],
+            "scope": self.scope,
+            "count": self.count,
+        }
 
 
 @dataclass(slots=True)

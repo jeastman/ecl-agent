@@ -5,6 +5,10 @@ import sqlite3
 from typing import Protocol, cast
 
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
+from services.memory_service.local_agent_memory_service.memory_promotion import (
+    MEMORY_SCOPE_PROJECT,
+    MemoryPromotionService,
+)
 
 
 class MemoryStore(Protocol):
@@ -18,15 +22,21 @@ class MemoryStore(Protocol):
         namespace: str | None = None,
     ) -> list[MemoryRecord]: ...
 
+    def promote_memory(
+        self, memory_id: str, target_scope: str = MEMORY_SCOPE_PROJECT
+    ) -> MemoryRecord | None: ...
+
     def delete_memory(self, memory_id: str) -> None: ...
 
 
 class SQLiteMemoryStore:
     def __init__(self, database_path: str) -> None:
         self._database_path = database_path
+        self._promotion_service = MemoryPromotionService()
         self._ensure_schema()
 
     def write_memory(self, record: MemoryRecord) -> None:
+        self._promotion_service.validate_scope(record.scope)
         with sqlite3.connect(self._database_path) as connection:
             connection.execute(
                 """
@@ -101,6 +111,20 @@ class SQLiteMemoryStore:
             ).fetchall()
         return [cast(MemoryRecord, _row_to_memory(row)) for row in rows if row is not None]
 
+    def promote_memory(
+        self, memory_id: str, target_scope: str = MEMORY_SCOPE_PROJECT
+    ) -> MemoryRecord | None:
+        record = self.read_memory(memory_id)
+        if record is None:
+            return None
+        promoted = self._promotion_service.promote(
+            record,
+            target_scope=target_scope,
+            promoted_at=_utc_now_timestamp(),
+        )
+        self.write_memory(promoted)
+        return promoted
+
     def delete_memory(self, memory_id: str) -> None:
         with sqlite3.connect(self._database_path) as connection:
             connection.execute("DELETE FROM memory_records WHERE memory_id = ?", (memory_id,))
@@ -142,3 +166,9 @@ def _row_to_memory(row: sqlite3.Row | tuple | None) -> MemoryRecord | None:
         source_run=str(row[8]) if row[8] is not None else None,
         confidence=float(row[9]) if row[9] is not None else None,
     )
+
+
+def _utc_now_timestamp() -> str:
+    from packages.protocol.local_agent_protocol.models import utc_now_timestamp
+
+    return utc_now_timestamp()
