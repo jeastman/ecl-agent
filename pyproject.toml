@@ -44,9 +44,13 @@ help = "Run mypy over the repo source trees."
 cmd = "python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml health"
 help = "Run the CLI health check against the local runtime shell."
 
+[tool.poe.tasks.run]
+cmd = "python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml run 'Inspect the repository workspace'"
+help = "Create a Milestone 1 task through the CLI against the local runtime."
+
 [tool.poe.tasks.submit]
 cmd = "python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml submit 'Inspect the repository workspace'"
-help = "Create a Phase 1 task through the CLI against the local runtime."
+help = "Compatibility alias for the Milestone 1 run command."
 
 [tool.ruff]
 line-length = 100

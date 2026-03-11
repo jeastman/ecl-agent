@@ -25,10 +25,12 @@ class RunStateStoreTests(unittest.TestCase):
             "run_1",
             status=TaskStatus.COMPLETED,
             current_phase="completed",
+            active_subagent="primary",
             last_event_at="2026-03-10T00:01:00Z",
         )
         self.assertEqual(updated.status, TaskStatus.COMPLETED)
         self.assertEqual(store.get("task_1", "run_1").current_phase, "completed")
+        self.assertEqual(store.get("task_1", "run_1").active_subagent, "primary")
 
     def test_missing_task_raises(self) -> None:
         store = InMemoryRunStateStore()

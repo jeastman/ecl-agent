@@ -133,6 +133,7 @@ class TaskRunnerTests(unittest.TestCase):
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
+        self.assertEqual(snapshot.active_subagent, "primary")
 
     def test_task_runner_marks_run_failed_when_harness_raises(self) -> None:
         store = InMemoryRunStateStore()

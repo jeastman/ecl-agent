@@ -117,6 +117,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             get_payload = get_response.to_dict()
             self.assertEqual(get_payload["result"]["task"]["task_id"], task_id)
             self.assertEqual(get_payload["result"]["task"]["artifact_count"], 1)
+            self.assertEqual(get_payload["result"]["task"]["active_subagent"], "primary")
 
             artifacts_request = JsonRpcRequest(
                 method=METHOD_TASK_ARTIFACTS_LIST,

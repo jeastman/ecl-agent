@@ -309,6 +309,7 @@ class TaskRunner:
             workspace_roots=state.workspace_roots or None,
             current_phase=state.current_phase,
             latest_summary=state.latest_summary,
+            active_subagent=state.active_subagent,
             artifact_count=state.artifact_count,
             last_event_at=state.last_event_at,
             failure=state.failure,
@@ -376,6 +377,9 @@ class TaskRunner:
             updates["current_phase"] = "planning"
         elif event_type == EventType.SUBAGENT_STARTED.value:
             updates["current_phase"] = "executing"
+            role = payload.get("role")
+            if isinstance(role, str) and role.strip():
+                updates["active_subagent"] = role.strip()
         summary = payload.get("summary")
         if isinstance(summary, str) and summary.strip():
             updates["latest_summary"] = summary.strip()

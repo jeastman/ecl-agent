@@ -1,25 +1,31 @@
 from __future__ import annotations
 
 import argparse
-import json
-import subprocess
 import sys
 from pathlib import Path
-from typing import Any
 
+from apps.cli.local_agent_cli.client import RuntimeClient, RuntimeClientError
+from apps.cli.local_agent_cli.renderers import (
+    render_artifacts,
+    render_event_timeline,
+    render_health,
+    render_task_created,
+    render_task_snapshot,
+)
 from packages.protocol.local_agent_protocol.models import (
-    JsonRpcError,
     JsonRpcRequest,
     METHOD_RUNTIME_HEALTH,
+    METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
+    METHOD_TASK_GET,
+    METHOD_TASK_LOGS_STREAM,
+    TaskArtifactsListParams,
     TaskCreateParams,
     TaskCreateRequest,
+    TaskGetParams,
+    TaskLogsStreamParams,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
-
-
-class RuntimeClientError(RuntimeError):
-    pass
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -34,100 +40,67 @@ def build_parser() -> argparse.ArgumentParser:
 
     subparsers.add_parser("health", help="Check runtime health.")
 
-    submit = subparsers.add_parser("submit", help="Create a task through the runtime.")
-    submit.add_argument("objective", help="Task objective.")
-    submit.add_argument(
+    run = subparsers.add_parser("run", aliases=["submit"], help="Create a task through the runtime.")
+    run.add_argument("objective", help="Task objective.")
+    run.add_argument(
         "--workspace-root",
         action="append",
         default=[],
         help="Workspace root the runtime should associate with the task.",
     )
-    submit.add_argument(
+    run.add_argument(
         "--constraint",
         action="append",
         default=[],
         help="Constraint to attach to the task.",
     )
-    submit.add_argument(
+    run.add_argument(
         "--success-criteria",
         action="append",
         default=[],
         help="Success criteria to attach to the task.",
     )
+    status = subparsers.add_parser("status", help="Inspect task state through the runtime.")
+    status.add_argument("task_id", help="Task identifier.")
+    status.add_argument("--run-id", help="Optional run identifier.")
+
+    logs = subparsers.add_parser("logs", help="Render runtime events for a task.")
+    logs.add_argument("task_id", help="Task identifier.")
+    logs.add_argument("--run-id", help="Optional run identifier.")
+
+    artifacts = subparsers.add_parser("artifacts", help="List runtime-owned artifacts for a task.")
+    artifacts.add_argument("task_id", help="Task identifier.")
+    artifacts.add_argument("--run-id", help="Optional run identifier.")
     return parser
 
 
-def runtime_command(config_path: str) -> list[str]:
-    return [
-        sys.executable,
-        "-m",
-        "apps.runtime.local_agent_runtime.main",
-        "--config",
-        config_path,
-    ]
-
-
-def send_rpc(command: list[str], request: JsonRpcRequest) -> dict[str, Any]:
-    completed = subprocess.run(
-        command,
-        input=json.dumps(request.to_dict()) + "\n",
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.stderr:
-        sys.stderr.write(completed.stderr)
-        sys.stderr.flush()
-    if completed.returncode != 0:
-        stderr = completed.stderr.strip()
-        raise RuntimeClientError(
-            f"runtime exited with code {completed.returncode}" + (f": {stderr}" if stderr else "")
-        )
-
-    stdout = completed.stdout.strip()
-    if not stdout:
-        raise RuntimeClientError("runtime returned no response")
-
-    try:
-        payload = json.loads(stdout.splitlines()[0])
-    except json.JSONDecodeError as exc:
-        raise RuntimeClientError(f"runtime returned invalid JSON: {exc}") from exc
-
-    if "error" in payload and payload["error"] is not None:
-        error = JsonRpcError.from_dict(payload["error"])
-        raise RuntimeClientError(f"{error.code} {error.message}")
-
-    return payload
+def make_client(config_path: str) -> RuntimeClient:
+    return RuntimeClient(config_path)
 
 
 def handle_health(config_path: str) -> int:
+    client = make_client(config_path)
     request = JsonRpcRequest(
         method=METHOD_RUNTIME_HEALTH,
         params={},
         id="1",
         correlation_id=new_correlation_id(),
     )
-    payload = send_rpc(runtime_command(config_path), request)
+    payload = client.send(request)
     result = payload["result"]
-    print(
-        f"runtime={result['runtime_name']} version={result['runtime_version']} "
-        f"status={result['status']} correlation_id={result['correlation_id']}"
-    )
-    print(
-        f"identity={result['identity']['path']} "
-        f"hash={result['identity']['sha256'][:12]} transport={result['transport']} "
-        f"protocol={result['protocol_version']}"
-    )
+    for line in render_health(result, payload.get("correlation_id")):
+        print(line)
     return 0
 
 
-def handle_submit(
+def handle_run(
     config_path: str,
     objective: str,
     workspace_roots: list[str],
     constraints: list[str],
     success_criteria: list[str],
 ) -> int:
+    client = make_client(config_path)
     resolved_workspace_roots = workspace_roots or [str(Path.cwd())]
     request = JsonRpcRequest(
         method=METHOD_TASK_CREATE,
@@ -142,13 +115,59 @@ def handle_submit(
         id="1",
         correlation_id=new_correlation_id(),
     )
-    payload = send_rpc(runtime_command(config_path), request)
+    payload = client.send(request)
     result = payload["result"]
-    print(
-        f"task_id={result['task_id']} run_id={result['run_id']} status={result['status']} "
-        f"correlation_id={payload['correlation_id']}"
+    for line in render_task_created(result, payload.get("correlation_id")):
+        print(line)
+    return 0
+
+
+def handle_status(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_GET,
+        params=TaskGetParams(task_id=task_id, run_id=run_id).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
     )
-    print(f"accepted_at={result['accepted_at']}")
+    payload = client.send(request)
+    for line in render_task_snapshot(payload["result"]["task"]):
+        print(line)
+    return 0
+
+
+def handle_logs(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_LOGS_STREAM,
+        params=TaskLogsStreamParams(task_id=task_id, run_id=run_id, include_history=True).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    client.consume_stream(
+        request,
+        on_response=lambda response_payload: print(
+            "task_id="
+            f"{response_payload['result']['task_id']} "
+            f"run_id={response_payload['result']['run_id']} "
+            f"stream_open={response_payload['result']['stream_open']}"
+        ),
+        on_event=lambda event_payload: print(render_event_timeline([event_payload])[0]),
+    )
+    return 0
+
+
+def handle_artifacts(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_ARTIFACTS_LIST,
+        params=TaskArtifactsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_artifacts(payload["result"]["artifacts"]):
+        print(line)
     return 0
 
 
@@ -160,13 +179,23 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.command == "health":
             return handle_health(config_path)
-        if args.command == "submit":
-            return handle_submit(
+        if args.command in {"run", "submit"}:
+            return handle_run(
                 config_path=config_path,
                 objective=args.objective,
                 workspace_roots=args.workspace_root,
                 constraints=args.constraint,
                 success_criteria=args.success_criteria,
+            )
+        if args.command == "status":
+            return handle_status(config_path=config_path, task_id=args.task_id, run_id=args.run_id)
+        if args.command == "logs":
+            return handle_logs(config_path=config_path, task_id=args.task_id, run_id=args.run_id)
+        if args.command == "artifacts":
+            return handle_artifacts(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
             )
     except RuntimeClientError as exc:
         print(f"error: {exc}", file=sys.stderr)

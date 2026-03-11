@@ -51,6 +51,7 @@ class RunState:
     success_criteria: list[str] = field(default_factory=list)
     current_phase: str | None = None
     latest_summary: str | None = None
+    active_subagent: str | None = None
     artifact_count: int = 0
     last_event_at: str | None = None
     failure: FailureInfo | None = None
