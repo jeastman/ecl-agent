@@ -19,6 +19,8 @@ from packages.protocol.local_agent_protocol.models import (
     RuntimeHealthResult,
     TaskArtifactsListParams,
     TaskArtifactsListResult,
+    TaskApproveParams,
+    TaskApproveResult,
     TaskCreateParams,
     TaskCreateResult,
     TaskGetParams,
@@ -86,6 +88,22 @@ class MethodHandlers:
         request = TaskGetParams.from_dict(params)
         return TaskGetResult(
             task=self.task_runner.get_task_snapshot(request.task_id, request.run_id)
+        )
+
+    def task_approve(self, params: dict) -> TaskApproveResult:
+        request = TaskApproveParams.from_dict(params)
+        approval_id, accepted, status, snapshot = self.task_runner.approve(
+            request.task_id,
+            request.approval.approval_id,
+            request.approval.decision,
+            run_id=request.run_id,
+            identity_bundle_text=self.identity.content,
+        )
+        return TaskApproveResult(
+            approval_id=approval_id,
+            accepted=accepted,
+            status=status,
+            task=snapshot,
         )
 
     def task_resume(self, params: dict) -> TaskResumeResult:

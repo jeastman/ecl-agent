@@ -14,6 +14,12 @@ from apps.runtime.local_agent_runtime.task_runner import (
 )
 from packages.config.local_agent_config.loader import load_runtime_config
 from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
+from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
+    SandboxToolBindings,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
+    InterruptBridge,
+)
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
@@ -217,6 +223,119 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(metrics.checkpoint_count, 2)
         self.assertEqual(metrics.resume_count, 1)
 
+    def test_task_runner_requests_approval_and_resumes_after_approval(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=ApprovalThenResumeHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Edit governed files",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        awaiting = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(awaiting.status, TaskStatus.AWAITING_APPROVAL)
+        self.assertTrue(awaiting.awaiting_approval)
+        assert awaiting.pending_approval_id is not None
+
+        approval_id, accepted, status, snapshot = runner.approve(
+            task_id,
+            awaiting.pending_approval_id,
+            "approved",
+            run_id=run_id,
+            identity_bundle_text="identity",
+        )
+
+        self.assertEqual(approval_id, awaiting.pending_approval_id)
+        self.assertTrue(accepted)
+        self.assertEqual(status, "approved")
+        self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertEqual(event_types.count("approval.requested"), 1)
+        self.assertIn("task.resumed", event_types)
+
+    def test_task_runner_fails_run_when_approval_rejected(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=ApprovalThenResumeHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Edit governed files",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+        awaiting = runner.get_task_snapshot(task_id, run_id)
+        assert awaiting.pending_approval_id is not None
+
+        _, accepted, status, snapshot = runner.approve(
+            task_id,
+            awaiting.pending_approval_id,
+            "rejected",
+            run_id=run_id,
+            identity_bundle_text="identity",
+        )
+
+        self.assertFalse(accepted)
+        self.assertEqual(status, "rejected")
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertFalse(snapshot.awaiting_approval)
+        self.assertIsNone(snapshot.pending_approval_id)
+
+    def test_task_runner_denies_network_command(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=NetworkDeniedHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Attempt network access",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertFalse(snapshot.is_resumable)
+        assert snapshot.latest_summary is not None
+        self.assertIn("network access", snapshot.latest_summary.lower())
+        self.assertIn(
+            "policy.denied",
+            [event.event.event_type for event in bus.list_events(task_id, run_id)],
+        )
+
 
 class EventingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
@@ -275,6 +394,48 @@ class PauseThenResumeHarness:
             summary="Completed after resume.",
             output_artifacts=["workspace/artifacts/resumed.md"],
         )
+
+
+class ApprovalThenResumeHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.write_file("workspace/apps/runtime/guarded.txt", "content\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Governed write completed after approval.",
+            output_artifacts=[],
+        )
+
+
+class NetworkDeniedHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.execute_command(["curl", "https://example.com"], cwd="workspace")
+        return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 
 if __name__ == "__main__":

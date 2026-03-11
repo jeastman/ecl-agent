@@ -13,6 +13,9 @@ from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_model
 from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
     LangChainDeepAgentHarness,
 )
+from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
+    ApprovalRequiredInterrupt,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
@@ -55,6 +58,8 @@ class SandboxToolBindingsTests(unittest.TestCase):
         events: list[tuple[str, dict[str, object]]] = []
         bindings = SandboxToolBindings(
             sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
             on_event=lambda event_type, payload: events.append((event_type, payload)),
         )
         files = bindings.list_files("workspace")
@@ -154,6 +159,41 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertIn("plan.updated", [event_type for event_type, _ in events[2:]])
         self.assertIn("tool.called", [event_type for event_type, _ in events])
         self.assertIn("Generated the requested architecture summary.", result.summary)
+
+    def test_harness_pauses_cleanly_when_runtime_requests_approval(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            allowed_capabilities=[],
+            metadata={},
+            checkpoint_controller=FakeCheckpointController(),
+            governed_operation=lambda context: (
+                None
+                if context.operation_type != "file.write"
+                else (_ for _ in ()).throw(
+                    ApprovalRequiredInterrupt(
+                        approval_id="approval_1",
+                        summary="Allow writes to workspace/docs/** for this run",
+                    )
+                )
+            ),
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.paused)
+        self.assertTrue(result.awaiting_approval)
+        self.assertEqual(result.pending_approval_id, "approval_1")
+        self.assertEqual(result.pause_reason, "awaiting approval")
 
     def test_harness_passes_checkpoint_context_without_leaking_framework_types(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []

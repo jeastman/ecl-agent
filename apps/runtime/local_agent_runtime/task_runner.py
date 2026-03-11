@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
+from uuid import uuid4
 
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
@@ -26,8 +27,18 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.checkpoint_adapter
     CheckpointController,
     LangGraphCheckpointAdapter,
 )
+from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
+    ApprovalRequiredInterrupt,
+    PolicyDeniedInterrupt,
+)
 from services.observability_service.local_agent_observability_service.observability_models import (
     RunMetricsRecord,
+)
+from services.policy_service.local_agent_policy_service.boundary_scope import BoundaryGrant
+from services.policy_service.local_agent_policy_service.policy_models import (
+    ApprovalRequest,
+    OperationContext,
+    PolicyDecision,
 )
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     ExecutionSandbox,
@@ -49,6 +60,7 @@ class AgentExecutionRequest:
     success_criteria: list[str] = field(default_factory=list)
     checkpoint_controller: CheckpointController | None = None
     resume_from_checkpoint_id: str | None = None
+    governed_operation: Callable[[OperationContext], None] | None = None
 
 
 @dataclass(slots=True)
@@ -59,6 +71,9 @@ class AgentExecutionResult:
     error_message: str | None = None
     paused: bool = False
     pause_reason: str | None = None
+    awaiting_approval: bool = False
+    pending_approval_id: str | None = None
+    failure_code: str | None = None
 
 
 class AgentHarness(Protocol):
@@ -167,6 +182,7 @@ class TaskRunner:
             checkpoint_thread_id=self._new_checkpoint_thread(task_id, run_id),
             links={
                 "artifacts": "task.artifacts.list",
+                "approve": "task.approve",
                 "resume": "task.resume",
                 "events": "task.logs.stream",
             },
@@ -211,6 +227,8 @@ class TaskRunner:
             raise ValueError("task.resume cannot resume a completed run")
         if state.status == TaskStatus.FAILED:
             raise ValueError("task.resume cannot resume a failed run")
+        if state.awaiting_approval:
+            raise ValueError("task.resume cannot resume while approval is still pending")
         if not state.is_resumable:
             raise ValueError("task.resume requires a paused or resumable run")
         self._execute_run(
@@ -221,6 +239,104 @@ class TaskRunner:
             resume=True,
         )
         return self.get_task_snapshot(state.task_id, state.run_id)
+
+    def approve(
+        self,
+        task_id: str,
+        approval_id: str,
+        decision: str,
+        *,
+        run_id: str | None,
+        identity_bundle_text: str,
+    ) -> tuple[str, bool, str, TaskSnapshot]:
+        if self._durable_services is None:
+            raise ValueError("task.approve requires durable runtime services")
+        request = self._durable_services.approval_store.get_request(approval_id)
+        if request is None:
+            raise KeyError(f"unknown approval: {approval_id}")
+        if request.task_id != task_id:
+            raise ValueError("approval does not belong to the requested task")
+        if run_id is not None and request.run_id != run_id:
+            raise ValueError("approval does not belong to the requested run")
+
+        state = self._run_state_store.get(task_id, request.run_id)
+        if state.pending_approval_id != approval_id:
+            raise ValueError("approval is not the active pending approval for this run")
+
+        decided = self._durable_services.approval_store.decide(
+            approval_id,
+            decision,
+            utc_now_timestamp(),
+        )
+        decision_at = utc_now_timestamp()
+        self._run_state_store.update(
+            state.task_id,
+            state.run_id,
+            updated_at=decision_at,
+            awaiting_approval=False,
+            pending_approval_id=None,
+        )
+
+        if decided.status == "approved":
+            boundary_key = decided.scope.get("boundary_key")
+            if isinstance(boundary_key, str) and boundary_key:
+                self._durable_services.boundary_grant_store.grant(
+                    BoundaryGrant(
+                        task_id=state.task_id,
+                        run_id=state.run_id,
+                        boundary_key=boundary_key,
+                        approval_id=approval_id,
+                        granted_at=decision_at,
+                    )
+                )
+            snapshot = self.resume_run(
+                state.task_id,
+                state.run_id,
+                identity_bundle_text=identity_bundle_text,
+            )
+            return approval_id, True, decided.status, snapshot
+
+        self._append_diagnostic(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            kind="approval_rejected",
+            message="Approval was rejected by the user.",
+            details={"approval_id": approval_id, "scope": decided.scope},
+        )
+        self._run_state_store.update(
+            state.task_id,
+            state.run_id,
+            status=TaskStatus.FAILED,
+            updated_at=decision_at,
+            current_phase="failed",
+            latest_summary="Run failed because the required approval was rejected.",
+            last_event_at=decision_at,
+            failure=FailureInfo(message="approval rejected", code="approval_rejected"),
+            awaiting_approval=False,
+            pending_approval_id=None,
+            is_resumable=False,
+            pause_reason=None,
+        )
+        self._publish(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            correlation_id=None,
+            event_type=EventType.TASK_FAILED.value,
+            timestamp=decision_at,
+            source=self._source,
+            payload={
+                "status": TaskStatus.FAILED.value,
+                "failed_at": decision_at,
+                "summary": "Run failed because the required approval was rejected.",
+                "error": "approval rejected",
+            },
+        )
+        return (
+            approval_id,
+            False,
+            decided.status,
+            self.get_task_snapshot(state.task_id, state.run_id),
+        )
 
     def get_task_snapshot(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
         state = self._run_state_store.get(task_id, run_id)
@@ -355,6 +471,10 @@ class TaskRunner:
                         if checkpoint_controller is not None
                         else None
                     ),
+                    governed_operation=lambda context: self._govern_operation(
+                        correlation_id=correlation_id,
+                        context=context,
+                    ),
                 ),
                 on_event=lambda event_type, payload: self._handle_harness_event(
                     task_id=task_id,
@@ -363,6 +483,24 @@ class TaskRunner:
                     event_type=event_type,
                     payload=payload,
                 ),
+            )
+        except ApprovalRequiredInterrupt as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary=exc.summary,
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting approval",
+                awaiting_approval=True,
+                pending_approval_id=exc.approval_id,
+            )
+        except PolicyDeniedInterrupt as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary=exc.reason,
+                output_artifacts=[],
+                error_message=exc.reason,
+                failure_code="policy_denied",
             )
         except Exception as exc:
             self._append_diagnostic(
@@ -407,31 +545,47 @@ class TaskRunner:
 
         if result.paused:
             paused_at = utc_now_timestamp()
-            self._run_state_store.update(
-                task_id,
-                run_id,
-                status=TaskStatus.PAUSED,
-                updated_at=paused_at,
-                current_phase="paused",
-                latest_summary=result.summary,
-                artifact_count=artifact_count,
-                last_event_at=paused_at,
-                is_resumable=True,
-                pause_reason=result.pause_reason or "execution paused",
-            )
-            self._publish(
-                task_id=task_id,
-                run_id=run_id,
-                correlation_id=correlation_id,
-                event_type=EventType.TASK_PAUSED.value,
-                timestamp=paused_at,
-                source=self._source,
-                payload={
-                    "status": TaskStatus.PAUSED.value,
-                    "reason": result.pause_reason or "execution paused",
-                    "summary": result.summary,
-                },
-            )
+            if result.awaiting_approval:
+                self._run_state_store.update(
+                    task_id,
+                    run_id,
+                    status=TaskStatus.AWAITING_APPROVAL,
+                    updated_at=paused_at,
+                    current_phase="awaiting_approval",
+                    latest_summary=result.summary,
+                    artifact_count=artifact_count,
+                    last_event_at=paused_at,
+                    awaiting_approval=True,
+                    pending_approval_id=result.pending_approval_id,
+                    is_resumable=True,
+                    pause_reason=result.pause_reason or "awaiting approval",
+                )
+            else:
+                self._run_state_store.update(
+                    task_id,
+                    run_id,
+                    status=TaskStatus.PAUSED,
+                    updated_at=paused_at,
+                    current_phase="paused",
+                    latest_summary=result.summary,
+                    artifact_count=artifact_count,
+                    last_event_at=paused_at,
+                    is_resumable=True,
+                    pause_reason=result.pause_reason or "execution paused",
+                )
+                self._publish(
+                    task_id=task_id,
+                    run_id=run_id,
+                    correlation_id=correlation_id,
+                    event_type=EventType.TASK_PAUSED.value,
+                    timestamp=paused_at,
+                    source=self._source,
+                    payload={
+                        "status": TaskStatus.PAUSED.value,
+                        "reason": result.pause_reason or "execution paused",
+                        "summary": result.summary,
+                    },
+                )
             return
 
         if result.success:
@@ -466,13 +620,14 @@ class TaskRunner:
             return
 
         failed_at = utc_now_timestamp()
-        self._append_diagnostic(
-            task_id=task_id,
-            run_id=run_id,
-            kind="task_failure",
-            message=result.error_message or result.summary,
-            details={"summary": result.summary, "resume": resume},
-        )
+        if result.failure_code != "policy_denied":
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="task_failure",
+                message=result.error_message or result.summary,
+                details={"summary": result.summary, "resume": resume},
+            )
         self._run_state_store.update(
             task_id,
             run_id,
@@ -483,6 +638,8 @@ class TaskRunner:
             artifact_count=artifact_count,
             last_event_at=failed_at,
             failure=FailureInfo(message=result.error_message or result.summary),
+            awaiting_approval=False,
+            pending_approval_id=None,
             is_resumable=False,
             pause_reason=None,
         )
@@ -594,6 +751,96 @@ class TaskRunner:
             details=details or {},
         )
 
+    def _govern_operation(
+        self,
+        *,
+        correlation_id: str | None,
+        context: OperationContext,
+    ) -> None:
+        if self._durable_services is None:
+            return
+        decision = self._durable_services.policy_engine.evaluate(context)
+        if decision.decision == "ALLOW":
+            return
+        if decision.decision == "DENY":
+            denied_at = utc_now_timestamp()
+            self._append_diagnostic(
+                task_id=context.task_id,
+                run_id=context.run_id,
+                kind="policy_denied",
+                message=decision.reason,
+                details={"context": context.to_dict()},
+            )
+            self._publish(
+                task_id=context.task_id,
+                run_id=context.run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.POLICY_DENIED.value,
+                timestamp=denied_at,
+                source=EventSource(kind=EventSourceKind.POLICY, component="policy-engine"),
+                payload={
+                    "status": TaskStatus.FAILED.value,
+                    "reason": decision.reason,
+                    "context": context.to_dict(),
+                },
+            )
+            raise PolicyDeniedInterrupt(decision.reason)
+        approval = self._create_approval_request(
+            correlation_id=correlation_id,
+            context=context,
+            decision=decision,
+        )
+        raise ApprovalRequiredInterrupt(
+            approval_id=approval.approval_id,
+            summary=approval.description,
+        )
+
+    def _create_approval_request(
+        self,
+        *,
+        correlation_id: str | None,
+        context: OperationContext,
+        decision: PolicyDecision,
+    ) -> ApprovalRequest:
+        assert self._durable_services is not None
+        now = utc_now_timestamp()
+        approval = ApprovalRequest(
+            approval_id=f"approval_{uuid4().hex[:12]}",
+            task_id=context.task_id,
+            run_id=context.run_id,
+            type="boundary",
+            scope={
+                **(decision.approval_scope or {}),
+                "boundary_key": decision.boundary_key,
+            },
+            description=decision.reason,
+            created_at=now,
+            status="pending",
+        )
+        self._durable_services.approval_store.create_request(approval)
+        self._run_state_store.update(
+            context.task_id,
+            context.run_id,
+            updated_at=now,
+            current_phase="awaiting_approval",
+            latest_summary=approval.description,
+            awaiting_approval=True,
+            pending_approval_id=approval.approval_id,
+            is_resumable=True,
+            pause_reason="awaiting approval",
+        )
+        self._publish(
+            task_id=context.task_id,
+            run_id=context.run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.APPROVAL_REQUESTED.value,
+            timestamp=now,
+            source=EventSource(kind=EventSourceKind.POLICY, component="policy-engine"),
+            payload={"approval": approval.to_dict()},
+        )
+        self._increment_approval_metrics(context.task_id, context.run_id)
+        return approval
+
     def _new_checkpoint_thread(self, task_id: str, run_id: str) -> str | None:
         if self._checkpoint_adapter is None:
             return None
@@ -647,6 +894,28 @@ class TaskRunner:
         checkpoint_count = 0 if metrics is None else metrics.checkpoint_count
         approval_count = 0 if metrics is None else metrics.approval_count
         resume_count = 1 if metrics is None else metrics.resume_count + 1
+        self._durable_services.run_metrics_store.write_metrics(
+            record=type(metrics)(
+                task_id=task_id,
+                run_id=run_id,
+                checkpoint_count=checkpoint_count,
+                approval_count=approval_count,
+                resume_count=resume_count,
+                last_updated_at=utc_now_timestamp(),
+            )
+            if metrics is not None
+            else _run_metrics_record(
+                task_id, run_id, checkpoint_count, approval_count, resume_count
+            )
+        )
+
+    def _increment_approval_metrics(self, task_id: str, run_id: str) -> None:
+        if self._durable_services is None:
+            return
+        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        checkpoint_count = 0 if metrics is None else metrics.checkpoint_count
+        approval_count = 1 if metrics is None else metrics.approval_count + 1
+        resume_count = 0 if metrics is None else metrics.resume_count
         self._durable_services.run_metrics_store.write_metrics(
             record=type(metrics)(
                 task_id=task_id,

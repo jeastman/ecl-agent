@@ -9,6 +9,7 @@ from packages.observability.local_agent_observability.logging import log_record
 from packages.protocol.local_agent_protocol.models import (
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
+    METHOD_TASK_APPROVE,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
@@ -83,6 +84,15 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.task_get(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_TASK_APPROVE:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_approve(request.params),
                     ),
                     [],
                 )

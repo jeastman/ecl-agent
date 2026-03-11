@@ -36,9 +36,13 @@ from services.policy_service.local_agent_policy_service.approval_store import (
     ApprovalStore,
     SQLiteApprovalStore,
 )
+from services.policy_service.local_agent_policy_service.boundary_scope import (
+    BoundaryGrantStore,
+    SQLiteBoundaryGrantStore,
+)
 from services.policy_service.local_agent_policy_service.policy_engine import (
-    PlaceholderPolicyEngine,
     PolicyEngine,
+    RuntimePolicyEngine,
 )
 
 
@@ -51,6 +55,7 @@ class DurableRuntimeServices:
     memory_store: MemoryStore
     memory_promotion_service: MemoryPromotionService
     approval_store: ApprovalStore
+    boundary_grant_store: BoundaryGrantStore
     policy_engine: PolicyEngine
     event_store: EventStore
     diagnostic_store: DiagnosticStore
@@ -69,6 +74,7 @@ def create_durable_runtime_services(
     database_path.touch(exist_ok=True)
 
     thread_registry = SQLiteThreadRegistry(str(database_path))
+    boundary_grant_store = SQLiteBoundaryGrantStore(str(database_path))
     return DurableRuntimeServices(
         root_path=str(root_path),
         database_path=str(database_path),
@@ -77,7 +83,11 @@ def create_durable_runtime_services(
         memory_store=SQLiteMemoryStore(str(database_path)),
         memory_promotion_service=MemoryPromotionService(),
         approval_store=SQLiteApprovalStore(str(database_path)),
-        policy_engine=PlaceholderPolicyEngine(),
+        boundary_grant_store=boundary_grant_store,
+        policy_engine=RuntimePolicyEngine(
+            policy_config=config.policy,
+            boundary_grants=boundary_grant_store,
+        ),
         event_store=SQLiteEventStore(str(database_path)),
         diagnostic_store=SQLiteDiagnosticStore(str(database_path)),
         run_metrics_store=SQLiteRunMetricsStore(str(database_path)),

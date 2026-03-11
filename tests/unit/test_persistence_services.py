@@ -40,6 +40,18 @@ from services.observability_service.local_agent_observability_service.observabil
 from services.observability_service.local_agent_observability_service.run_metrics_store import (
     SQLiteRunMetricsStore,
 )
+from services.policy_service.local_agent_policy_service.approval_store import (
+    SQLiteApprovalStore,
+)
+from services.policy_service.local_agent_policy_service.boundary_scope import (
+    BoundaryGrant,
+    SQLiteBoundaryGrantStore,
+)
+from services.policy_service.local_agent_policy_service.policy_engine import RuntimePolicyEngine
+from services.policy_service.local_agent_policy_service.policy_models import (
+    ApprovalRequest,
+    OperationContext,
+)
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
@@ -329,6 +341,7 @@ class InterfaceIsolationTests(unittest.TestCase):
             "services.memory_service.local_agent_memory_service.memory_promotion",
             "services.policy_service.local_agent_policy_service.policy_engine",
             "services.policy_service.local_agent_policy_service.approval_store",
+            "services.policy_service.local_agent_policy_service.boundary_scope",
             "services.observability_service.local_agent_observability_service.event_store",
             "services.observability_service.local_agent_observability_service.diagnostic_store",
             "services.observability_service.local_agent_observability_service.run_metrics_store",
@@ -385,6 +398,123 @@ class RunMetricsStoreTests(unittest.TestCase):
             self.assertIsNotNone(loaded)
             assert loaded is not None
             self.assertEqual(loaded.checkpoint_count, 2)
+
+
+class ApprovalAndPolicyTests(unittest.TestCase):
+    def test_approval_store_round_trip_and_reject_duplicate_decision(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteApprovalStore(str(Path(temp_dir) / "runtime.db"))
+            request = ApprovalRequest(
+                approval_id="approval_1",
+                task_id="task_1",
+                run_id="run_1",
+                type="boundary",
+                scope={"boundary_key": "file.write:workspace/apps/runtime/**"},
+                description="Allow writes to workspace/apps/runtime/** for this run",
+                created_at=utc_now_timestamp(),
+                status="pending",
+            )
+
+            store.create_request(request)
+            approved = store.decide("approval_1", "approved", utc_now_timestamp())
+
+            self.assertEqual(approved.status, "approved")
+            self.assertEqual(store.list_for_task("task_1")[0].decision, "approved")
+            with self.assertRaisesRegex(ValueError, "already approved"):
+                store.decide("approval_1", "rejected", utc_now_timestamp())
+
+    def test_boundary_grant_store_reuses_granted_boundary(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            store.grant(
+                BoundaryGrant(
+                    task_id="task_1",
+                    run_id="run_1",
+                    boundary_key="file.write:workspace/apps/runtime/**",
+                    approval_id="approval_1",
+                    granted_at=utc_now_timestamp(),
+                )
+            )
+
+            self.assertTrue(
+                store.has_grant("task_1", "run_1", "file.write:workspace/apps/runtime/**")
+            )
+            self.assertFalse(
+                store.has_grant("task_1", "run_2", "file.write:workspace/apps/runtime/**")
+            )
+
+    def test_runtime_policy_engine_classifies_allow_require_and_deny(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            engine = RuntimePolicyEngine(policy_config={}, boundary_grants=grants)
+
+            allow = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="file.write",
+                    path_scope="workspace/artifacts/out.md",
+                )
+            )
+            require = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="file.write",
+                    path_scope="workspace/apps/runtime/main.py",
+                )
+            )
+            deny = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="command.execute",
+                    command_class="network",
+                    path_scope="workspace",
+                )
+            )
+
+            self.assertEqual(allow.decision, "ALLOW")
+            self.assertEqual(require.decision, "REQUIRE_APPROVAL")
+            self.assertEqual(deny.decision, "DENY")
+
+    def test_runtime_policy_engine_classifies_memory_operations(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            engine = RuntimePolicyEngine(policy_config={}, boundary_grants=grants)
+
+            allow = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="memory.write",
+                    memory_scope=MEMORY_SCOPE_RUN_STATE,
+                    namespace="run.notes",
+                )
+            )
+            require = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="memory.write",
+                    memory_scope=MEMORY_SCOPE_PROJECT,
+                    namespace="project.conventions",
+                )
+            )
+            deny = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="memory.write",
+                    memory_scope=MEMORY_SCOPE_IDENTITY,
+                    namespace="identity.bundle",
+                )
+            )
+
+            self.assertEqual(allow.decision, "ALLOW")
+            self.assertEqual(require.decision, "REQUIRE_APPROVAL")
+            self.assertEqual(require.boundary_key, "memory.write:project:project.conventions")
+            self.assertEqual(deny.decision, "DENY")
 
 
 if __name__ == "__main__":

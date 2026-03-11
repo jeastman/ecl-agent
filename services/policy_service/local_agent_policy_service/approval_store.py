@@ -4,7 +4,10 @@ import json
 import sqlite3
 from typing import Protocol, cast
 
-from services.policy_service.local_agent_policy_service.policy_models import ApprovalRequest
+from services.policy_service.local_agent_policy_service.policy_models import (
+    ApprovalRequest,
+    ApprovalStatus,
+)
 
 
 class ApprovalStore(Protocol):
@@ -84,6 +87,13 @@ class SQLiteApprovalStore:
         return [cast(ApprovalRequest, _row_to_approval(row)) for row in rows if row is not None]
 
     def decide(self, approval_id: str, decision: str, decided_at: str) -> ApprovalRequest:
+        request = self.get_request(approval_id)
+        if request is None:
+            raise KeyError(f"unknown approval: {approval_id}")
+        if request.status != "pending":
+            raise ValueError(f"approval {approval_id} is already {request.status}")
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("approval decision must be approved or rejected")
         with sqlite3.connect(self._database_path) as connection:
             connection.execute(
                 """
@@ -91,7 +101,7 @@ class SQLiteApprovalStore:
                 SET decision = ?, decided_at = ?, status = ?
                 WHERE approval_id = ?
                 """,
-                (decision, decided_at, "decided", approval_id),
+                (decision, decided_at, decision, approval_id),
             )
             connection.commit()
         request = self.get_request(approval_id)
@@ -131,7 +141,20 @@ def _row_to_approval(row: sqlite3.Row | tuple | None) -> ApprovalRequest | None:
         scope=json.loads(str(row[4])),
         description=str(row[5]),
         created_at=str(row[6]),
-        status=str(row[7]),
-        decision=str(row[8]) if row[8] is not None else None,
+        status=_approval_status(row[7]),
+        decision=_optional_approval_status(row[8]),
         decided_at=str(row[9]) if row[9] is not None else None,
     )
+
+
+def _approval_status(value: object) -> ApprovalStatus:
+    normalized = str(value)
+    if normalized not in {"pending", "approved", "rejected"}:
+        raise ValueError(f"invalid approval status: {normalized}")
+    return cast(ApprovalStatus, normalized)
+
+
+def _optional_approval_status(value: object) -> ApprovalStatus | None:
+    if value is None:
+        return None
+    return _approval_status(value)

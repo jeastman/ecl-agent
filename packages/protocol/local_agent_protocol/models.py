@@ -12,6 +12,7 @@ PROTOCOL_VERSION = "1.0.0"
 METHOD_RUNTIME_HEALTH = "runtime.health"
 METHOD_TASK_CREATE = "task.create"
 METHOD_TASK_GET = "task.get"
+METHOD_TASK_APPROVE = "task.approve"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
@@ -296,6 +297,70 @@ class TaskResumeResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class ApprovalDecisionPayload:
+    approval_id: str
+    decision: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "ApprovalDecisionPayload":
+        approval_id = str(payload.get("approval_id", "")).strip()
+        decision = str(payload.get("decision", "")).strip()
+        if not approval_id:
+            raise ValueError("task.approve requires approval.approval_id")
+        if decision not in {"approved", "rejected"}:
+            raise ValueError("task.approve approval.decision must be approved or rejected")
+        return cls(approval_id=approval_id, decision=decision)
+
+
+@dataclass(slots=True)
+class TaskApproveParams:
+    task_id: str
+    approval: ApprovalDecisionPayload
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = _strip_none(asdict(self))
+        payload["approval"] = self.approval.to_dict()
+        return payload
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskApproveParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.approve requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.approve run_id must be a string when provided")
+        approval_payload = payload.get("approval")
+        if not isinstance(approval_payload, dict):
+            raise ValueError("task.approve requires approval")
+        return cls(
+            task_id=task_id,
+            run_id=run_id,
+            approval=ApprovalDecisionPayload.from_dict(approval_payload),
+        )
+
+
+@dataclass(slots=True)
+class TaskApproveResult:
+    approval_id: str
+    accepted: bool
+    status: str
+    task: TaskSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "approval_id": self.approval_id,
+            "accepted": self.accepted,
+            "status": self.status,
+            "task": self.task.to_dict(),
+        }
 
 
 @dataclass(slots=True)

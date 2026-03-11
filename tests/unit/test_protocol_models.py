@@ -3,17 +3,20 @@ from __future__ import annotations
 import unittest
 
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_TASK_APPROVE,
     EventEnvelope,
     EventSource,
     EventSourceKind,
     METHOD_MEMORY_INSPECT,
     METHOD_TASK_LOGS_STREAM,
+    ApprovalDecisionPayload,
     MemoryInspectEntry,
     MemoryInspectParams,
     MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeEvent,
     TaskArtifactsListParams,
+    TaskApproveParams,
     TaskCreateParams,
     TaskCreateRequest,
     TaskGetParams,
@@ -69,6 +72,15 @@ class ProtocolModelTests(unittest.TestCase):
             TaskArtifactsListParams.from_dict({"task_id": "task_1"}).task_id,
             "task_1",
         )
+        self.assertEqual(
+            TaskApproveParams.from_dict(
+                {
+                    "task_id": "task_1",
+                    "approval": {"approval_id": "approval_1", "decision": "approved"},
+                }
+            ).approval.approval_id,
+            "approval_1",
+        )
         self.assertTrue(
             TaskLogsStreamParams.from_dict(
                 {"task_id": "task_1", "include_history": True}
@@ -76,6 +88,8 @@ class ProtocolModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
+        with self.assertRaisesRegex(ValueError, "task.approve requires approval"):
+            TaskApproveParams.from_dict({"task_id": "task_1"})
 
     def test_memory_inspect_params_validate(self) -> None:
         params = MemoryInspectParams.from_dict(
@@ -87,6 +101,17 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(METHOD_MEMORY_INSPECT, "memory.inspect")
         with self.assertRaisesRegex(ValueError, "memory.inspect run_id requires task_id"):
             MemoryInspectParams.from_dict({"run_id": "run_1"})
+        self.assertEqual(METHOD_TASK_APPROVE, "task.approve")
+
+    def test_approval_payload_validation(self) -> None:
+        payload = ApprovalDecisionPayload.from_dict(
+            {"approval_id": "approval_1", "decision": "rejected"}
+        )
+        self.assertEqual(payload.decision, "rejected")
+        with self.assertRaisesRegex(
+            ValueError, "task.approve approval.decision must be approved or rejected"
+        ):
+            ApprovalDecisionPayload.from_dict({"approval_id": "approval_1", "decision": "approve"})
 
     def test_memory_inspect_result_serialization(self) -> None:
         result = MemoryInspectResult(

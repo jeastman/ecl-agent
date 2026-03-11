@@ -17,6 +17,7 @@ from packages.identity.local_agent_identity.loader import load_identity_bundle
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
     METHOD_MEMORY_INSPECT,
+    METHOD_TASK_APPROVE,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
@@ -31,6 +32,12 @@ from packages.task_model.local_agent_task_model.ids import new_correlation_id
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
     LangChainDeepAgentHarness,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
+    SandboxToolBindings,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
+    InterruptBridge,
 )
 
 
@@ -493,6 +500,111 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("task.resumed", event_types)
             self.assertIn("task.completed", event_types)
 
+    def test_runtime_approval_round_trip_and_restart_recovery(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            runtime_root = str(Path(temp_dir) / "runtime")
+            correlation_id = new_correlation_id()
+
+            first_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_approval_harness(),
+                runtime_root=runtime_root,
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Edit governed files",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="1",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = first_server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+
+            pending_response, _ = first_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            pending_task = pending_response.to_dict()["result"]["task"]
+            self.assertEqual(pending_task["status"], "awaiting_approval")
+            approval_id = pending_task["pending_approval_id"]
+            self.assertIsNotNone(approval_id)
+
+            recovered_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_approval_harness(),
+                runtime_root=runtime_root,
+            )
+            recovered_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="3",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            recovered_task = recovered_response.to_dict()["result"]["task"]
+            self.assertEqual(recovered_task["status"], "awaiting_approval")
+            self.assertEqual(recovered_task["pending_approval_id"], approval_id)
+            self.assertEqual(recovered_task["links"]["approve"], "task.approve")
+
+            approve_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_APPROVE,
+                        params={
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "approval": {
+                                "approval_id": approval_id,
+                                "decision": "approved",
+                            },
+                        },
+                        id="4",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            approved_payload = approve_response.to_dict()["result"]
+            self.assertTrue(approved_payload["accepted"])
+            self.assertEqual(approved_payload["status"], "approved")
+            self.assertEqual(approved_payload["task"]["status"], "completed")
+
+            logs_response, stream_events = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                        id="5",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertEqual(event_types.count("approval.requested"), 1)
+            self.assertIn("task.resumed", event_types)
+            self.assertIn("task.completed", event_types)
+
 
 def _fake_langchain_harness() -> LangChainDeepAgentHarness:
     return LangChainDeepAgentHarness(
@@ -574,6 +686,33 @@ class _PauseThenResumeHarness:
 
 def _pause_then_resume_harness() -> _PauseThenResumeHarness:
     return _PauseThenResumeHarness()
+
+
+class _ApprovalHarness:
+    def execute(self, request, on_event=None) -> Any:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.write_file("workspace/apps/runtime/guarded.txt", "content\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Governed write completed after approval.",
+            output_artifacts=[],
+        )
+
+
+def _approval_harness() -> _ApprovalHarness:
+    return _ApprovalHarness()
 
 
 if __name__ == "__main__":

@@ -11,6 +11,8 @@ class EventType(StrEnum):
     CHECKPOINT_SAVED = "checkpoint.saved"
     TASK_PAUSED = "task.paused"
     TASK_RESUMED = "task.resumed"
+    APPROVAL_REQUESTED = "approval.requested"
+    POLICY_DENIED = "policy.denied"
     RECOVERY_DISCOVERED = "recovery.discovered"
     PLAN_UPDATED = "plan.updated"
     SUBAGENT_STARTED = "subagent.started"

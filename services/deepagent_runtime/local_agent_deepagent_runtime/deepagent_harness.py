@@ -5,6 +5,11 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol
 from deepagents import create_deep_agent
 from langchain.chat_models import init_chat_model
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
+from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
+    ApprovalRequiredInterrupt,
+    InterruptBridge,
+    PolicyDeniedInterrupt,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
 )
@@ -88,10 +93,18 @@ class LangChainDeepAgentHarness:
                 "summary": "Primary single-agent execution started.",
             },
         )
+        interrupt_bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=callback,
+        )
         tools = SandboxToolBindings(
             sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
             on_event=callback,
             allowed_capabilities=request.allowed_capabilities,
+            governed_operation=interrupt_bridge.authorize,
         )
         try:
             if request.checkpoint_controller is not None:
@@ -107,6 +120,24 @@ class LangChainDeepAgentHarness:
                 success=True,
                 summary=summary,
                 output_artifacts=[artifact_path],
+            )
+        except ApprovalRequiredInterrupt as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary=exc.summary,
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting approval",
+                awaiting_approval=True,
+                pending_approval_id=exc.approval_id,
+            )
+        except PolicyDeniedInterrupt as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary=exc.reason,
+                output_artifacts=[],
+                error_message=exc.reason,
+                failure_code="policy_denied",
             )
         except Exception as exc:
             return AgentExecutionResult(

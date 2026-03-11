@@ -5,6 +5,7 @@ from typing import Any, Callable
 
 from langchain_core.tools import BaseTool, tool
 
+from services.policy_service.local_agent_policy_service.policy_models import OperationContext
 from services.sandbox_service.local_agent_sandbox_service.sandbox import ExecutionSandbox
 
 EventCallback = Callable[[str, dict[str, Any]], None]
@@ -18,12 +19,23 @@ _EXECUTE_CAPABILITIES = {"execute_command", "commands", "sandbox.execute"}
 @dataclass(slots=True)
 class SandboxToolBindings:
     sandbox: ExecutionSandbox
+    task_id: str
+    run_id: str
     on_event: EventCallback | None = None
     allowed_capabilities: list[str] | None = None
+    governed_operation: Callable[[OperationContext], None] | None = None
 
     def read_file(self, path: str) -> str:
         self._ensure_allowed("read_file", _READ_CAPABILITIES)
         normalized_path = self.sandbox.normalize_path(path)
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="file.read",
+                path_scope=normalized_path,
+            )
+        )
         self._emit(
             "tool.called",
             {
@@ -36,6 +48,14 @@ class SandboxToolBindings:
     def write_file(self, path: str, content: str) -> str:
         self._ensure_allowed("write_file", _WRITE_CAPABILITIES)
         normalized_path = self.sandbox.normalize_path(path)
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="file.write",
+                path_scope=normalized_path,
+            )
+        )
         self._emit(
             "tool.called",
             {
@@ -50,6 +70,14 @@ class SandboxToolBindings:
     def list_files(self, root: str) -> list[str]:
         self._ensure_allowed("list_files", _LIST_CAPABILITIES)
         normalized_root = self.sandbox.normalize_path(root)
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="file.list",
+                path_scope=normalized_root,
+            )
+        )
         self._emit(
             "tool.called",
             {
@@ -62,6 +90,16 @@ class SandboxToolBindings:
     def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any]:
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
         normalized_cwd = self.sandbox.normalize_path(cwd or "workspace")
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="command.execute",
+                path_scope=normalized_cwd,
+                command_class=_classify_command(command),
+                metadata={"command": list(command)},
+            )
+        )
         self._emit(
             "tool.called",
             {
@@ -111,3 +149,22 @@ class SandboxToolBindings:
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.on_event is not None:
             self.on_event(event_type, payload)
+
+    def _govern(self, context: OperationContext) -> None:
+        if self.governed_operation is not None:
+            self.governed_operation(context)
+
+
+def _classify_command(command: list[str]) -> str:
+    if not command:
+        return "unknown"
+    head = command[0].rsplit("/", 1)[-1]
+    if head in {"curl", "wget", "nc", "telnet"}:
+        return "network"
+    if head in {"rm", "dd", "mkfs", "shutdown", "reboot"}:
+        return "destructive"
+    if head in {"ls", "find", "rg", "grep", "cat", "sed", "head", "tail", "wc", "pwd", "git"}:
+        return "safe_read"
+    if head in {"python", "python3"} and len(command) >= 2 and command[1] == "-c":
+        return "safe_exec"
+    return "safe_exec"

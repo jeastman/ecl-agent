@@ -151,6 +151,7 @@ Implemented and wired end to end:
 - `runtime.health`
 - `task.create`
 - `task.get`
+- `task.approve`
 - `task.resume`
 - `task.logs.stream`
 - `task.artifacts.list`
@@ -165,7 +166,6 @@ Evidence:
 Specified by the master spec but not implemented:
 
 - `task.cancel`
-- `task.approve`
 - `config.get`
 
 Evidence of absence:
@@ -184,6 +184,8 @@ Implemented and emitted:
 - `checkpoint.saved`
 - `task.paused`
 - `task.resumed`
+- `approval.requested`
+- `policy.denied`
 - `recovery.discovered`
 - `plan.updated`
 - `subagent.started`
@@ -201,7 +203,6 @@ Evidence:
 Specified by the master spec but not implemented:
 
 - `subagent.completed`
-- `approval.requested`
 - `memory.updated`
 
 ### 4.3 Envelope shape and correlation
@@ -392,12 +393,14 @@ Implemented:
 - config model contains a dedicated `persistence` section
 - task request may carry `allowed_capabilities`
 - tool bindings enforce `allowed_capabilities` if provided
-- runtime bootstrap now composes a runtime-owned `PolicyEngine` boundary plus durable `ApprovalStore`
+- runtime bootstrap now composes a runtime-owned `PolicyEngine`, durable `ApprovalStore`, and run-scoped `BoundaryGrantStore`
+- runtime policy now classifies governed operations as `ALLOW`, `REQUIRE_APPROVAL`, or `DENY`
+- approval requests are persisted durably and runs transition into and out of `awaiting_approval`
+- `task.approve` records approval decisions and resumes approved runs through the runtime-owned resume path
+- denied actions emit `policy.denied` plus structured diagnostics instead of creating resumable success paths
 
 Not implemented:
 
-- approval thresholds or approval workflow
-- config-driven policy enforcement
 - policy-driven memory rules
 - policy-driven artifact publishing rules
 
@@ -405,8 +408,8 @@ Important implementation detail:
 
 - The `[policy]` table from [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml) is loaded into `RuntimeConfig.policy`.
 - The `[persistence]` table is loaded into `RuntimeConfig.persistence` and used by runtime bootstrap to compose SQLite-backed durable stores.
-- Policy is represented by a placeholder runtime-owned engine boundary in Phase 1; real policy evaluation and approval handling are still deferred.
-- Current policy enforcement is limited to per-task `allowed_capabilities` passed into `SandboxToolBindings`.
+- Runtime policy enforcement now governs sandbox-backed writes and command execution through runtime-owned operation classification, boundary approvals, and deny handling.
+- Policy configuration currently narrows command-class allow/deny tiers, while memory promotion and artifact publishing rules remain future work.
 
 Evidence:
 
@@ -418,7 +421,7 @@ Evidence:
 Assessment:
 
 - Identity is implemented as a real runtime concern.
-- Policy is no longer just vocabulary: the runtime now owns policy and approval seams, but behavior remains placeholder-only.
+- Policy and approvals are now implemented as runtime-owned behavior for governed file and command operations, with durable approval state and restart-safe recovery.
 
 ## 10. Sub-Agent Strategy
 
@@ -652,9 +655,9 @@ Implemented in Phase 3:
 
 Still absent or incomplete:
 
-- approval workflow and policy enforcement
 - richer observability behavior on top of the new stores
 - CLI memory inspection support
+- policy-governed memory promotion and artifact publishing rules
 
 ### 16.4 Milestone 3
 
@@ -698,15 +701,14 @@ Master spec section 28 says the initial architecture baseline is satisfied when 
 
 These are the main verified gaps between the current implementation and the broader master spec:
 
-1. Missing protocol methods: `task.cancel`, `task.approve`, `config.get`.
-2. Missing event types: `subagent.completed`, `approval.requested`, `memory.updated`.
+1. Missing protocol methods: `task.cancel`, `config.get`.
+2. Missing event types: `subagent.completed`, `memory.updated`.
 3. No retrieval precedence or policy-governed promotion behavior for durable memory yet.
-4. No policy enforcement or approval workflow, despite the new runtime-owned policy and approval boundaries.
-5. No approval request events or CLI approval handling yet.
-6. No sub-agent registry or multi-role orchestration.
-7. No actual use of `subagent_model_overrides` for model routing.
-8. No skill discovery or loading subsystem.
-9. No web client or client SDK packages.
+4. No CLI approval browsing/approval UX yet, even though runtime approval handling and `task.approve` exist.
+5. No sub-agent registry or multi-role orchestration.
+6. No actual use of `subagent_model_overrides` for model routing.
+7. No skill discovery or loading subsystem.
+8. No web client or client SDK packages.
 
 ## 19. Bottom Line
 

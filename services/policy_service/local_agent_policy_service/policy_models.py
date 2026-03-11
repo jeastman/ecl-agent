@@ -4,6 +4,7 @@ from dataclasses import asdict, dataclass
 from typing import Any, Literal
 
 PolicyDecisionKind = Literal["ALLOW", "REQUIRE_APPROVAL", "DENY"]
+ApprovalStatus = Literal["pending", "approved", "rejected"]
 
 
 @dataclass(slots=True)
@@ -42,8 +43,8 @@ class ApprovalRequest:
     scope: dict[str, Any]
     description: str
     created_at: str
-    status: str
-    decision: str | None = None
+    status: ApprovalStatus
+    decision: ApprovalStatus | None = None
     decided_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

@@ -78,7 +78,10 @@ def _rebuild_run_state(
     active_subagent = _latest_active_subagent(events)
     latest_checkpoint_id = resume_handle.latest_checkpoint_id if resume_handle is not None else None
     checkpoint_thread_id = resume_handle.thread_id if resume_handle is not None else None
-    pause_reason = _pause_reason(events) if status == TaskStatus.PAUSED else None
+    pause_reason = _pause_reason(events, status)
+    pending_approval_id = (
+        _pending_approval_id(events) if status == TaskStatus.AWAITING_APPROVAL else None
+    )
     return RunState(
         task_id=task_id,
         run_id=run_id,
@@ -98,14 +101,16 @@ def _rebuild_run_state(
         artifact_count=sum(1 for event in events if event.event_type == "artifact.created"),
         last_event_at=events[-1].timestamp,
         failure=_failure_from_events(events),
-        awaiting_approval=False,
-        pending_approval_id=None,
-        is_resumable=status == TaskStatus.PAUSED and latest_checkpoint_id is not None,
+        awaiting_approval=status == TaskStatus.AWAITING_APPROVAL,
+        pending_approval_id=pending_approval_id,
+        is_resumable=status in {TaskStatus.PAUSED, TaskStatus.AWAITING_APPROVAL}
+        and latest_checkpoint_id is not None,
         pause_reason=pause_reason,
         checkpoint_thread_id=checkpoint_thread_id,
         latest_checkpoint_id=latest_checkpoint_id,
         links={
             "artifacts": "task.artifacts.list",
+            "approve": "task.approve",
             "resume": "task.resume",
             "events": "task.logs.stream",
         },
@@ -158,6 +163,8 @@ def _status_from_events(
         return TaskStatus.COMPLETED
     if latest_type == "task.failed":
         return TaskStatus.FAILED
+    if latest_type == "approval.requested" or _has_unresolved_approval(events):
+        return TaskStatus.AWAITING_APPROVAL
     if latest_type == "task.paused":
         return TaskStatus.PAUSED
     if latest_type == "task.resumed":
@@ -172,6 +179,8 @@ def _phase_from_events(events: list[PersistedEvent], status: TaskStatus) -> str:
         phase = event.payload.get("phase")
         if isinstance(phase, str) and phase.strip():
             return phase.strip()
+    if status == TaskStatus.AWAITING_APPROVAL:
+        return "awaiting_approval"
     if status == TaskStatus.PAUSED:
         return "paused"
     if status == TaskStatus.COMPLETED:
@@ -192,13 +201,37 @@ def _latest_summary(events: list[PersistedEvent]) -> str | None:
     return None
 
 
-def _pause_reason(events: list[PersistedEvent]) -> str | None:
+def _pause_reason(events: list[PersistedEvent], status: TaskStatus) -> str | None:
+    if status == TaskStatus.AWAITING_APPROVAL:
+        return "awaiting approval"
     for event in reversed(events):
         if event.event_type == "task.paused":
             reason = event.payload.get("reason")
             if isinstance(reason, str) and reason.strip():
                 return reason.strip()
     return None
+
+
+def _pending_approval_id(events: list[PersistedEvent]) -> str | None:
+    for event in reversed(events):
+        if event.event_type == "approval.requested":
+            approval = event.payload.get("approval")
+            if isinstance(approval, dict):
+                approval_id = approval.get("approval_id")
+                if isinstance(approval_id, str) and approval_id.strip():
+                    return approval_id.strip()
+    return None
+
+
+def _has_unresolved_approval(events: list[PersistedEvent]) -> bool:
+    latest_approval_index = -1
+    latest_terminal_index = -1
+    for index, event in enumerate(events):
+        if event.event_type == "approval.requested":
+            latest_approval_index = index
+        if event.event_type in {"task.resumed", "task.failed", "task.completed"}:
+            latest_terminal_index = index
+    return latest_approval_index > latest_terminal_index
 
 
 def _latest_active_subagent(events: list[PersistedEvent]) -> str | None:
