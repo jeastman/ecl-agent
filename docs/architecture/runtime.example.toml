@@ -26,6 +26,9 @@ metadata_backend = "sqlite"
 event_backend = "sqlite"
 diagnostic_backend = "sqlite"
 
+[cli]
+default_workspace_root = "../.."
+
 [policy]
 approval_mode = "boundary"
 sandbox_mode = "governed"

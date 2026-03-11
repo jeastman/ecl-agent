@@ -4,19 +4,24 @@ import argparse
 import sys
 from pathlib import Path
 
+from rich.console import Console
+
 from apps.cli.local_agent_cli.client import RuntimeClient, RuntimeClientError
 from apps.cli.local_agent_cli.renderers import (
+    render_approval_result,
     render_approvals,
     render_artifacts,
     render_config,
     render_diagnostics,
     render_event_timeline,
     render_health,
+    render_logs_stream_open,
     render_memory,
     render_skill_install,
     render_task_created,
     render_task_snapshot,
 )
+from packages.config.local_agent_config.loader import load_runtime_config
 from packages.protocol.local_agent_protocol.models import (
     ApprovalDecisionPayload,
     JsonRpcRequest,
@@ -48,7 +53,17 @@ from packages.task_model.local_agent_task_model.ids import new_correlation_id
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Local Agent Harness CLI")
+    parser = argparse.ArgumentParser(
+        description="Run and inspect Local Agent Harness tasks.",
+        epilog=(
+            "Examples:\n"
+            "  agent run \"Inspect the repository workspace\"\n"
+            "  agent status task_123 --run-id run_456\n"
+            "  agent logs task_123 --run-id run_456\n"
+            "  agent approvals task_123"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
     parser.add_argument(
         "--config",
         default="docs/architecture/runtime.example.toml",
@@ -156,8 +171,13 @@ def make_client(config_path: str) -> RuntimeClient:
     return RuntimeClient(config_path)
 
 
+def make_console() -> Console:
+    return Console(highlight=False, width=140)
+
+
 def handle_health(config_path: str) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_RUNTIME_HEALTH,
         params={},
@@ -166,8 +186,7 @@ def handle_health(config_path: str) -> int:
     )
     payload = client.send(request)
     result = payload["result"]
-    for line in render_health(result, payload.get("correlation_id")):
-        print(line)
+    console.print(render_health(result, payload.get("correlation_id")))
     return 0
 
 
@@ -179,7 +198,8 @@ def handle_run(
     success_criteria: list[str],
 ) -> int:
     client = make_client(config_path)
-    resolved_workspace_roots = workspace_roots or [str(Path.cwd())]
+    console = make_console()
+    resolved_workspace_roots = workspace_roots or [_default_workspace_root(config_path)]
     request = JsonRpcRequest(
         method=METHOD_TASK_CREATE,
         params=TaskCreateParams(
@@ -195,13 +215,18 @@ def handle_run(
     )
     payload = client.send(request)
     result = payload["result"]
-    for line in render_task_created(result, payload.get("correlation_id")):
-        print(line)
+    console.print(render_task_created(result, payload.get("correlation_id")))
     return 0
+
+
+def _default_workspace_root(config_path: str) -> str:
+    config = load_runtime_config(config_path)
+    return config.cli.default_workspace_root or str(Path.cwd())
 
 
 def handle_status(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_GET,
         params=TaskGetParams(task_id=task_id, run_id=run_id).to_dict(),
@@ -209,13 +234,13 @@ def handle_status(config_path: str, task_id: str, run_id: str | None) -> int:
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_task_snapshot(payload["result"]["task"]):
-        print(line)
+    console.print(render_task_snapshot(payload["result"]["task"]))
     return 0
 
 
 def handle_logs(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_LOGS_STREAM,
         params=TaskLogsStreamParams(task_id=task_id, run_id=run_id, include_history=True).to_dict(),
@@ -224,19 +249,21 @@ def handle_logs(config_path: str, task_id: str, run_id: str | None) -> int:
     )
     client.consume_stream(
         request,
-        on_response=lambda response_payload: print(
-            "task_id="
-            f"{response_payload['result']['task_id']} "
-            f"run_id={response_payload['result']['run_id']} "
-            f"stream_open={response_payload['result']['stream_open']}"
+        on_response=lambda response_payload: console.print(
+            render_logs_stream_open(
+                task_id=response_payload["result"]["task_id"],
+                run_id=response_payload["result"]["run_id"],
+                stream_open=response_payload["result"]["stream_open"],
+            )
         ),
-        on_event=lambda event_payload: print(render_event_timeline([event_payload])[0]),
+        on_event=lambda event_payload: console.print(render_event_timeline([event_payload])[0]),
     )
     return 0
 
 
 def handle_artifacts(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_ARTIFACTS_LIST,
         params=TaskArtifactsListParams(task_id=task_id, run_id=run_id).to_dict(),
@@ -244,13 +271,13 @@ def handle_artifacts(config_path: str, task_id: str, run_id: str | None) -> int:
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_artifacts(payload["result"]["artifacts"]):
-        print(line)
+    console.print(render_artifacts(payload["result"]["artifacts"]))
     return 0
 
 
 def handle_approvals(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_APPROVALS_LIST,
         params=TaskApprovalsListParams(task_id=task_id, run_id=run_id).to_dict(),
@@ -258,13 +285,13 @@ def handle_approvals(config_path: str, task_id: str, run_id: str | None) -> int:
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_approvals(payload["result"]["approvals"]):
-        print(line)
+    console.print(render_approvals(payload["result"]["approvals"]))
     return 0
 
 
 def handle_diagnostics(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_DIAGNOSTICS_LIST,
         params=TaskDiagnosticsListParams(task_id=task_id, run_id=run_id).to_dict(),
@@ -272,8 +299,7 @@ def handle_diagnostics(config_path: str, task_id: str, run_id: str | None) -> in
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_diagnostics(payload["result"]["diagnostics"]):
-        print(line)
+    console.print(render_diagnostics(payload["result"]["diagnostics"]))
     return 0
 
 
@@ -285,6 +311,7 @@ def handle_approve(
     run_id: str | None,
 ) -> int:
     client = make_client(config_path)
+    console = make_console()
     normalized_decision = "approved" if decision == "approve" else "rejected"
     request = JsonRpcRequest(
         method=METHOD_TASK_APPROVE,
@@ -301,16 +328,14 @@ def handle_approve(
     )
     payload = client.send(request)
     result = payload["result"]
-    print(
-        f"approval_id={result['approval_id']} accepted={result['accepted']} status={result['status']}"
-    )
-    for line in render_task_snapshot(result["task"]):
-        print(line)
+    console.print(render_approval_result(result))
+    console.print(render_task_snapshot(result["task"]))
     return 0
 
 
 def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_TASK_RESUME,
         params=TaskResumeParams(task_id=task_id, run_id=run_id).to_dict(),
@@ -318,8 +343,7 @@ def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_task_snapshot(payload["result"]["task"]):
-        print(line)
+    console.print(render_task_snapshot(payload["result"]["task"], title="Task Resumed"))
     return 0
 
 
@@ -331,6 +355,7 @@ def handle_memory(
     namespace: str | None,
 ) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_MEMORY_INSPECT,
         params=MemoryInspectParams(
@@ -344,13 +369,13 @@ def handle_memory(
     )
     payload = client.send(request)
     result = payload["result"]
-    for line in render_memory(result["entries"], scope=result["scope"], count=result["count"]):
-        print(line)
+    console.print(render_memory(result["entries"], scope=result["scope"], count=result["count"]))
     return 0
 
 
 def handle_config(config_path: str) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_CONFIG_GET,
         params={},
@@ -358,8 +383,7 @@ def handle_config(config_path: str) -> int:
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_config(payload["result"]):
-        print(line)
+    console.print(render_config(payload["result"]))
     return 0
 
 
@@ -374,6 +398,7 @@ def handle_skill_install(
     reason: str,
 ) -> int:
     client = make_client(config_path)
+    console = make_console()
     request = JsonRpcRequest(
         method=METHOD_SKILL_INSTALL,
         params=SkillInstallParams(
@@ -389,8 +414,7 @@ def handle_skill_install(
         correlation_id=new_correlation_id(),
     )
     payload = client.send(request)
-    for line in render_skill_install(payload["result"]):
-        print(line)
+    console.print(render_skill_install(payload["result"]))
     return 0
 
 

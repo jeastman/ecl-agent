@@ -4,6 +4,7 @@ import tomllib
 from pathlib import Path
 
 from packages.config.local_agent_config.models import (
+    CliConfig,
     ModelConfig,
     PersistenceConfig,
     RuntimeConfig,
@@ -64,9 +65,12 @@ def load_runtime_config(path: str) -> RuntimeConfig:
     default_model_payload = model_payload.get("default")
     primary_model_payload = _required_table(model_payload, "primary")
     persistence_payload = payload.get("persistence", {})
+    cli_payload = payload.get("cli", {})
     policy_payload = payload.get("policy", {})
     if not isinstance(persistence_payload, dict):
         raise ValueError("persistence must be a table")
+    if not isinstance(cli_payload, dict):
+        raise ValueError("cli must be a table")
     if not isinstance(policy_payload, dict):
         raise ValueError("policy must be a table")
 
@@ -125,6 +129,18 @@ def load_runtime_config(path: str) -> RuntimeConfig:
                 default=metadata_backend,
                 allowed={"sqlite"},
             ),
+        ),
+        cli=CliConfig(
+            default_workspace_root=(
+                None
+                if cli_payload.get("default_workspace_root") in (None, "")
+                else str(
+                    _resolve_path(
+                        config_path.parent,
+                        _required_str(cli_payload, "default_workspace_root"),
+                    )
+                )
+            )
         ),
         subagent_model_overrides={
             role: ModelConfig(

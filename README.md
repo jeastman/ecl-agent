@@ -138,6 +138,82 @@ python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.exampl
 python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml config
 ```
 
+## Configuration File
+
+The runtime configuration file passed with `--config` is TOML. The example file is [docs/architecture/runtime.example.toml](docs/architecture/runtime.example.toml).
+
+Relative paths in the config are resolved relative to the config file location, not the current shell directory. That applies to `identity.path`, `persistence.root_path`, and `cli.default_workspace_root`.
+
+Current format:
+
+```toml
+[runtime]
+name = "local-agent-harness"
+log_level = "info"
+
+[transport]
+mode = "stdio-jsonrpc"
+
+[identity]
+path = "../../agents/primary-agent/IDENTITY.md"
+
+[models.default]
+provider = "openai"
+model = "gpt-5-nano"
+
+[models.primary]
+provider = "openai"
+model = "gpt-5"
+
+[models.subagents.researcher]
+provider = "openai"
+model = "gpt-5-mini"
+
+[persistence]
+root_path = "~/.local-agent-harness"
+metadata_backend = "sqlite"
+event_backend = "sqlite"
+diagnostic_backend = "sqlite"
+
+[cli]
+default_workspace_root = "../.."
+
+[policy]
+approval_mode = "boundary"
+sandbox_mode = "governed"
+safe_command_classes = ["safe_read", "safe_exec"]
+deny_command_classes = ["network", "destructive", "secrets"]
+```
+
+Settings:
+
+- `runtime.name`: required runtime identifier used in health and inspection output.
+- `runtime.log_level`: optional runtime log level string. Defaults to `info`.
+- `transport.mode`: required transport selector. The current implementation expects `stdio-jsonrpc`.
+- `identity.path`: required path to the primary agent `IDENTITY.md`.
+- `models.primary.provider`: required provider for the primary model.
+- `models.primary.model`: required model name for the primary model.
+- `models.default.provider`: optional fallback provider for roles that do not resolve to a more specific model.
+- `models.default.model`: optional fallback model name paired with `models.default.provider`.
+- `models.subagents.<role>.provider`: optional provider override for a specific subagent role such as `researcher`.
+- `models.subagents.<role>.model`: optional model override for that specific subagent role.
+- `persistence.root_path`: optional runtime data root. The runtime stores `metadata/`, `scratch/`, and `memory/` under this directory. Defaults to `~/.local-agent-harness`.
+- `persistence.metadata_backend`: optional metadata backend. Currently only `sqlite` is supported.
+- `persistence.event_backend`: optional event backend. Currently only `sqlite` is supported.
+- `persistence.diagnostic_backend`: optional diagnostics backend. Currently only `sqlite` is supported.
+- `cli.default_workspace_root`: optional default workspace root for `agent run` when `--workspace-root` is omitted. If unset, the CLI uses the current working directory.
+- `policy.approval_mode`: policy setting passed into the runtime policy engine. The example uses `boundary`.
+- `policy.sandbox_mode`: policy setting describing the governed sandbox model. The example uses `governed`.
+- `policy.safe_command_classes`: optional list of command classes treated as low-risk by policy.
+- `policy.deny_command_classes`: optional list of command classes denied by policy.
+
+Notes:
+
+- `models.default` is optional. If omitted, the primary model acts as the default fallback.
+- `models.subagents` is optional and may contain zero or more role-specific overrides.
+- `policy` is an open table in the current schema. The runtime preserves additional keys and exposes them through `agent config`, with redaction applied to secret-like values.
+- The config file does not define the active task workspace directly. `agent run --workspace-root ...` still sets that per run; `cli.default_workspace_root` only provides the CLI default when the flag is omitted.
+
 Milestone 2 CLI surface:
 
 - `agent health`
@@ -197,7 +273,6 @@ Milestone 2 event types:
 - [ADR index](docs/adr/README.md)
 - [Milestone 2 specification](docs/plans/MILESTONE-2.md)
 - [Milestone 2 implementation blueprint](docs/plans/MILESTONE-2-implementation-blueprint.md)
-- [Milestone 2 Phase 6 closure plan](docs/plans/milestone-2.phase-6.md)
 - [CLI README](apps/cli/README.md)
 - [Runtime README](apps/runtime/README.md)
 

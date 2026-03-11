@@ -56,11 +56,35 @@ class CliTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(cli, "make_client", return_value=fake_client):
-            with patch("sys.stdout", new=io.StringIO()) as stdout:
-                exit_code = cli.handle_run(
-                    config_path="docs/architecture/runtime.example.toml",
-                    objective="Inspect the repo",
-                    workspace_roots=[],
+            with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    exit_code = cli.handle_run(
+                        config_path="docs/architecture/runtime.example.toml",
+                        objective="Inspect the repo",
+                        workspace_roots=[],
+                        constraints=[],
+                        success_criteria=[],
+                    )
+        self.assertEqual(exit_code, 0)
+        request = fake_client.requests[0]
+        self.assertEqual(
+            request.params["task"]["workspace_roots"],  # type: ignore[attr-defined]
+            [str(Path.cwd())],
+        )
+        self.assertIn("Task Accepted", stdout.getvalue())
+        self.assertIn("corr_1", stdout.getvalue())
+        self.assertIn("agent logs task_1", stdout.getvalue())
+
+    def test_handle_run_uses_configured_default_workspace_root(self) -> None:
+        fake_client = _FakeClient()
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch.object(cli, "_default_workspace_root", return_value="/tmp/configured-workspace"):
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    exit_code = cli.handle_run(
+                        config_path="docs/architecture/runtime.example.toml",
+                        objective="Inspect the repo",
+                        workspace_roots=[],
                     constraints=[],
                     success_criteria=[],
                 )
@@ -68,10 +92,11 @@ class CliTests(unittest.TestCase):
         request = fake_client.requests[0]
         self.assertEqual(
             request.params["task"]["workspace_roots"],  # type: ignore[attr-defined]
-            [str(Path.cwd())],
+            ["/tmp/configured-workspace"],
         )
-        self.assertIn("correlation_id=corr_1", stdout.getvalue())
-        self.assertIn("hint=agent logs task_1", stdout.getvalue())
+        self.assertIn("Task Accepted", stdout.getvalue())
+        self.assertIn("corr_1", stdout.getvalue())
+        self.assertIn("agent logs task_1", stdout.getvalue())
 
     def test_handle_status_renders_runtime_owned_snapshot(self) -> None:
         fake_client = _FakeClient()
@@ -98,9 +123,11 @@ class CliTests(unittest.TestCase):
                     run_id="run_1",
                 )
         self.assertEqual(exit_code, 0)
-        self.assertIn("status=completed", stdout.getvalue())
-        self.assertIn("latest_summary=Summary created.", stdout.getvalue())
-        self.assertIn("artifact_count=1", stdout.getvalue())
+        self.assertIn("Task Status", stdout.getvalue())
+        self.assertIn("completed", stdout.getvalue())
+        self.assertIn("Summary created.", stdout.getvalue())
+        self.assertIn("Artifacts", stdout.getvalue())
+        self.assertIn("1", stdout.getvalue())
 
     def test_handle_logs_renders_stream_ack_and_events(self) -> None:
         fake_client = _FakeClient()
@@ -161,18 +188,13 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        lines = output.strip().splitlines()
-        self.assertIn("stream_open=True", lines[0])
-        self.assertEqual(lines[1], "[task.started] execution started")
-        self.assertEqual(
-            lines[2],
-            "[subagent.started] researcher taskDescription=Inspect the repository structure.",
-        )
-        self.assertEqual(
-            lines[3],
-            "[subagent.completed] researcher status=success duration=0.42",
-        )
-        self.assertEqual(lines[4], "[artifact.created] artifacts/repo_summary.md")
+        self.assertIn("Event Stream", output)
+        self.assertIn("open", output)
+        self.assertIn("task.started", output)
+        self.assertIn("execution started", output)
+        self.assertIn("researcher started: Inspect the repository structure.", output)
+        self.assertIn("researcher status=success duration=0.42", output)
+        self.assertIn("artifacts/repo_summary.md", output)
 
     def test_handle_artifacts_renders_runtime_artifact_metadata(self) -> None:
         fake_client = _FakeClient()
@@ -199,9 +221,10 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("artifact_id=artifact_1", output)
-        self.assertIn("logical_path=artifacts/repo_summary.md", output)
-        self.assertIn("persistence_class=run", output)
+        self.assertIn("Artifacts", output)
+        self.assertIn("artifact_1", output)
+        self.assertIn("artifacts/repo_summary.md", output)
+        self.assertIn("run", output)
 
     def test_handle_skill_install_renders_runtime_result(self) -> None:
         fake_client = _FakeClient()
@@ -236,8 +259,9 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("status=completed", output)
-        self.assertIn("approval_required=False", output)
+        self.assertIn("Skill Install", output)
+        self.assertIn("completed", output)
+        self.assertIn("False", output)
         request = fake_client.requests[0]
         self.assertEqual(request.method, "skill.install")  # type: ignore[attr-defined]
         self.assertEqual(request.params["task_id"], "task_1")  # type: ignore[attr-defined]
@@ -267,9 +291,10 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("status=completed", output)
-        self.assertIn("latest_summary=Resumed successfully.", output)
-        self.assertIn("latest_checkpoint_id=ckpt_2", output)
+        self.assertIn("Task Resumed", output)
+        self.assertIn("completed", output)
+        self.assertIn("Resumed successfully.", output)
+        self.assertIn("ckpt_2", output)
 
     def test_handle_approvals_renders_runtime_owned_approvals(self) -> None:
         fake_client = _FakeClient()
@@ -296,8 +321,9 @@ class CliTests(unittest.TestCase):
                     run_id="run_1",
                 )
         self.assertEqual(exit_code, 0)
-        self.assertIn("approval_id=approval_1", stdout.getvalue())
-        self.assertIn("scope=file.write:workspace/**", stdout.getvalue())
+        self.assertIn("Approvals", stdout.getvalue())
+        self.assertIn("approval_1", stdout.getvalue())
+        self.assertIn("file.write:workspace/**", stdout.getvalue())
 
     def test_handle_approve_accepts_runtime_snapshot(self) -> None:
         fake_client = _FakeClient()
@@ -326,8 +352,11 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("approval_id=approval_1 accepted=True status=approved", output)
-        self.assertIn("status=completed", output)
+        self.assertIn("Approval Submitted", output)
+        self.assertIn("approval_1", output)
+        self.assertIn("True", output)
+        self.assertIn("approved", output)
+        self.assertIn("completed", output)
         request = fake_client.requests[0]
         self.assertEqual(request.params["approval"]["decision"], "approved")  # type: ignore[attr-defined]
 
@@ -356,8 +385,9 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("diagnostic_id=diag_1", output)
-        self.assertIn("kind=policy_denied", output)
+        self.assertIn("Diagnostics", output)
+        self.assertIn("diag_1", output)
+        self.assertIn("policy_denied", output)
 
     def test_handle_memory_renders_entries(self) -> None:
         fake_client = _FakeClient()
@@ -390,9 +420,10 @@ class CliTests(unittest.TestCase):
                 )
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("scope=project", output)
-        self.assertIn("memory_id=mem_1", output)
-        self.assertIn('provenance={"task_id": "task_1"}', output)
+        self.assertIn("Memory", output)
+        self.assertIn("project", output)
+        self.assertIn("mem_1", output)
+        self.assertIn('{"task_id": "task_1"}', output)
 
     def test_handle_config_renders_redacted_effective_config(self) -> None:
         fake_client = _FakeClient()
@@ -410,7 +441,8 @@ class CliTests(unittest.TestCase):
                 exit_code = cli.handle_config("docs/architecture/runtime.example.toml")
         self.assertEqual(exit_code, 0)
         output = stdout.getvalue()
-        self.assertIn("redaction_count=1", output)
+        self.assertIn("Runtime Config", output)
+        self.assertIn("1", output)
         self.assertIn('"api_token": "***REDACTED***"', output)
 
 

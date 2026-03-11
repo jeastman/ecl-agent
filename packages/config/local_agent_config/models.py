@@ -29,12 +29,18 @@ class PersistenceConfig:
 
 
 @dataclass(slots=True)
+class CliConfig:
+    default_workspace_root: str | None = None
+
+
+@dataclass(slots=True)
 class RuntimeConfig:
     runtime: RuntimeSettings
     identity_path: str
     transport: TransportConfig
     primary_model: ModelConfig
     persistence: PersistenceConfig
+    cli: CliConfig = field(default_factory=CliConfig)
     default_model: ModelConfig | None = None
     subagent_model_overrides: dict[str, ModelConfig] = field(default_factory=dict)
     policy: dict[str, object] = field(default_factory=dict)

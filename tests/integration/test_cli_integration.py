@@ -31,8 +31,9 @@ class CliIntegrationTests(unittest.TestCase):
                         cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0
                     )
                     output = stdout.getvalue()
-                self.assertIn("task_id=task_123", output)
-                self.assertIn("hint=agent logs task_123", output)
+                self.assertIn("Task Accepted", output)
+                self.assertIn("task_123", output)
+                self.assertIn("agent logs task_123", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -49,8 +50,9 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                self.assertIn("status=completed", output)
-                self.assertIn("latest_summary=Summary created.", output)
+                self.assertIn("Task Status", output)
+                self.assertIn("completed", output)
+                self.assertIn("Summary created.", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -60,18 +62,12 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                lines = output.strip().splitlines()
-                self.assertIn("stream_open=True", lines[0])
-                self.assertEqual(lines[1], "[task.created] objective=Inspect repo")
-                self.assertEqual(
-                    lines[2],
-                    "[subagent.started] researcher taskDescription=Inspect repo",
-                )
-                self.assertEqual(
-                    lines[3],
-                    "[subagent.completed] researcher status=success duration=0.42",
-                )
-                self.assertEqual(lines[4], "[artifact.created] artifacts/repo_summary.md")
+                self.assertIn("Event Stream", output)
+                self.assertIn("task.created", output)
+                self.assertIn("objective=Inspect repo", output)
+                self.assertIn("researcher started: Inspect repo", output)
+                self.assertIn("researcher status=success duration=0.42", output)
+                self.assertIn("artifacts/repo_summary.md", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -88,22 +84,25 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                self.assertIn("artifact_id=artifact_1", output)
-                self.assertIn("content_type=text/markdown", output)
+                self.assertIn("Artifacts", output)
+                self.assertIn("artifact_1", output)
+                self.assertIn("text/markdown", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
                         cli.main(["--config", "ignored.toml", "approvals", "task_123"]), 0
                     )
                     output = stdout.getvalue()
-                self.assertIn("approval_id=approval_1", output)
+                self.assertIn("Approvals", output)
+                self.assertIn("approval_1", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
                         cli.main(["--config", "ignored.toml", "diagnostics", "task_123"]), 0
                     )
                     output = stdout.getvalue()
-                self.assertIn("diagnostic_id=diag_1", output)
+                self.assertIn("Diagnostics", output)
+                self.assertIn("diag_1", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -120,8 +119,9 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                self.assertIn("accepted=True", output)
-                self.assertIn("status=completed", output)
+                self.assertIn("Approval Submitted", output)
+                self.assertIn("True", output)
+                self.assertIn("completed", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -138,9 +138,10 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                self.assertIn("task_id=task_123", output)
-                self.assertIn("status=completed", output)
-                self.assertIn("latest_summary=Run resumed and completed.", output)
+                self.assertIn("Task Resumed", output)
+                self.assertIn("task_123", output)
+                self.assertIn("completed", output)
+                self.assertIn("Run resumed and completed.", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -156,12 +157,13 @@ class CliIntegrationTests(unittest.TestCase):
                         0,
                     )
                     output = stdout.getvalue()
-                self.assertIn("memory_id=mem_1", output)
+                self.assertIn("Memory Entries", output)
+                self.assertIn("mem_1", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(cli.main(["--config", "ignored.toml", "config"]), 0)
                     output = stdout.getvalue()
-                self.assertIn("redaction_count=1", output)
+                self.assertIn("Runtime Config", output)
                 self.assertIn('"api_token": "***REDACTED***"', output)
 
 

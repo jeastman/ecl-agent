@@ -107,6 +107,41 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
 
             self.assertEqual(config.persistence.root_path, str((config_dir / "../state").resolve()))
 
+    def test_loader_resolves_cli_default_workspace_root_relative_to_config(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_dir = Path(temp_dir) / "config"
+            config_dir.mkdir()
+            config_path = config_dir / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[cli]",
+                        "default_workspace_root = '../workspace'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_runtime_config(str(config_path))
+
+            self.assertEqual(
+                config.cli.default_workspace_root,
+                str((config_dir / "../workspace").resolve()),
+            )
+
     def test_loader_rejects_unknown_persistence_backend(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             config_path = Path(temp_dir) / "runtime.toml"
