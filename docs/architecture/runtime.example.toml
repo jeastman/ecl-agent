@@ -1,0 +1,22 @@
+[runtime]
+name = "local-agent-harness"
+log_level = "info"
+
+[transport]
+mode = "stdio-jsonrpc"
+
+[identity]
+path = "../../agents/primary-agent/IDENTITY.md"
+
+[models.default]
+provider = "openai"
+model = "gpt-5"
+
+[models.subagents.researcher]
+provider = "openai"
+model = "gpt-5-mini"
+
+[policy]
+approval_mode = "placeholder"
+sandbox_mode = "placeholder"
+

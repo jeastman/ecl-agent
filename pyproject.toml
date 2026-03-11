@@ -1,0 +1,61 @@
+[project]
+name = "local-agent-harness"
+version = "0.1.0"
+description = "Milestone 0 scaffold for a local-first AI agent harness"
+requires-python = ">=3.11"
+
+[tool.uv]
+package = false
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+
+[tool.poe]
+envfile = []
+
+[tool.poe.tasks.sync]
+cmd = "uv sync --all-groups"
+help = "Create or update the local uv environment."
+
+[tool.poe.tasks.test]
+cmd = "python -m unittest discover -s tests -v"
+help = "Run the Milestone 0 verification suite."
+
+[tool.poe.tasks.lint]
+cmd = "ruff check ."
+help = "Run Ruff across the repository."
+
+[tool.poe.tasks.format]
+cmd = "ruff format ."
+help = "Format Python sources with Ruff."
+
+[tool.poe.tasks.typecheck]
+cmd = "mypy apps packages tests"
+help = "Run mypy over the repo source trees."
+
+[tool.poe.tasks.health]
+cmd = "python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml health"
+help = "Run the CLI health check against the local runtime shell."
+
+[tool.poe.tasks.submit]
+cmd = "python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml submit 'Bootstrap Milestone 0'"
+help = "Submit the default Milestone 0 stub task through the CLI."
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+check_untyped_defs = true
+explicit_package_bases = true
+
+[dependency-groups]
+dev = [
+    "mypy>=1.19.1",
+    "poethepoet>=0.42.1",
+    "pytest>=9.0.2",
+    "ruff>=0.15.5",
+]
