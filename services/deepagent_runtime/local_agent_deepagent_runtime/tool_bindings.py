@@ -5,6 +5,10 @@ from typing import Any, Callable
 
 from langchain_core.tools import BaseTool, tool
 
+from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding
+from packages.protocol.local_agent_protocol.models import ArtifactReference
+from services.artifact_service.local_agent_artifact_service.store import ArtifactStore
+from services.memory_service.local_agent_memory_service.memory_store import MemoryStore
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
 from services.sandbox_service.local_agent_sandbox_service.sandbox import ExecutionSandbox
 
@@ -12,8 +16,11 @@ EventCallback = Callable[[str, dict[str, Any]], None]
 
 _READ_CAPABILITIES = {"read_file", "filesystem", "files.read"}
 _WRITE_CAPABILITIES = {"write_file", "filesystem", "files.write"}
-_LIST_CAPABILITIES = {"list_files", "filesystem", "files.list"}
+_LIST_CAPABILITIES = {"list_files", "filesystem", "files.list", "files.read", "read_file"}
 _EXECUTE_CAPABILITIES = {"execute_command", "commands", "sandbox.execute"}
+_MEMORY_CAPABILITIES = {"memory_lookup", "memory", "memory.read"}
+_PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
+_ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
 
 
 @dataclass(slots=True)
@@ -21,9 +28,12 @@ class SandboxToolBindings:
     sandbox: ExecutionSandbox
     task_id: str
     run_id: str
+    artifact_store: ArtifactStore
+    memory_store: MemoryStore | None = None
     on_event: EventCallback | None = None
     allowed_capabilities: list[str] | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
+    _written_paths: list[str] | None = None
 
     def read_file(self, path: str) -> str:
         self._ensure_allowed("read_file", _READ_CAPABILITIES)
@@ -40,6 +50,7 @@ class SandboxToolBindings:
             "tool.called",
             {
                 "tool": "read_file",
+                "arguments": {"path": normalized_path},
                 "path": normalized_path,
             },
         )
@@ -60,11 +71,16 @@ class SandboxToolBindings:
             "tool.called",
             {
                 "tool": "write_file",
+                "arguments": {"path": normalized_path},
                 "path": normalized_path,
                 "bytes_written": len(content.encode("utf-8")),
             },
         )
         self.sandbox.write_text(normalized_path, content)
+        if self._written_paths is None:
+            self._written_paths = []
+        if normalized_path not in self._written_paths:
+            self._written_paths.append(normalized_path)
         return normalized_path
 
     def list_files(self, root: str) -> list[str]:
@@ -82,6 +98,7 @@ class SandboxToolBindings:
             "tool.called",
             {
                 "tool": "list_files",
+                "arguments": {"root": normalized_root},
                 "path": normalized_root,
             },
         )
@@ -104,6 +121,7 @@ class SandboxToolBindings:
             "tool.called",
             {
                 "tool": "execute_command",
+                "arguments": {"command": list(command), "cwd": normalized_cwd},
                 "command": list(command),
                 "cwd": normalized_cwd,
             },
@@ -116,28 +134,147 @@ class SandboxToolBindings:
             "cwd": result.cwd,
         }
 
-    def as_langchain_tools(self) -> list[BaseTool]:
-        @tool
-        def read_file(path: str) -> str:
-            """Read a UTF-8 text file from a governed sandbox path."""
-            return self.read_file(path)
+    def memory_lookup(
+        self, namespace: str | None = None, scope: str | None = None
+    ) -> list[dict[str, Any]]:
+        self._ensure_allowed("memory_lookup", _MEMORY_CAPABILITIES)
+        if self.memory_store is None:
+            return []
+        records = self.memory_store.list_memory(scope=scope, namespace=namespace)
+        self._emit(
+            "tool.called",
+            {
+                "tool": "memory_lookup",
+                "arguments": {"namespace": namespace, "scope": scope},
+                "count": len(records),
+            },
+        )
+        return [record.to_dict() for record in records]
 
-        @tool
-        def write_file(path: str, content: str) -> str:
-            """Write UTF-8 text content to a governed sandbox path."""
-            return self.write_file(path, content)
+    def plan_update(self, summary: str, phase: str | None = None) -> dict[str, Any]:
+        self._ensure_allowed("plan_update", _PLAN_CAPABILITIES)
+        payload = {"summary": summary.strip()}
+        if phase is not None and phase.strip():
+            payload["phase"] = phase.strip()
+        self._emit("plan.updated", payload)
+        self._emit(
+            "tool.called",
+            {
+                "tool": "plan_update",
+                "arguments": payload,
+            },
+        )
+        return payload
 
-        @tool
-        def list_files(root: str) -> list[str]:
-            """List governed files rooted at a sandbox path."""
-            return self.list_files(root)
+    def artifact_inspect(self) -> list[dict[str, Any]]:
+        self._ensure_allowed("artifact_inspect", _ARTIFACT_CAPABILITIES)
+        artifacts = self.artifact_store.list_artifacts(self.task_id, self.run_id)
+        self._emit(
+            "tool.called",
+            {
+                "tool": "artifact_inspect",
+                "arguments": {"task_id": self.task_id, "run_id": self.run_id},
+                "count": len(artifacts),
+            },
+        )
+        return [self._artifact_payload(artifact) for artifact in artifacts]
 
-        @tool
-        def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
-            """Execute a command inside the governed sandbox and return structured output."""
-            return self.execute_command(command, cwd)
+    def as_langchain_tools(
+        self,
+        resolved_bindings: tuple[ResolvedToolBinding, ...],
+        *,
+        memory_scopes: tuple[str, ...] = (),
+    ) -> list[BaseTool]:
+        allowed_tool_ids = {binding.tool_id for binding in resolved_bindings}
+        tools: list[BaseTool] = []
 
-        return [read_file, write_file, list_files, execute_command]
+        if "read_files" in allowed_tool_ids:
+
+            @tool
+            def read_file(path: str) -> str:
+                """Read a UTF-8 text file from a governed sandbox path."""
+                return self.read_file(path)
+
+            @tool
+            def list_files(root: str = "workspace") -> list[str]:
+                """List governed files rooted at a sandbox path."""
+                return self.list_files(root)
+
+            tools.extend([read_file, list_files])
+
+        if "write_files" in allowed_tool_ids:
+
+            @tool
+            def write_file(path: str, content: str) -> str:
+                """Write UTF-8 text content to a governed sandbox path."""
+                return self.write_file(path, content)
+
+            tools.append(write_file)
+
+        if "execute_commands" in allowed_tool_ids:
+
+            @tool
+            def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
+                """Execute a command inside the governed sandbox and return structured output."""
+                return self.execute_command(command, cwd)
+
+            tools.append(execute_command)
+
+        if "memory_lookup" in allowed_tool_ids:
+
+            @tool
+            def memory_lookup(
+                namespace: str | None = None, scope: str | None = None
+            ) -> list[dict[str, Any]]:
+                """Inspect runtime memory records for the allowed scope."""
+                normalized_scope = scope if scope in set(memory_scopes) else None
+                records = self.memory_lookup(namespace=namespace, scope=normalized_scope)
+                if normalized_scope is None and memory_scopes:
+                    return [
+                        record
+                        for record in records
+                        if str(record.get("scope") or "") in set(memory_scopes)
+                    ]
+                return records
+
+            tools.append(memory_lookup)
+
+        if "plan_update" in allowed_tool_ids:
+
+            @tool
+            def plan_update(summary: str, phase: str | None = None) -> dict[str, Any]:
+                """Emit a runtime-friendly plan update."""
+                return self.plan_update(summary, phase)
+
+            tools.append(plan_update)
+
+        if "artifact_inspect" in allowed_tool_ids:
+
+            @tool
+            def artifact_inspect() -> list[dict[str, Any]]:
+                """Inspect task artifacts and return metadata with previews when available."""
+                return self.artifact_inspect()
+
+            tools.append(artifact_inspect)
+
+        return tools
+
+    @property
+    def written_paths(self) -> list[str]:
+        return list(self._written_paths or [])
+
+    def _artifact_payload(self, artifact: ArtifactReference) -> dict[str, Any]:
+        payload = artifact.to_dict()
+        sandbox_path = _artifact_to_sandbox_path(artifact)
+        preview: str | None = None
+        if self.sandbox.exists(sandbox_path):
+            try:
+                preview = self.sandbox.read_text(sandbox_path)[:500]
+            except UnicodeDecodeError:
+                preview = None
+        payload["preview"] = preview
+        payload["sandbox_path"] = sandbox_path
+        return payload
 
     def _ensure_allowed(self, tool_name: str, aliases: set[str]) -> None:
         allowed_capabilities = {item.strip() for item in self.allowed_capabilities or [] if item}
@@ -153,6 +290,15 @@ class SandboxToolBindings:
     def _govern(self, context: OperationContext) -> None:
         if self.governed_operation is not None:
             self.governed_operation(context)
+
+
+def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
+    logical_path = artifact.logical_path.strip("/")
+    if artifact.persistence_class == "project":
+        return f"memory/{logical_path}" if logical_path else "memory"
+    if artifact.persistence_class == "ephemeral":
+        return f"scratch/{logical_path}" if logical_path else "scratch"
+    return f"workspace/{logical_path}" if logical_path else "workspace"
 
 
 def _classify_command(command: list[str]) -> str:

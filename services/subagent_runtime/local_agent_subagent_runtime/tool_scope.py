@@ -7,7 +7,7 @@ from apps.runtime.local_agent_runtime.subagents import (
 )
 
 _TOOL_CAPABILITY_ALIASES: dict[str, tuple[str, ...]] = {
-    "read_files": ("read_file", "filesystem", "files.read"),
+    "read_files": ("read_file", "list_files", "filesystem", "files.read", "files.list"),
     "write_files": ("write_file", "filesystem", "files.write"),
     "execute_commands": ("execute_command", "commands", "sandbox.execute"),
     "memory_lookup": ("memory_lookup", "memory", "memory.read"),

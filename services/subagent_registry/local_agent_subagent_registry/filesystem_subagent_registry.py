@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import yaml
+import yaml  # type: ignore[import-untyped]
 
 from apps.runtime.local_agent_runtime.subagents import (
     ALLOWED_FILESYSTEM_SCOPES,
@@ -44,13 +44,9 @@ class FileSystemSubagentRegistry:
 
     def _load(self) -> None:
         if not self._root_path.exists():
-            raise SubagentRegistryError(
-                f"Subagent root does not exist: {self._root_path}"
-            )
+            raise SubagentRegistryError(f"Subagent root does not exist: {self._root_path}")
         if not self._root_path.is_dir():
-            raise SubagentRegistryError(
-                f"Subagent root is not a directory: {self._root_path}"
-            )
+            raise SubagentRegistryError(f"Subagent root is not a directory: {self._root_path}")
 
         seen_role_ids: set[str] = set()
         mismatched_roles: list[tuple[str, str]] = []
@@ -76,9 +72,7 @@ class FileSystemSubagentRegistry:
     ) -> tuple[SubagentDefinition, SubagentAssetBundle, str]:
         manifest_path = role_dir / "manifest.yaml"
         if not manifest_path.is_file():
-            raise SubagentRegistryError(
-                f"Subagent role '{role_dir.name}' is missing manifest.yaml"
-            )
+            raise SubagentRegistryError(f"Subagent role '{role_dir.name}' is missing manifest.yaml")
 
         manifest = self._load_manifest(manifest_path)
         role_id = self._read_required_string(manifest, "role_id", manifest_path)
@@ -132,9 +126,7 @@ class FileSystemSubagentRegistry:
             ) from exc
 
         if not isinstance(manifest, dict):
-            raise SubagentRegistryError(
-                f"Subagent manifest must be a mapping: {manifest_path}"
-            )
+            raise SubagentRegistryError(f"Subagent manifest must be a mapping: {manifest_path}")
         return manifest
 
     def _read_required_string(
@@ -180,9 +172,7 @@ class FileSystemSubagentRegistry:
                     f"Subagent manifest field '{key}' must contain non-empty strings: {manifest_path}"
                 )
             if item not in allowed_values:
-                raise SubagentRegistryError(
-                    f"Unknown {key} value '{item}' in {manifest_path}"
-                )
+                raise SubagentRegistryError(f"Unknown {key} value '{item}' in {manifest_path}")
             items.append(item)
         return tuple(items)
 

@@ -56,6 +56,7 @@ def create_runtime_server(
         tool_scope_resolver=tool_scope_resolver,
         skill_registry=skill_registry,
     )
+    primary_model_route = model_resolver.resolve_primary()
     durable_services = create_durable_runtime_services(
         config,
         runtime_root_override=runtime_root,
@@ -73,8 +74,8 @@ def create_runtime_server(
         resolved_subagents=resolved_subagents,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
-            model_name=config.default_model.model,
-            model_provider=config.default_model.provider,
+            model_name=primary_model_route.model,
+            model_provider=primary_model_route.provider,
         ),
     )
     checkpoint_adapter = task_runner.checkpoint_adapter
@@ -98,7 +99,9 @@ def create_runtime_server(
         task_runner=task_runner,
         durable_services=durable_services,
         resume_service=resume_service,
-        config_sources=[source for source in (config_path, config.identity_path) if source is not None],
+        config_sources=[
+            source for source in (config_path, config.identity_path) if source is not None
+        ],
     )
     return RuntimeServer(handlers=handlers)
 

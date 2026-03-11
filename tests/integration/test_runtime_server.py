@@ -173,6 +173,57 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "run",
             )
 
+    def test_runtime_boots_with_real_phase3_harness_and_compiles_all_roles(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            captures: dict[str, Any] = {}
+            harness = LangChainDeepAgentHarness(
+                model_name=config.default_model.model,
+                model_provider=config.default_model.provider,
+                model_factory=lambda model_name, *, model_provider: {
+                    "model_name": model_name,
+                    "model_provider": model_provider,
+                },
+                agent_factory=lambda **kwargs: _CapturingCompiledAgent(kwargs, captures),
+            )
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=harness,
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Inspect the repo",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="phase3",
+                correlation_id=new_correlation_id(),
+            )
+
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            payload = create_response.to_dict()["result"]
+
+            self.assertEqual(payload["status"], "accepted")
+            self.assertEqual(
+                [subagent["name"] for subagent in captures["agent_kwargs"]["subagents"]],
+                ["coder", "librarian", "planner", "researcher", "verifier"],
+            )
+            researcher = next(
+                subagent
+                for subagent in captures["agent_kwargs"]["subagents"]
+                if subagent["name"] == "researcher"
+            )
+            self.assertEqual(researcher["model"]["model_name"], "gpt-5-mini")
+            self.assertTrue((workspace_root / "artifacts" / "phase3-result.md").is_file())
+
     def test_runtime_server_streams_events_on_stdout_after_ack(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             workspace_root = Path(temp_dir) / "workspace"
@@ -488,7 +539,9 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "default_model",
             )
             self.assertEqual(
-                payload["effective_config"]["models"]["resolved"]["subagents"]["researcher"]["source"],
+                payload["effective_config"]["models"]["resolved"]["subagents"]["researcher"][
+                    "source"
+                ],
                 "subagent_override",
             )
             self.assertEqual(
@@ -861,6 +914,8 @@ class _ApprovalHarness:
             sandbox=request.sandbox,
             task_id=request.task_id,
             run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
             on_event=on_event,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
@@ -888,6 +943,8 @@ class _NetworkDeniedHarness:
             sandbox=request.sandbox,
             task_id=request.task_id,
             run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
             on_event=on_event,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
@@ -898,6 +955,25 @@ class _NetworkDeniedHarness:
 
 def _network_denied_harness() -> _NetworkDeniedHarness:
     return _NetworkDeniedHarness()
+
+
+class _CapturingCompiledAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = kwargs["tools"]
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_payload"] = input
+        self._captures["invoke_config"] = config
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        write_tool.invoke(
+            {
+                "path": "workspace/artifacts/phase3-result.md",
+                "content": "# Phase 3\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": "Phase 3 execution complete."}]}
 
 
 if __name__ == "__main__":

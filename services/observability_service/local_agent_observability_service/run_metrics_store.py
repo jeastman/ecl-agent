@@ -113,8 +113,7 @@ class SQLiteRunMetricsStore:
                 """
             )
             existing_columns = {
-                row[1]
-                for row in connection.execute("PRAGMA table_info(run_metrics)").fetchall()
+                row[1] for row in connection.execute("PRAGMA table_info(run_metrics)").fetchall()
             }
             for statement in _schema_migrations(existing_columns):
                 connection.execute(statement)

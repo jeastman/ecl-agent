@@ -347,6 +347,35 @@ class TaskRunnerTests(unittest.TestCase):
             [event.event.event_type for event in bus.list_events(task_id, run_id)],
         )
 
+    def test_task_runner_passes_phase3_runtime_context_into_harness_request(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        harness = CapturingHarness()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=harness,
+            durable_services=durable_services,
+            resolved_subagents=["placeholder"],  # type: ignore[list-item]
+        )
+        runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        assert harness.request is not None
+        self.assertEqual(harness.request.resolved_subagents, ["placeholder"])
+        self.assertIsNotNone(harness.request.memory_store)
+        self.assertEqual(harness.request.artifact_store.__class__.__name__, "InMemoryArtifactStore")
+
 
 class EventingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
@@ -418,6 +447,8 @@ class ApprovalThenResumeHarness:
             sandbox=request.sandbox,
             task_id=request.task_id,
             run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
             on_event=on_event,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
@@ -441,12 +472,23 @@ class NetworkDeniedHarness:
             sandbox=request.sandbox,
             task_id=request.task_id,
             run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
             on_event=on_event,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
         bindings.execute_command(["curl", "https://example.com"], cwd="workspace")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
+
+
+class CapturingHarness:
+    def __init__(self) -> None:
+        self.request = None
+
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        self.request = request
+        return AgentExecutionResult(success=True, summary="captured", output_artifacts=[])
 
 
 if __name__ == "__main__":

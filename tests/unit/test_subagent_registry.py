@@ -141,7 +141,9 @@ class FileSystemSubagentRegistryTests(unittest.TestCase):
                 """,
             )
 
-            with self.assertRaisesRegex(SubagentRegistryError, "Duplicate subagent role_id: planner"):
+            with self.assertRaisesRegex(
+                SubagentRegistryError, "Duplicate subagent role_id: planner"
+            ):
                 FileSystemSubagentRegistry(root)
 
     def test_rejects_unknown_tool_identifier(self) -> None:
@@ -161,7 +163,9 @@ class FileSystemSubagentRegistryTests(unittest.TestCase):
                 """,
             )
 
-            with self.assertRaisesRegex(SubagentRegistryError, "Unknown tool_scope value 'invent_tools'"):
+            with self.assertRaisesRegex(
+                SubagentRegistryError, "Unknown tool_scope value 'invent_tools'"
+            ):
                 FileSystemSubagentRegistry(Path(temp_dir))
 
     def test_rejects_invalid_memory_scope(self) -> None:
@@ -181,7 +185,9 @@ class FileSystemSubagentRegistryTests(unittest.TestCase):
                 """,
             )
 
-            with self.assertRaisesRegex(SubagentRegistryError, "Unknown memory_scope value 'identity'"):
+            with self.assertRaisesRegex(
+                SubagentRegistryError, "Unknown memory_scope value 'identity'"
+            ):
                 FileSystemSubagentRegistry(Path(temp_dir))
 
     def test_rejects_invalid_filesystem_scope(self) -> None:
@@ -201,7 +207,9 @@ class FileSystemSubagentRegistryTests(unittest.TestCase):
                 """,
             )
 
-            with self.assertRaisesRegex(SubagentRegistryError, "Unknown filesystem_scope value 'repo'"):
+            with self.assertRaisesRegex(
+                SubagentRegistryError, "Unknown filesystem_scope value 'repo'"
+            ):
                 FileSystemSubagentRegistry(Path(temp_dir))
 
     def test_rejects_unreadable_optional_asset(self) -> None:

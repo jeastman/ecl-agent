@@ -34,7 +34,9 @@ class FileSystemSkillRegistryTests(unittest.TestCase):
 
             descriptors = self.registry.list_skill_descriptors(_definition(skills_path))
 
-            self.assertEqual([descriptor.skill_id for descriptor in descriptors], ["quick-check", "repo-map"])
+            self.assertEqual(
+                [descriptor.skill_id for descriptor in descriptors], ["quick-check", "repo-map"]
+            )
             self.assertEqual(descriptors[0].source, "file")
             self.assertEqual(descriptors[1].source, "directory")
 
@@ -60,7 +62,9 @@ class FileSystemSkillRegistryTests(unittest.TestCase):
             planner_descriptors = self.registry.list_skill_descriptors(_definition(planner_skills))
             coder_descriptors = self.registry.list_skill_descriptors(_definition(coder_skills))
 
-            self.assertEqual([descriptor.skill_id for descriptor in planner_descriptors], ["planner"])
+            self.assertEqual(
+                [descriptor.skill_id for descriptor in planner_descriptors], ["planner"]
+            )
             self.assertEqual([descriptor.skill_id for descriptor in coder_descriptors], ["coder"])
 
 

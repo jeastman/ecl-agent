@@ -94,7 +94,9 @@ def build_parser() -> argparse.ArgumentParser:
     approvals.add_argument("task_id", help="Task identifier.")
     approvals.add_argument("--run-id", help="Optional run identifier.")
 
-    diagnostics = subparsers.add_parser("diagnostics", help="List persisted diagnostics for a task.")
+    diagnostics = subparsers.add_parser(
+        "diagnostics", help="List persisted diagnostics for a task."
+    )
     diagnostics.add_argument("task_id", help="Task identifier.")
     diagnostics.add_argument("--run-id", help="Optional run identifier.")
 

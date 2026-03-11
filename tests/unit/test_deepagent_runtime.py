@@ -1,12 +1,20 @@
 from __future__ import annotations
 
-import sys
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from apps.runtime.local_agent_runtime.subagents import (
+    ResolvedModelRoute,
+    ResolvedSubagentConfiguration,
+    ResolvedToolBinding,
+    SkillDescriptor,
+    SubagentAssetBundle,
+    SubagentDefinition,
+)
 from apps.runtime.local_agent_runtime.task_runner import AgentExecutionRequest
+from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
 from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_models import (
     CheckpointMetadata,
 )
@@ -17,27 +25,47 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge i
     ApprovalRequiredInterrupt,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
+from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler import (
+    SubagentCompilationError,
+    SubagentCompiler,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
 )
+from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
+from services.memory_service.local_agent_memory_service.memory_store import SQLiteMemoryStore
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
+from langchain_core.tools import BaseTool
 
 
 class PromptBuilderTests(unittest.TestCase):
-    def test_prompt_builder_includes_identity_boundaries_and_artifact_target(self) -> None:
-        prompt = PromptBuilder().build_system_prompt(
+    def test_primary_prompt_includes_objective_and_subagent_roles(self) -> None:
+        prompt = PromptBuilder().build_primary_prompt(
             identity_bundle_text="Operate carefully.",
             workspace_roots=["/tmp/workspace"],
             objective="Inspect the repository",
             constraints=["Stay inside the workspace."],
-            success_criteria=["Produce the summary artifact."],
+            success_criteria=["Produce a useful result."],
+            available_roles=["planner", "researcher"],
         )
         self.assertIn("Operate carefully.", prompt)
         self.assertIn("Inspect the repository", prompt)
-        self.assertIn("/tmp/workspace", prompt)
-        self.assertIn("artifacts/repo_summary.md", prompt)
+        self.assertIn("planner", prompt)
+        self.assertIn("researcher", prompt)
+        self.assertIn("native subagents", prompt.lower())
+
+    def test_subagent_prompt_includes_role_identity_overlay_and_scope_summary(self) -> None:
+        resolved = _resolved_subagent(role_id="researcher")
+        prompt = PromptBuilder().build_subagent_prompt(
+            resolved=resolved,
+            identity_bundle_text="Primary identity",
+        )
+        self.assertIn("Primary identity", prompt)
+        self.assertIn("Researcher identity", prompt)
+        self.assertIn("Researcher overlay", prompt)
+        self.assertIn("resolved_model: openai/gpt-5-mini", prompt)
 
 
 class SandboxToolBindingsTests(unittest.TestCase):
@@ -53,45 +81,216 @@ class SandboxToolBindingsTests(unittest.TestCase):
             run_id="run_1",
             workspace_roots=[str(self.workspace_root)],
         )
+        self.artifact_store = InMemoryArtifactStore(path_mapper=self.factory)
+        self.memory_store = SQLiteMemoryStore(str(Path(self._temp_dir.name) / "memory.sqlite"))
+        self.memory_store.write_memory(
+            MemoryRecord(
+                memory_id="mem_1",
+                scope="project",
+                namespace="docs",
+                content="remember this",
+                summary="memory summary",
+                provenance={"source": "test"},
+                created_at="2025-01-01T00:00:00Z",
+                updated_at="2025-01-01T00:00:00Z",
+            )
+        )
 
-    def test_tool_bindings_emit_events_and_delegate(self) -> None:
-        events: list[tuple[str, dict[str, object]]] = []
+    def test_read_files_exposes_list_and_read_tools(self) -> None:
         bindings = SandboxToolBindings(
             sandbox=self.sandbox,
             task_id="task_1",
             run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+        )
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("read_files", ("read_file", "list_files"), True),)
+        )
+        tool_names = sorted(tool.name for tool in tools)
+        self.assertEqual(tool_names, ["list_files", "read_file"])
+
+    def test_memory_lookup_filters_by_allowed_scopes(self) -> None:
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+        )
+        memory_tool = next(
+            tool
+            for tool in bindings.as_langchain_tools(
+                (ResolvedToolBinding("memory_lookup", ("memory_lookup",), False),),
+                memory_scopes=("run_state",),
+            )
+            if tool.name == "memory_lookup"
+        )
+        self.assertEqual(memory_tool.invoke({"namespace": "docs"}), [])
+
+    def test_plan_update_emits_runtime_friendly_event(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
             on_event=lambda event_type, payload: events.append((event_type, payload)),
         )
-        files = bindings.list_files("workspace")
-        content = bindings.read_file("workspace/README.md")
-        written_path = bindings.write_file("scratch/output.md", "# generated\n")
-        command_result = bindings.execute_command(
-            [sys.executable, "-c", "print('ok')"],
-            cwd="workspace",
+        payload = bindings.plan_update("Refine the task", phase="planning")
+        self.assertEqual(payload["summary"], "Refine the task")
+        self.assertEqual(events[0][0], "plan.updated")
+        self.assertEqual(events[0][1]["phase"], "planning")
+
+    def test_artifact_inspect_returns_metadata_and_preview(self) -> None:
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+        )
+        bindings.write_file("workspace/artifacts/report.md", "# Report\n")
+        self.artifact_store.register_artifact(
+            task_id="task_1",
+            run_id="run_1",
+            sandbox_path="workspace/artifacts/report.md",
+        )
+        artifacts = bindings.artifact_inspect()
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(artifacts[0]["logical_path"], "artifacts/report.md")
+        self.assertEqual(artifacts[0]["preview"], "# Report\n")
+
+
+class SubagentCompilerTests(unittest.TestCase):
+    def test_compiler_builds_subagent_with_prompt_model_tools_and_skills(self) -> None:
+        captures: list[tuple[str, str]] = []
+        compiler = SubagentCompiler(
+            prompt_builder=PromptBuilder(),
+            model_factory=_recording_model_factory(captures),
+        )
+        temp_dir = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(temp_dir.cleanup)
+        workspace_root = Path(temp_dir.name) / "workspace"
+        workspace_root.mkdir()
+        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        sandbox = factory.for_run(
+            task_id="task_1",
+            run_id="run_1",
+            workspace_roots=[str(workspace_root)],
+        )
+        bindings = SandboxToolBindings(
+            sandbox=sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=InMemoryArtifactStore(path_mapper=factory),
+        )
+        skill_path = Path(temp_dir.name) / "skill.md"
+        skill_path.write_text("# Skill\nFollow the skill.\n", encoding="utf-8")
+        resolved = _resolved_subagent(role_id="researcher", skill_path=skill_path)
+
+        compiled = compiler.compile_subagents(
+            resolved_subagents=[resolved],
+            identity_bundle_text="Primary identity",
+            tool_bindings=bindings,
         )
 
-        self.assertIn("workspace/README.md", files)
-        self.assertEqual(content, "hello\n")
-        self.assertEqual(written_path, "scratch/output.md")
-        self.assertEqual(command_result["exit_code"], 0)
+        self.assertEqual(len(compiled), 1)
+        self.assertEqual(compiled[0]["name"], "researcher")
+        self.assertIn("Researcher identity", compiled[0]["system_prompt"])
+        self.assertEqual(captures, [("gpt-5-mini", "openai")])
         self.assertEqual(
-            [event_type for event_type, _ in events],
-            [
-                "tool.called",
-                "tool.called",
-                "tool.called",
-                "tool.called",
+            _tool_names(compiled[0]["tools"]), ["list_files", "read_file"]
+        )
+        self.assertEqual(compiled[0]["skills"], ["# Skill\nFollow the skill."])
+
+    def test_compiler_preserves_multi_role_model_tool_and_skill_isolation(self) -> None:
+        captures: list[tuple[str, str]] = []
+        compiler = SubagentCompiler(
+            prompt_builder=PromptBuilder(),
+            model_factory=_recording_model_factory(captures),
+        )
+        temp_dir = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(temp_dir.cleanup)
+        workspace_root = Path(temp_dir.name) / "workspace"
+        workspace_root.mkdir()
+        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        sandbox = factory.for_run(
+            task_id="task_1",
+            run_id="run_1",
+            workspace_roots=[str(workspace_root)],
+        )
+        bindings = SandboxToolBindings(
+            sandbox=sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=InMemoryArtifactStore(path_mapper=factory),
+        )
+        researcher_skill = Path(temp_dir.name) / "researcher-skill.md"
+        researcher_skill.write_text("# Research\n", encoding="utf-8")
+        coder_skill = Path(temp_dir.name) / "coder-skill.md"
+        coder_skill.write_text("# Code\n", encoding="utf-8")
+
+        compiled = compiler.compile_subagents(
+            resolved_subagents=[
+                _resolved_subagent(role_id="researcher", skill_path=researcher_skill),
+                _resolved_subagent_with_options(
+                    role_id="coder",
+                    skill_path=coder_skill,
+                    tool_scope=("read_files", "write_files", "execute_commands"),
+                    model_name="gpt-5-coder",
+                ),
             ],
+            identity_bundle_text="Primary identity",
+            tool_bindings=bindings,
+        )
+
+        self.assertEqual(len(compiled), 2)
+        self.assertEqual(captures, [("gpt-5-mini", "openai"), ("gpt-5-coder", "openai")])
+        self.assertEqual(
+            _tool_names(compiled[0]["tools"]), ["list_files", "read_file"]
         )
         self.assertEqual(
-            [payload["tool"] for _, payload in events],
-            [
-                "list_files",
-                "read_file",
-                "write_file",
-                "execute_command",
-            ],
+            _tool_names(compiled[1]["tools"]),
+            ["execute_command", "list_files", "read_file", "write_file"],
         )
+        self.assertEqual(compiled[0]["skills"], ["# Research"])
+        self.assertEqual(compiled[1]["skills"], ["# Code"])
+
+    def test_compiler_fails_when_skill_cannot_be_read(self) -> None:
+        compiler = SubagentCompiler(
+            prompt_builder=PromptBuilder(),
+            model_factory=lambda *args, **kwargs: {},
+        )
+        temp_dir = tempfile.TemporaryDirectory(dir=Path.cwd())
+        self.addCleanup(temp_dir.cleanup)
+        workspace_root = Path(temp_dir.name) / "workspace"
+        workspace_root.mkdir()
+        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        sandbox = factory.for_run(
+            task_id="task_1",
+            run_id="run_1",
+            workspace_roots=[str(workspace_root)],
+        )
+        bindings = SandboxToolBindings(
+            sandbox=sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=InMemoryArtifactStore(path_mapper=factory),
+        )
+
+        with self.assertRaises(SubagentCompilationError):
+            compiler.compile_subagents(
+                resolved_subagents=[
+                    _resolved_subagent(
+                        role_id="researcher",
+                        skill_path=Path(temp_dir.name) / "missing-skill.md",
+                    )
+                ],
+                identity_bundle_text="Primary identity",
+                tool_bindings=bindings,
+            )
 
 
 class LangChainDeepAgentHarnessTests(unittest.TestCase):
@@ -101,19 +300,20 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.workspace_root = Path(self._temp_dir.name) / "workspace"
         self.workspace_root.mkdir()
         (self.workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
-        (self.workspace_root / "pyproject.toml").write_text(
-            "[project]\nname='demo'\n", encoding="utf-8"
-        )
         self.factory = LocalExecutionSandboxFactory(Path(self._temp_dir.name) / "runtime")
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
             workspace_roots=[str(self.workspace_root)],
         )
+        self.artifact_store = InMemoryArtifactStore(path_mapper=self.factory)
+        self.memory_store = SQLiteMemoryStore(str(Path(self._temp_dir.name) / "memory.sqlite"))
 
-    def test_harness_generates_reference_artifact_and_emits_runtime_friendly_events(self) -> None:
+    def test_harness_creates_primary_agent_with_compiled_subagents(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
         captures: dict[str, Any] = {}
+        skill_path = Path(self._temp_dir.name) / "skill.md"
+        skill_path.write_text("# Skill\nUse it.\n", encoding="utf-8")
         request = AgentExecutionRequest(
             task_id="task_1",
             run_id="run_1",
@@ -121,6 +321,9 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             workspace_roots=[str(self.workspace_root)],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
+            resolved_subagents=[_resolved_subagent(role_id="researcher", skill_path=skill_path)],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
             allowed_capabilities=[],
             metadata={},
         )
@@ -128,10 +331,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         result = LangChainDeepAgentHarness(
             model_name="gpt-5",
             model_provider="openai",
-            model_factory=lambda model_name, model_provider: captures.setdefault(
-                "model",
-                {"model_name": model_name, "model_provider": model_provider},
-            ),
+            model_factory=_capture_model_factory(captures),
             agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
         ).execute(
             request,
@@ -139,26 +339,18 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        self.assertEqual(result.output_artifacts, ["workspace/artifacts/repo_summary.md"])
-        self.assertEqual(captures["model"]["model_name"], "gpt-5")
-        self.assertEqual(captures["model"]["model_provider"], "openai")
+        self.assertEqual(result.output_artifacts, ["workspace/artifacts/result.md"])
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
-        self.assertIn("artifacts/repo_summary.md", captures["agent_kwargs"]["system_prompt"])
-        artifact_path = self.workspace_root / "artifacts" / "repo_summary.md"
-        self.assertTrue(artifact_path.exists())
-        artifact_text = artifact_path.read_text(encoding="utf-8")
-        self.assertIn("# Repository Architecture Summary", artifact_text)
-        self.assertIn("README: # Demo", artifact_text)
-        self.assertEqual(
-            [event_type for event_type, _ in events[:2]],
-            [
-                "plan.updated",
-                "subagent.started",
-            ],
+        self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "researcher")
+        self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
+        self.assertIn("subagent.started", [event_type for event_type, _ in events])
+        self.assertTrue(
+            any(
+                "Delegated execution started" in str(payload.get("summary", ""))
+                for event_type, payload in events
+                if event_type == "subagent.started"
+            )
         )
-        self.assertIn("plan.updated", [event_type for event_type, _ in events[2:]])
-        self.assertIn("tool.called", [event_type for event_type, _ in events])
-        self.assertIn("Generated the requested architecture summary.", result.summary)
 
     def test_harness_pauses_cleanly_when_runtime_requests_approval(self) -> None:
         request = AgentExecutionRequest(
@@ -168,6 +360,9 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             workspace_roots=[str(self.workspace_root)],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
             allowed_capabilities=[],
             metadata={},
             checkpoint_controller=FakeCheckpointController(),
@@ -186,7 +381,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         result = LangChainDeepAgentHarness(
             model_name="gpt-5",
             model_provider="openai",
-            model_factory=lambda model_name, model_provider: {},
+            model_factory=lambda model_name, *, model_provider: {},
             agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, {}),
         ).execute(request, on_event=lambda *_: None)
 
@@ -205,6 +400,9 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             workspace_roots=[str(self.workspace_root)],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
             allowed_capabilities=[],
             metadata={},
             checkpoint_controller=FakeCheckpointController(),
@@ -213,7 +411,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         result = LangChainDeepAgentHarness(
             model_name="gpt-5",
             model_provider="openai",
-            model_factory=lambda model_name, model_provider: captures.setdefault(
+            model_factory=lambda model_name, *, model_provider: captures.setdefault(
                 "model",
                 {"model_name": model_name, "model_provider": model_provider},
             ),
@@ -239,49 +437,60 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
 
 class FakeCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
-        self._tools = kwargs["tools"]
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._subagents = kwargs.get("subagents") or []
         self._captures = captures
         captures["agent_kwargs"] = kwargs
 
     def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
         self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        for subagent in self._subagents:
+            for middleware in subagent.get("middleware", []):
+                middleware.wrap_model_call(FakeModelRequest(), lambda request: {"ok": True})
         self._invoke_tool("list_files", {"root": "workspace"})
-        readme = self._invoke_tool("read_file", {"path": "workspace/README.md"})
-        pyproject = self._invoke_tool("read_file", {"path": "workspace/pyproject.toml"})
+        self._invoke_tool("read_file", {"path": "workspace/README.md"})
         self._invoke_tool(
             "write_file",
             {
-                "path": "workspace/artifacts/repo_summary.md",
-                "content": "\n".join(
-                    [
-                        "# Repository Architecture Summary",
-                        "",
-                        f"README: {readme.splitlines()[0]}",
-                        f"Pyproject: {pyproject.splitlines()[1]}",
-                    ]
-                )
-                + "\n",
+                "path": "workspace/artifacts/result.md",
+                "content": "# Result\nDeep Agent execution complete.\n",
             },
         )
         return {
             "messages": [
-                {"role": "assistant", "content": "Generated the requested architecture summary."}
+                {
+                    "role": "assistant",
+                    "content": "Delegated execution started and completed successfully.",
+                }
             ]
         }
 
-    def _invoke_tool(self, name: str, arguments: dict[str, Any]) -> Any:
-        for candidate in self._tools:
-            if candidate.name == name:
-                return candidate.invoke(arguments)
-        raise AssertionError(f"missing tool: {name}")
+    def _invoke_tool(self, tool_name: str, arguments: dict[str, Any]) -> Any:
+        tool = next(tool for tool in self._tools if tool.name == tool_name)
+        return tool.invoke(arguments)
 
 
 class FakeCheckpointController:
     def __init__(self) -> None:
+        self._index = 0
         self.thread_id = "thread_1"
-        self.latest_checkpoint_id: str | None = None
+        self.latest_checkpoint_id = "ckpt_0"
         self.is_resumed = False
-        self._count = 0
+
+    def record_checkpoint(self, reason: str | None = None) -> CheckpointMetadata:
+        self._index += 1
+        checkpoint_id = f"ckpt_{self._index}"
+        self.latest_checkpoint_id = checkpoint_id
+        return CheckpointMetadata(
+            checkpoint_id=checkpoint_id,
+            task_id="task_1",
+            run_id="run_1",
+            thread_id=self.thread_id,
+            checkpoint_index=self._index,
+            created_at=f"2025-01-01T00:00:0{self._index}Z",
+            reason=reason,
+        )
 
     def build_agent_kwargs(self) -> dict[str, Any]:
         return {"checkpointer": "checkpointer"}
@@ -289,19 +498,108 @@ class FakeCheckpointController:
     def build_invoke_config(self) -> dict[str, Any]:
         return {"configurable": {"thread_id": self.thread_id}}
 
-    def record_checkpoint(self, reason: str | None = None) -> CheckpointMetadata:
-        self._count += 1
-        checkpoint_id = f"ckpt_{self._count}"
-        self.latest_checkpoint_id = checkpoint_id
-        return CheckpointMetadata(
-            checkpoint_id=checkpoint_id,
-            task_id="task_1",
-            run_id="run_1",
-            thread_id=self.thread_id,
-            checkpoint_index=self._count - 1,
-            created_at="2026-03-10T00:00:00Z",
-            reason=reason,
+
+class FakeModelRequest:
+    system_message = None
+
+
+def _capture_model_factory(captures: dict[str, Any]):
+    def _factory(model_name: str, *, model_provider: str) -> dict[str, Any]:
+        captures.setdefault("models", []).append(
+            {"model_name": model_name, "model_provider": model_provider}
         )
+        return {"model_name": model_name, "model_provider": model_provider}
+
+    return _factory
+
+
+def _recording_model_factory(captures: list[tuple[str, str]]):
+    def _factory(model_name: str, *, model_provider: str) -> dict[str, Any]:
+        captures.append((model_name, model_provider))
+        return {"model_name": model_name, "model_provider": model_provider}
+
+    return _factory
+
+
+def _tool_names(tools: object) -> list[str]:
+    typed_tools = cast(list[BaseTool], tools)
+    return sorted(tool.name for tool in typed_tools)
+
+
+def _resolved_subagent(
+    role_id: str, skill_path: Path | None = None
+) -> ResolvedSubagentConfiguration:
+    return _resolved_subagent_with_options(
+        role_id=role_id,
+        skill_path=skill_path,
+        tool_scope=("read_files",),
+        model_name="gpt-5-mini",
+    )
+
+
+def _resolved_subagent_with_options(
+    *,
+    role_id: str,
+    skill_path: Path | None,
+    tool_scope: tuple[str, ...],
+    model_name: str,
+) -> ResolvedSubagentConfiguration:
+    identity_path = Path(f"/tmp/{role_id}/IDENTITY.md")
+    system_prompt_path = Path(f"/tmp/{role_id}/SYSTEM_PROMPT.md")
+    definition = SubagentDefinition(
+        role_id=role_id,
+        name=role_id.title(),
+        description=f"{role_id.title()} role",
+        model_profile=role_id,
+        tool_scope=tool_scope,
+        memory_scope=("project", "run"),
+        filesystem_scope=("workspace",),
+        identity_path=identity_path,
+        system_prompt_path=system_prompt_path,
+        skills_path=skill_path.parent if skill_path is not None else None,
+    )
+    return ResolvedSubagentConfiguration(
+        asset_bundle=SubagentAssetBundle(
+            definition=definition,
+            identity_text=f"{role_id.title()} identity",
+            system_prompt_text=f"{role_id.title()} overlay",
+        ),
+        model_route=ResolvedModelRoute(
+            provider="openai",
+            model=model_name,
+            profile_name=role_id,
+            source="subagent_override",
+        ),
+        tool_bindings=tuple(_resolved_tool_binding(tool_id) for tool_id in tool_scope),
+        skills=(
+            ()
+            if skill_path is None
+            else (
+                SkillDescriptor(
+                    skill_id=f"{role_id}-skill",
+                    name=f"{role_id.title()} skill",
+                    prompt_path=skill_path,
+                    source="file",
+                ),
+            )
+        ),
+    )
+
+
+def _resolved_tool_binding(tool_id: str) -> ResolvedToolBinding:
+    aliases = {
+        "read_files": ("read_file", "list_files", "filesystem"),
+        "write_files": ("write_file", "filesystem"),
+        "execute_commands": ("execute_command", "commands"),
+        "memory_lookup": ("memory_lookup", "memory"),
+        "plan_update": ("plan_update", "planning"),
+        "artifact_inspect": ("artifact_inspect", "artifacts"),
+    }[tool_id]
+    return ResolvedToolBinding(
+        tool_id=tool_id,
+        capability_aliases=aliases,
+        requires_policy=tool_id in {"read_files", "write_files", "execute_commands"},
+    )
 
 
 if __name__ == "__main__":

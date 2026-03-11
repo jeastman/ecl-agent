@@ -41,6 +41,7 @@ from services.policy_service.local_agent_policy_service.policy_models import (
     OperationContext,
     PolicyDecision,
 )
+from services.memory_service.local_agent_memory_service.memory_store import MemoryStore
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     ExecutionSandbox,
     LocalExecutionSandboxFactory,
@@ -55,6 +56,9 @@ class AgentExecutionRequest:
     workspace_roots: list[str]
     identity_bundle_text: str
     sandbox: ExecutionSandbox
+    resolved_subagents: list[ResolvedSubagentConfiguration]
+    artifact_store: ArtifactStore
+    memory_store: MemoryStore | None
     allowed_capabilities: list[str]
     metadata: dict[str, Any]
     constraints: list[str] = field(default_factory=list)
@@ -469,6 +473,13 @@ class TaskRunner:
                     workspace_roots=list(state.workspace_roots),
                     identity_bundle_text=identity_bundle_text,
                     sandbox=sandbox,
+                    resolved_subagents=self.resolved_subagents,
+                    artifact_store=self._artifact_store,
+                    memory_store=(
+                        self._durable_services.memory_store
+                        if self._durable_services is not None
+                        else None
+                    ),
                     allowed_capabilities=list(state.allowed_capabilities),
                     metadata=dict(state.metadata),
                     constraints=list(state.constraints),

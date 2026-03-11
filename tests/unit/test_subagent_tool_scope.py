@@ -13,16 +13,22 @@ class RoleToolScopeResolverTests(unittest.TestCase):
         self.resolver = RoleToolScopeResolver()
 
     def test_planner_resolves_expected_tools(self) -> None:
-        tools = self.resolver.resolve_tools(_role("planner", ("read_files", "memory_lookup", "plan_update")))
+        tools = self.resolver.resolve_tools(
+            _role("planner", ("read_files", "memory_lookup", "plan_update"))
+        )
 
-        self.assertEqual([tool.tool_id for tool in tools], ["read_files", "memory_lookup", "plan_update"])
+        self.assertEqual(
+            [tool.tool_id for tool in tools], ["read_files", "memory_lookup", "plan_update"]
+        )
 
     def test_coder_resolves_expected_tools(self) -> None:
         tools = self.resolver.resolve_tools(
             _role("coder", ("read_files", "write_files", "execute_commands"))
         )
 
-        self.assertEqual([tool.tool_id for tool in tools], ["read_files", "write_files", "execute_commands"])
+        self.assertEqual(
+            [tool.tool_id for tool in tools], ["read_files", "write_files", "execute_commands"]
+        )
         self.assertTrue(all(tool.requires_policy for tool in tools))
 
     def test_verifier_resolves_expected_tools(self) -> None:
@@ -30,20 +36,20 @@ class RoleToolScopeResolverTests(unittest.TestCase):
             _role("verifier", ("read_files", "execute_commands", "artifact_inspect"))
         )
 
-        self.assertEqual([tool.tool_id for tool in tools], ["read_files", "execute_commands", "artifact_inspect"])
-        self.assertEqual(tools[-1].capability_aliases, ("artifact_inspect", "artifacts", "artifacts.read"))
+        self.assertEqual(
+            [tool.tool_id for tool in tools], ["read_files", "execute_commands", "artifact_inspect"]
+        )
+        self.assertEqual(
+            tools[-1].capability_aliases, ("artifact_inspect", "artifacts", "artifacts.read")
+        )
 
     def test_researcher_resolves_expected_tools(self) -> None:
-        tools = self.resolver.resolve_tools(
-            _role("researcher", ("read_files", "memory_lookup"))
-        )
+        tools = self.resolver.resolve_tools(_role("researcher", ("read_files", "memory_lookup")))
 
         self.assertEqual([tool.tool_id for tool in tools], ["read_files", "memory_lookup"])
 
     def test_librarian_resolves_expected_tools(self) -> None:
-        tools = self.resolver.resolve_tools(
-            _role("librarian", ("read_files", "memory_lookup"))
-        )
+        tools = self.resolver.resolve_tools(_role("librarian", ("read_files", "memory_lookup")))
 
         self.assertEqual([tool.tool_id for tool in tools], ["read_files", "memory_lookup"])
 

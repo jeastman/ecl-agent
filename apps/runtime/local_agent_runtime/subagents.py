@@ -93,4 +93,6 @@ class ModelResolver(Protocol):
 
 
 class SkillRegistry(Protocol):
-    def list_skill_descriptors(self, definition: SubagentDefinition) -> tuple[SkillDescriptor, ...]: ...
+    def list_skill_descriptors(
+        self, definition: SubagentDefinition
+    ) -> tuple[SkillDescriptor, ...]: ...

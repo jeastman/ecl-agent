@@ -56,18 +56,18 @@ However, the repository still does **not** fully satisfy the master spec's initi
 
 The main remaining gaps against the spec are:
 
-- model routing does not yet support separate runtime-owned profiles for the primary agent and multiple sub-agent roles
 - the recommended future-client structure remains only partially realized (`apps/web`, `packages/sdk-client`, and `packages/sdk-runtime` do not exist)
 - the protocol surface still omits `task.cancel`
 - the event vocabulary still omits `subagent.completed` and `memory.updated`
-- sub-agent execution, skills loading, and adapter-side role compilation remain absent
+- richer lifecycle projection and follow-on observability for multi-agent execution remain incomplete
 
 The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
 - **Milestone 2:** implemented as the durable, resumable, governed, and inspectable single-agent runtime baseline
-- **Milestone 3 and later:** mostly not implemented
+- **Milestone 3:** partially implemented
+- **Milestone 4 and later:** mostly not implemented
 
 In master-spec terms, the repository is **substantially aligned** with the intended architecture, but it is **not yet fully compliant** with every acceptance item in section 28.
 
@@ -693,13 +693,15 @@ Implemented foundations:
 - runtime-owned subagent asset contracts and filesystem registry
 - baseline role assets under `agents/subagents/`
 - manifest validation for role IDs and declared scopes
+- runtime-owned per-role model routing, tool-scope resolution, and skill discovery
+- adapter compilation of runtime-owned subagent definitions into native Deep Agent subagents
+- live execution with role-scoped tools and primary-agent delegation through Deep Agent
 
 Still absent:
 
-- role-based tool scopes in live execution
-- model routing by role
-- planner/researcher/coder/verifier flow
-- adapter compilation of runtime-owned subagents
+- `subagent.completed` lifecycle projection
+- richer multi-agent observability beyond current start/tool/plan events
+- any future-client work deferred to Milestone 4+
 
 ### 16.5 Milestone 4
 
@@ -745,10 +747,7 @@ These are the main verified gaps between the current implementation and the broa
 2. Missing event types: `subagent.completed`, `memory.updated`.
 3. No retrieval precedence or richer policy-governed memory behavior beyond current promotion/storage support.
 4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
-5. No multi-role orchestration or adapter compilation of registry-loaded subagents.
-6. No adapter-side use of resolved per-role model routes during execution.
-7. No adapter-side use of discovered skills during execution.
-8. No web client or client SDK packages.
+5. No web client or client SDK packages.
 
 ## 19. Bottom Line
 
