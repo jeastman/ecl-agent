@@ -33,7 +33,10 @@ class TaskRunnerTests(unittest.TestCase):
         self.workspace_root = Path(self._temp_dir.name) / "workspace"
         self.workspace_root.mkdir()
         self.runtime_root = Path(self._temp_dir.name) / "runtime"
-        self.sandbox_factory = LocalExecutionSandboxFactory(runtime_root=self.runtime_root)
+        self.sandbox_factory = LocalExecutionSandboxFactory(
+            runtime_root=self.runtime_root,
+            governed_workspace_root=self.workspace_root,
+        )
 
     def test_task_runner_emits_expected_event_order_on_success(self) -> None:
         store = InMemoryRunStateStore()
@@ -64,7 +67,7 @@ class TaskRunnerTests(unittest.TestCase):
             event_bus=bus,
             artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
             sandbox_factory=self.sandbox_factory,
-            agent_harness=StubAgentHarness(output_artifact_path="scratch/repo_summary.md"),
+            agent_harness=StubAgentHarness(output_artifact_path="/tmp/repo_summary.md"),
         )
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
@@ -75,7 +78,7 @@ class TaskRunnerTests(unittest.TestCase):
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.artifact_count, 1)
         artifacts = runner.list_artifacts(task_id, run_id)
-        self.assertEqual(artifacts[0].logical_path, "scratch/repo_summary.md")
+        self.assertEqual(artifacts[0].logical_path, "/tmp/repo_summary.md")
         event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
         self.assertEqual(
             event_types,
@@ -84,7 +87,7 @@ class TaskRunnerTests(unittest.TestCase):
         artifact_event = bus.list_events(task_id, run_id)[2]
         self.assertEqual(
             artifact_event.event.payload["artifact"]["logical_path"],
-            "scratch/repo_summary.md",
+            "/tmp/repo_summary.md",
         )
 
     def test_task_runner_records_failure(self) -> None:
@@ -138,7 +141,7 @@ class TaskRunnerTests(unittest.TestCase):
             ],
         )
         artifact = runner.list_artifacts(task_id, run_id)[0]
-        self.assertEqual(artifact.logical_path, "artifacts/repo_summary.md")
+        self.assertEqual(artifact.logical_path, "/artifacts/repo_summary.md")
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
@@ -403,13 +406,13 @@ class EventingHarness:
             )
             on_event(
                 "tool.called",
-                {"tool": "write_file", "path": "workspace/artifacts/repo_summary.md"},
+                {"tool": "write_file", "path": "/artifacts/repo_summary.md"},
             )
-        request.sandbox.write_text("workspace/artifacts/repo_summary.md", "# Summary\n")
+        request.sandbox.write_text("/artifacts/repo_summary.md", "# Summary\n")
         return AgentExecutionResult(
             success=True,
             summary="Generated the repository summary artifact.",
-            output_artifacts=["workspace/artifacts/repo_summary.md"],
+            output_artifacts=["/artifacts/repo_summary.md"],
         )
 
 
@@ -437,11 +440,11 @@ class PauseThenResumeHarness:
         metadata = controller.record_checkpoint("resumed")
         if on_event is not None:
             on_event("checkpoint.saved", metadata.to_dict())
-        request.sandbox.write_text("workspace/artifacts/resumed.md", "# Resumed\n")
+        request.sandbox.write_text("/artifacts/resumed.md", "# Resumed\n")
         return AgentExecutionResult(
             success=True,
             summary="Completed after resume.",
-            output_artifacts=["workspace/artifacts/resumed.md"],
+            output_artifacts=["/artifacts/resumed.md"],
         )
 
 
@@ -462,7 +465,7 @@ class ApprovalThenResumeHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.write_file("workspace/apps/runtime/guarded.txt", "content\n")
+        bindings.write_file("/apps/runtime/guarded.txt", "content\n")
         return AgentExecutionResult(
             success=True,
             summary="Governed write completed after approval.",
@@ -487,7 +490,7 @@ class NetworkDeniedHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.execute_command(["curl", "https://example.com"], cwd="workspace")
+        bindings.execute_command(["curl", "https://example.com"], cwd="/")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 

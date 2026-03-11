@@ -74,8 +74,10 @@ class RuntimePolicyEngine:
     def _requires_approval(self, context: OperationContext) -> bool:
         if context.operation_type == "file.write":
             path_scope = context.path_scope or ""
-            return path_scope.startswith("workspace/") and not path_scope.startswith(
-                "workspace/artifacts/"
+            return path_scope.startswith("/") and not path_scope.startswith("/artifacts/") and not (
+                path_scope == "/tmp" or path_scope.startswith("/tmp/")
+            ) and not (
+                path_scope == "/.memory" or path_scope.startswith("/.memory/")
             )
 
         if context.operation_type == "command.execute":
@@ -99,7 +101,7 @@ class RuntimePolicyEngine:
     def _is_denied(self, context: OperationContext) -> bool:
         if context.operation_type == "file.write":
             path_scope = context.path_scope or ""
-            return path_scope.startswith("memory/identity/")
+            return path_scope.startswith("/.memory/identity/")
 
         if context.operation_type == "command.execute":
             command_class = context.command_class or "unknown"

@@ -52,8 +52,15 @@ class SandboxPathMapper(Protocol):
 
 
 class LocalExecutionSandboxFactory(SandboxPathMapper):
-    def __init__(self, runtime_root: str | Path) -> None:
-        self._workspace_manager = WorkspaceManager(Path(runtime_root))
+    def __init__(
+        self,
+        runtime_root: str | Path,
+        governed_workspace_root: str | Path,
+    ) -> None:
+        self._workspace_manager = WorkspaceManager(
+            Path(runtime_root),
+            Path(governed_workspace_root),
+        )
         self._roots_by_run: dict[tuple[str, str], SandboxRoots] = {}
         Path(runtime_root).mkdir(parents=True, exist_ok=True)
 
@@ -133,17 +140,13 @@ class LocalExecutionSandbox:
         files: list[str] = []
         for candidate in sorted(path for path in resolved_root.rglob("*") if path.is_file()):
             relative = candidate.relative_to(resolved_root)
-            if normalized.logical_path == normalized.zone:
-                suffix = relative.as_posix()
-                files.append(normalized.zone if not suffix else f"{normalized.zone}/{suffix}")
-            else:
-                base = normalized.logical_path
-                suffix = relative.as_posix()
-                files.append(base if not suffix else f"{base}/{suffix}")
+            base = normalized.logical_path.rstrip("/")
+            suffix = relative.as_posix()
+            files.append(base if not suffix else f"{base}/{suffix}")
         return files
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> CommandResult:
-        normalized = normalize_sandbox_path(cwd or ZONE_WORKSPACE)
+        normalized = normalize_sandbox_path(cwd or "/")
         resolved_cwd = _resolve_host_path(self._roots, normalized)
         if normalized.zone == ZONE_WORKSPACE:
             resolved_cwd = _ensure_allowed_workspace_root(self._roots, resolved_cwd)
@@ -185,7 +188,4 @@ def _default_persistence_class(zone: str) -> str:
 
 
 def _artifact_logical_path(normalized: NormalizedSandboxPath) -> str:
-    if normalized.zone == ZONE_WORKSPACE:
-        relative = normalized.relative_path.as_posix()
-        return relative if relative != "." else ""
     return normalized.logical_path

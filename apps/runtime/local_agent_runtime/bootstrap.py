@@ -63,7 +63,11 @@ def create_runtime_server(
     )
     seed_identity_memory(identity, durable_services.memory_store)
     resolved_runtime_root = durable_services.root_path
-    sandbox_factory = LocalExecutionSandboxFactory(runtime_root=resolved_runtime_root)
+    governed_workspace_root = Path(config.cli.default_workspace_root or Path.cwd()).resolve()
+    sandbox_factory = LocalExecutionSandboxFactory(
+        runtime_root=resolved_runtime_root,
+        governed_workspace_root=governed_workspace_root,
+    )
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)
     task_runner = TaskRunner(
         run_state_store=run_state_store,

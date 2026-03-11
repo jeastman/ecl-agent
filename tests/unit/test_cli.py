@@ -173,7 +173,7 @@ class CliTests(unittest.TestCase):
                     "type": "runtime.event",
                     "event": {
                         "event_type": "artifact.created",
-                        "payload": {"artifact": {"logical_path": "artifacts/repo_summary.md"}},
+                        "payload": {"artifact": {"logical_path": "/artifacts/repo_summary.md"}},
                     },
                 },
             ],
@@ -203,7 +203,7 @@ class CliTests(unittest.TestCase):
                 "artifacts": [
                     {
                         "artifact_id": "artifact_1",
-                        "logical_path": "artifacts/repo_summary.md",
+                        "logical_path": "/artifacts/repo_summary.md",
                         "content_type": "text/markdown",
                         "persistence_class": "run",
                         "display_name": "repo_summary.md",
@@ -241,7 +241,7 @@ class CliTests(unittest.TestCase):
                     "total_bytes": 20,
                     "file_count": 1,
                 },
-                "artifacts": ["workspace/artifacts/skill-installs/repo-map/install-summary.json"],
+                "artifacts": ["/artifacts/skill-installs/repo-map/install-summary.json"],
             }
         }
 
@@ -251,7 +251,7 @@ class CliTests(unittest.TestCase):
                     config_path="docs/architecture/runtime.example.toml",
                     task_id="task_1",
                     run_id="run_1",
-                    source_path="workspace/repo-map",
+                    source_path="/repo-map",
                     target_scope="primary_agent",
                     target_role=None,
                     install_mode="fail_if_exists",
@@ -305,7 +305,7 @@ class CliTests(unittest.TestCase):
                         "approval_id": "approval_1",
                         "status": "pending",
                         "type": "boundary",
-                        "scope_summary": "file.write:workspace/**",
+                        "scope_summary": "file.write:/**",
                         "description": "Allow write access",
                         "created_at": "2026-03-10T00:00:00Z",
                     }
@@ -323,7 +323,7 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("Approvals", stdout.getvalue())
         self.assertIn("approval_1", stdout.getvalue())
-        self.assertIn("file.write:workspace/**", stdout.getvalue())
+        self.assertIn("file.write:/**", stdout.getvalue())
 
     def test_handle_approve_accepts_runtime_snapshot(self) -> None:
         fake_client = _FakeClient()

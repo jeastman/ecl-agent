@@ -112,7 +112,7 @@ class SandboxToolBindings:
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any]:
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
-        normalized_cwd = self.sandbox.normalize_path(cwd or "workspace")
+        normalized_cwd = self.sandbox.normalize_path(cwd or "/")
         self._govern(
             OperationContext(
                 task_id=self.task_id,
@@ -231,13 +231,13 @@ class SandboxToolBindings:
 
             @tool
             def read_file(path: str) -> str:
-                """Read a UTF-8 text file from a governed sandbox path."""
+                """Read a UTF-8 text file from a virtual sandbox path such as /README.md."""
                 self._ensure_filesystem_scope(path, filesystem_scopes, operation="read_file")
                 return self.read_file(path)
 
             @tool
-            def list_files(root: str = "workspace") -> list[str]:
-                """List governed files rooted at a sandbox path."""
+            def list_files(root: str = "/") -> list[str]:
+                """List governed files rooted at a virtual sandbox path such as / or /tmp."""
                 self._ensure_filesystem_scope(root, filesystem_scopes, operation="list_files")
                 return self.list_files(root)
 
@@ -247,7 +247,7 @@ class SandboxToolBindings:
 
             @tool
             def write_file(path: str, content: str) -> str:
-                """Write UTF-8 text content to a governed sandbox path."""
+                """Write UTF-8 text content to a virtual sandbox path such as /artifacts/out.md."""
                 self._ensure_filesystem_scope(path, filesystem_scopes, operation="write_file")
                 return self.write_file(path, content)
 
@@ -257,9 +257,9 @@ class SandboxToolBindings:
 
             @tool
             def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
-                """Execute a command inside the governed sandbox and return structured output."""
+                """Execute a command inside the virtual sandbox filesystem and return structured output."""
                 self._ensure_filesystem_scope(
-                    cwd or "workspace",
+                    cwd or "/",
                     filesystem_scopes,
                     operation="execute_command",
                 )
@@ -317,7 +317,7 @@ class SandboxToolBindings:
                 """Install a staged skill into a managed runtime skill scope."""
                 self._ensure_filesystem_scope(
                     source_path,
-                    filesystem_scopes or ("workspace", "scratch"),
+                    filesystem_scopes or ("workspace",),
                     operation="skill_installer",
                 )
                 return self.skill_installer(
@@ -375,10 +375,8 @@ class SandboxToolBindings:
         if not allowed_scopes:
             return
         normalized_path = self.sandbox.normalize_path(sandbox_path)
-        root = normalized_path.split("/", 1)[0]
-        if root == "scratch":
-            root = "workspace"
-        if root not in allowed_scopes:
+        scope = "memory" if normalized_path == "/.memory" or normalized_path.startswith("/.memory/") else "workspace"
+        if scope not in allowed_scopes:
             allowed = ", ".join(sorted(allowed_scopes))
             raise FilesystemScopeError(
                 f"{operation} denied for {normalized_path}: allowed filesystem scopes are {allowed}"
@@ -386,12 +384,11 @@ class SandboxToolBindings:
 
 
 def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
-    logical_path = artifact.logical_path.strip("/")
     if artifact.persistence_class == "project":
-        return f"memory/{logical_path}" if logical_path else "memory"
+        return artifact.logical_path
     if artifact.persistence_class == "ephemeral":
-        return f"scratch/{logical_path}" if logical_path else "scratch"
-    return f"workspace/{logical_path}" if logical_path else "workspace"
+        return artifact.logical_path
+    return artifact.logical_path or "/"
 
 
 def _classify_command(command: list[str]) -> str:

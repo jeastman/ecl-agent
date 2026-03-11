@@ -7,7 +7,8 @@ from pathlib import Path, PurePosixPath
 ZONE_WORKSPACE = "workspace"
 ZONE_SCRATCH = "scratch"
 ZONE_MEMORY = "memory"
-ALLOWED_ZONES = {ZONE_WORKSPACE, ZONE_SCRATCH, ZONE_MEMORY}
+SCRATCH_MOUNT = PurePosixPath("/tmp")
+MEMORY_MOUNT = PurePosixPath("/.memory")
 
 
 @dataclass(frozen=True, slots=True)
@@ -17,31 +18,49 @@ class NormalizedSandboxPath:
 
     @property
     def logical_path(self) -> str:
+        if self.zone == ZONE_WORKSPACE:
+            if self.relative_path == PurePosixPath("."):
+                return "/"
+            return f"/{self.relative_path.as_posix()}"
+        mount = SCRATCH_MOUNT if self.zone == ZONE_SCRATCH else MEMORY_MOUNT
         if self.relative_path == PurePosixPath("."):
-            return self.zone
-        return f"{self.zone}/{self.relative_path.as_posix()}"
+            return mount.as_posix()
+        return f"{mount.as_posix()}/{self.relative_path.as_posix()}"
 
 
 def normalize_sandbox_path(path: str) -> NormalizedSandboxPath:
     raw = str(path).strip()
     if not raw:
         raise ValueError("sandbox path must be a non-empty string")
-    if raw.startswith("/"):
-        raise ValueError("sandbox path must be relative to a governed zone")
-    parts = PurePosixPath(raw).parts
-    if not parts:
-        raise ValueError("sandbox path must include a governed zone")
-    zone = parts[0]
-    if zone not in ALLOWED_ZONES:
-        raise ValueError(f"unsupported sandbox zone: {zone}")
-    relative_parts = parts[1:]
-    for part in relative_parts:
+    if not raw.startswith("/"):
+        raise ValueError("sandbox path must be an absolute virtual path")
+    logical_path = PurePosixPath(raw)
+    for part in logical_path.parts:
         if part in {"", "."}:
             continue
         if part == "..":
-            raise ValueError("sandbox path cannot traverse outside its zone")
-    relative_path = PurePosixPath(*relative_parts) if relative_parts else PurePosixPath(".")
+            raise ValueError("sandbox path cannot traverse outside its virtual root")
+
+    if logical_path == SCRATCH_MOUNT or _is_relative_to(logical_path, SCRATCH_MOUNT):
+        zone = ZONE_SCRATCH
+        relative_path = logical_path.relative_to(SCRATCH_MOUNT)
+    elif logical_path == MEMORY_MOUNT or _is_relative_to(logical_path, MEMORY_MOUNT):
+        zone = ZONE_MEMORY
+        relative_path = logical_path.relative_to(MEMORY_MOUNT)
+    else:
+        zone = ZONE_WORKSPACE
+        relative_path = logical_path.relative_to(PurePosixPath("/"))
+
+    relative_path = relative_path if relative_path != PurePosixPath(".") else PurePosixPath(".")
     return NormalizedSandboxPath(zone=zone, relative_path=relative_path)
+
+
+def _is_relative_to(path: PurePosixPath, root: PurePosixPath) -> bool:
+    try:
+        path.relative_to(root)
+        return True
+    except ValueError:
+        return False
 
 
 def ensure_within_root(root: Path, candidate: Path) -> Path:

@@ -201,7 +201,7 @@ Settings:
 - `persistence.metadata_backend`: optional metadata backend. Currently only `sqlite` is supported.
 - `persistence.event_backend`: optional event backend. Currently only `sqlite` is supported.
 - `persistence.diagnostic_backend`: optional diagnostics backend. Currently only `sqlite` is supported.
-- `cli.default_workspace_root`: optional default workspace root for `agent run` when `--workspace-root` is omitted. If unset, the CLI uses the current working directory.
+- `cli.default_workspace_root`: optional default workspace root for `agent run` when `--workspace-root` is omitted. When set, the local governed sandbox also uses this resolved path as the workspace boundary for task workspace roots. If unset, the CLI and sandbox both fall back to the current working directory.
 - `policy.approval_mode`: policy setting passed into the runtime policy engine. The example uses `boundary`.
 - `policy.sandbox_mode`: policy setting describing the governed sandbox model. The example uses `governed`.
 - `policy.safe_command_classes`: optional list of command classes treated as low-risk by policy.
@@ -212,7 +212,9 @@ Notes:
 - `models.default` is optional. If omitted, the primary model acts as the default fallback.
 - `models.subagents` is optional and may contain zero or more role-specific overrides.
 - `policy` is an open table in the current schema. The runtime preserves additional keys and exposes them through `agent config`, with redaction applied to secret-like values.
-- The config file does not define the active task workspace directly. `agent run --workspace-root ...` still sets that per run; `cli.default_workspace_root` only provides the CLI default when the flag is omitted.
+- The config file does not define the exact active task workspace directly. `agent run --workspace-root ...` still sets that per run, but any explicit workspace root must resolve inside `cli.default_workspace_root` when that config value is set.
+- Agent-facing filesystem tools use a virtual filesystem rooted at `/`. The governed workspace is mounted at `/`, scratch space is mounted at `/tmp`, and runtime memory-backed files are mounted at `/.memory`.
+- Host filesystem paths such as `/Users/...` are not exposed directly to the agent. Paths are interpreted inside the virtual sandbox rooted at `/`.
 
 Milestone 2 CLI surface:
 

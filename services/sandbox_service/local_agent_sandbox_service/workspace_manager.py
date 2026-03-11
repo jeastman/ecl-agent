@@ -15,8 +15,9 @@ class SandboxRoots:
 
 
 class WorkspaceManager:
-    def __init__(self, runtime_root: Path) -> None:
+    def __init__(self, runtime_root: Path, governed_workspace_root: Path) -> None:
         self._runtime_root = runtime_root.resolve()
+        self._governed_workspace_root = governed_workspace_root.resolve()
 
     def create_roots(
         self, *, task_id: str, run_id: str, workspace_roots: list[str]
@@ -24,7 +25,7 @@ class WorkspaceManager:
         if not workspace_roots:
             raise ValueError("task requires at least one workspace root")
         resolved_workspace_roots = tuple(
-            ensure_within_root(Path.cwd(), Path(candidate).resolve())
+            ensure_within_root(self._governed_workspace_root, Path(candidate).resolve())
             for candidate in workspace_roots
         )
         scratch_root = self._runtime_root / "scratch" / task_id / run_id

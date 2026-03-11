@@ -200,7 +200,7 @@ class LangChainDeepAgentHarness:
         primary_tools = tools.as_langchain_tools(
             _primary_tool_bindings(),
             memory_scopes=("project", "run_state", "identity"),
-            filesystem_scopes=("workspace", "scratch"),
+            filesystem_scopes=("workspace",),
         )
         agent = self._agent_factory(
             model=model,

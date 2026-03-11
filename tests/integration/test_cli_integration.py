@@ -26,42 +26,45 @@ class CliIntegrationTests(unittest.TestCase):
                 )
 
             with patch.object(cli, "make_client", side_effect=fake_make_client):
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Task Accepted", output)
                 self.assertIn("task_123", output)
                 self.assertIn("agent logs task_123", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            [
-                                "--config",
-                                "ignored.toml",
-                                "status",
-                                "task_123",
-                                "--run-id",
-                                "run_456",
-                            ]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "status",
+                                    "task_123",
+                                    "--run-id",
+                                    "run_456",
+                                ]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Task Status", output)
                 self.assertIn("completed", output)
                 self.assertIn("Summary created.", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            ["--config", "ignored.toml", "logs", "task_123", "--run-id", "run_456"]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                ["--config", "ignored.toml", "logs", "task_123", "--run-id", "run_456"]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Event Stream", output)
                 self.assertIn("task.created", output)
                 self.assertIn("objective=Inspect repo", output)
@@ -69,100 +72,107 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("researcher status=success duration=0.42", output)
                 self.assertIn("artifacts/repo_summary.md", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            [
-                                "--config",
-                                "ignored.toml",
-                                "artifacts",
-                                "task_123",
-                                "--run-id",
-                                "run_456",
-                            ]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "artifacts",
+                                    "task_123",
+                                    "--run-id",
+                                    "run_456",
+                                ]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Artifacts", output)
                 self.assertIn("artifact_1", output)
                 self.assertIn("text/markdown", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(["--config", "ignored.toml", "approvals", "task_123"]), 0
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(["--config", "ignored.toml", "approvals", "task_123"]), 0
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Approvals", output)
                 self.assertIn("approval_1", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(["--config", "ignored.toml", "diagnostics", "task_123"]), 0
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(["--config", "ignored.toml", "diagnostics", "task_123"]), 0
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Diagnostics", output)
                 self.assertIn("diag_1", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            [
-                                "--config",
-                                "ignored.toml",
-                                "approve",
-                                "approval_1",
-                                "--decision",
-                                "approve",
-                            ]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "approve",
+                                    "approval_1",
+                                    "--decision",
+                                    "approve",
+                                ]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Approval Submitted", output)
                 self.assertIn("True", output)
                 self.assertIn("completed", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            [
-                                "--config",
-                                "ignored.toml",
-                                "resume",
-                                "task_123",
-                                "--run-id",
-                                "run_456",
-                            ]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "resume",
+                                    "task_123",
+                                    "--run-id",
+                                    "run_456",
+                                ]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Task Resumed", output)
                 self.assertIn("task_123", output)
                 self.assertIn("completed", output)
                 self.assertIn("Run resumed and completed.", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(
-                        cli.main(
-                            [
-                                "--config",
-                                "ignored.toml",
-                                "memory",
-                                "--scope",
-                                "project",
-                            ]
-                        ),
-                        0,
-                    )
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(
+                            cli.main(
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "memory",
+                                    "--scope",
+                                    "project",
+                                ]
+                            ),
+                            0,
+                        )
+                        output = stdout.getvalue()
                 self.assertIn("Memory Entries", output)
                 self.assertIn("mem_1", output)
 
-                with patch("sys.stdout", new=io.StringIO()) as stdout:
-                    self.assertEqual(cli.main(["--config", "ignored.toml", "config"]), 0)
-                    output = stdout.getvalue()
+                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                    with patch("sys.stdout", new=io.StringIO()) as stdout:
+                        self.assertEqual(cli.main(["--config", "ignored.toml", "config"]), 0)
+                        output = stdout.getvalue()
                 self.assertIn("Runtime Config", output)
                 self.assertIn('"api_token": "***REDACTED***"', output)
 
@@ -273,7 +283,7 @@ def _fake_runtime_script() -> str:
                         "event": {
                             "event_type": "artifact.created",
                             "payload": {
-                                "artifact": {"logical_path": "artifacts/repo_summary.md"}
+                                "artifact": {"logical_path": "/artifacts/repo_summary.md"}
                             },
                         },
                     }
@@ -288,7 +298,7 @@ def _fake_runtime_script() -> str:
                     "artifacts": [
                         {
                             "artifact_id": "artifact_1",
-                            "logical_path": "artifacts/repo_summary.md",
+                            "logical_path": "/artifacts/repo_summary.md",
                             "content_type": "text/markdown",
                             "persistence_class": "run",
                             "display_name": "repo_summary.md",
@@ -308,7 +318,7 @@ def _fake_runtime_script() -> str:
                             "approval_id": "approval_1",
                             "status": "pending",
                             "type": "boundary",
-                            "scope_summary": "file.write:workspace/**",
+                            "scope_summary": "file.write:/**",
                             "description": "Allow writes",
                             "created_at": "2026-03-10T00:00:00Z",
                         }

@@ -308,7 +308,10 @@ class RuntimeStateTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             runtime_root = Path(temp_dir) / "runtime"
             workspace_root.mkdir()
-            sandbox_factory = LocalExecutionSandboxFactory(runtime_root=runtime_root)
+            sandbox_factory = LocalExecutionSandboxFactory(
+                runtime_root=runtime_root,
+                governed_workspace_root=workspace_root,
+            )
             runner = TaskRunner(
                 run_state_store=InMemoryRunStateStore(),
                 event_bus=InMemoryEventBus(),
@@ -418,8 +421,8 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                 task_id="task_1",
                 run_id="run_1",
                 type="boundary",
-                scope={"boundary_key": "file.write:workspace/apps/runtime/**"},
-                description="Allow writes to workspace/apps/runtime/** for this run",
+                scope={"boundary_key": "file.write:/apps/runtime/**"},
+                description="Allow writes to /apps/runtime/** for this run",
                 created_at=utc_now_timestamp(),
                 status="pending",
             )
@@ -439,17 +442,17 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                 BoundaryGrant(
                     task_id="task_1",
                     run_id="run_1",
-                    boundary_key="file.write:workspace/apps/runtime/**",
+                    boundary_key="file.write:/apps/runtime/**",
                     approval_id="approval_1",
                     granted_at=utc_now_timestamp(),
                 )
             )
 
             self.assertTrue(
-                store.has_grant("task_1", "run_1", "file.write:workspace/apps/runtime/**")
+                store.has_grant("task_1", "run_1", "file.write:/apps/runtime/**")
             )
             self.assertFalse(
-                store.has_grant("task_1", "run_2", "file.write:workspace/apps/runtime/**")
+                store.has_grant("task_1", "run_2", "file.write:/apps/runtime/**")
             )
 
     def test_runtime_policy_engine_classifies_allow_require_and_deny(self) -> None:
@@ -462,7 +465,7 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                     task_id="task_1",
                     run_id="run_1",
                     operation_type="file.write",
-                    path_scope="workspace/artifacts/out.md",
+                    path_scope="/artifacts/out.md",
                 )
             )
             require = engine.evaluate(
@@ -470,7 +473,7 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                     task_id="task_1",
                     run_id="run_1",
                     operation_type="file.write",
-                    path_scope="workspace/apps/runtime/main.py",
+                    path_scope="/apps/runtime/main.py",
                 )
             )
             deny = engine.evaluate(
@@ -479,7 +482,7 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                     run_id="run_1",
                     operation_type="command.execute",
                     command_class="network",
-                    path_scope="workspace",
+                    path_scope="/",
                 )
             )
 

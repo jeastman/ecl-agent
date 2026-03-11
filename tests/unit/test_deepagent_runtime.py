@@ -76,7 +76,10 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.workspace_root = Path(self._temp_dir.name) / "workspace"
         self.workspace_root.mkdir()
         (self.workspace_root / "README.md").write_text("hello\n", encoding="utf-8")
-        self.factory = LocalExecutionSandboxFactory(Path(self._temp_dir.name) / "runtime")
+        self.factory = LocalExecutionSandboxFactory(
+            Path(self._temp_dir.name) / "runtime",
+            self.workspace_root,
+        )
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -152,15 +155,15 @@ class SandboxToolBindingsTests(unittest.TestCase):
             artifact_store=self.artifact_store,
             memory_store=self.memory_store,
         )
-        bindings.write_file("workspace/artifacts/report.md", "# Report\n")
+        bindings.write_file("/artifacts/report.md", "# Report\n")
         self.artifact_store.register_artifact(
             task_id="task_1",
             run_id="run_1",
-            sandbox_path="workspace/artifacts/report.md",
+            sandbox_path="/artifacts/report.md",
         )
         artifacts = bindings.artifact_inspect()
         self.assertEqual(len(artifacts), 1)
-        self.assertEqual(artifacts[0]["logical_path"], "artifacts/report.md")
+        self.assertEqual(artifacts[0]["logical_path"], "/artifacts/report.md")
         self.assertEqual(artifacts[0]["preview"], "# Report\n")
 
     def test_filesystem_scope_denies_workspace_access_when_only_memory_is_allowed(self) -> None:
@@ -181,7 +184,7 @@ class SandboxToolBindingsTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(FilesystemScopeError, "allowed filesystem scopes are memory"):
-            read_tool.invoke({"path": "workspace/README.md"})
+            read_tool.invoke({"path": "/README.md"})
 
 
 class SubagentCompilerTests(unittest.TestCase):
@@ -195,7 +198,10 @@ class SubagentCompilerTests(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         workspace_root = Path(temp_dir.name) / "workspace"
         workspace_root.mkdir()
-        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        factory = LocalExecutionSandboxFactory(
+            Path(temp_dir.name) / "runtime",
+            workspace_root,
+        )
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -236,7 +242,10 @@ class SubagentCompilerTests(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         workspace_root = Path(temp_dir.name) / "workspace"
         workspace_root.mkdir()
-        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        factory = LocalExecutionSandboxFactory(
+            Path(temp_dir.name) / "runtime",
+            workspace_root,
+        )
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -288,7 +297,10 @@ class SubagentCompilerTests(unittest.TestCase):
         self.addCleanup(temp_dir.cleanup)
         workspace_root = Path(temp_dir.name) / "workspace"
         workspace_root.mkdir()
-        factory = LocalExecutionSandboxFactory(Path(temp_dir.name) / "runtime")
+        factory = LocalExecutionSandboxFactory(
+            Path(temp_dir.name) / "runtime",
+            workspace_root,
+        )
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -323,7 +335,10 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.workspace_root = Path(self._temp_dir.name) / "workspace"
         self.workspace_root.mkdir()
         (self.workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
-        self.factory = LocalExecutionSandboxFactory(Path(self._temp_dir.name) / "runtime")
+        self.factory = LocalExecutionSandboxFactory(
+            Path(self._temp_dir.name) / "runtime",
+            self.workspace_root,
+        )
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -371,7 +386,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        self.assertEqual(result.output_artifacts, ["workspace/artifacts/result.md"])
+        self.assertEqual(result.output_artifacts, ["/artifacts/result.md"])
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
         self.assertEqual(captures["agent_kwargs"]["skills"], ["# Skill\nUse it."])
         self.assertIn("skill-installer", _tool_names(captures["agent_kwargs"]["tools"]))
@@ -465,7 +480,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
                 else (_ for _ in ()).throw(
                     ApprovalRequiredInterrupt(
                         approval_id="approval_1",
-                        summary="Allow writes to workspace/docs/** for this run",
+                        summary="Allow writes to /docs/** for this run",
                     )
                 )
             ),
@@ -541,12 +556,12 @@ class FakeCompiledAgent:
         for subagent in self._subagents:
             for middleware in subagent.get("middleware", []):
                 middleware.wrap_model_call(FakeModelRequest(), lambda request: {"ok": True})
-        self._invoke_tool("list_files", {"root": "workspace"})
-        self._invoke_tool("read_file", {"path": "workspace/README.md"})
+        self._invoke_tool("list_files", {"root": "/"})
+        self._invoke_tool("read_file", {"path": "/README.md"})
         self._invoke_tool(
             "write_file",
             {
-                "path": "workspace/artifacts/result.md",
+                "path": "/artifacts/result.md",
                 "content": "# Result\nDeep Agent execution complete.\n",
             },
         )
@@ -664,7 +679,7 @@ def _resolved_subagent_with_options(
         model_profile=role_id,
         tool_scope=tool_scope,
         memory_scope=("project", "run"),
-        filesystem_scope=("workspace",),
+        filesystem_scope=("/",),
         identity_path=identity_path,
         system_prompt_path=system_prompt_path,
         skills_path=skill_path.parent if skill_path is not None else None,
@@ -707,7 +722,7 @@ def _resolved_tool_binding(tool_id: str) -> ResolvedToolBinding:
         "read_files": ("read_file", "list_files", "filesystem"),
         "write_files": ("write_file", "filesystem"),
         "execute_commands": ("execute_command", "commands"),
-        "memory_lookup": ("memory_lookup", "memory"),
+        "memory_lookup": ("memory_lookup", "/.memory"),
         "plan_update": ("plan_update", "planning"),
         "artifact_inspect": ("artifact_inspect", "artifacts"),
     }[tool_id]

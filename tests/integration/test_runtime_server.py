@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import json
+import os
 import subprocess
 import sys
 import tempfile
@@ -144,7 +145,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             artifacts_response, _ = server.handle_line(json.dumps(artifacts_request.to_dict()))
             artifact_payload = artifacts_response.to_dict()["result"]["artifacts"]
             self.assertEqual(len(artifact_payload), 1)
-            self.assertEqual(artifact_payload[0]["logical_path"], "artifacts/repo_summary.md")
+            self.assertEqual(artifact_payload[0]["logical_path"], "/artifacts/repo_summary.md")
 
             logs_request = JsonRpcRequest(
                 method=METHOD_TASK_LOGS_STREAM,
@@ -168,12 +169,83 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(
                 artifact_event.event.payload["artifact"]["logical_path"],
-                "artifacts/repo_summary.md",
+                "/artifacts/repo_summary.md",
             )
             self.assertEqual(
                 artifact_event.event.payload["artifact"]["persistence_class"],
                 "run",
             )
+
+    def test_runtime_uses_configured_workspace_root_instead_of_process_cwd(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_path = Path(temp_dir)
+            config_root = temp_path / "config-root"
+            config_root.mkdir()
+            workspace_root = config_root / "workspace"
+            workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            runtime_root = temp_path / "runtime"
+            outside_cwd = temp_path / "other-cwd"
+            outside_cwd.mkdir()
+            config_path = config_root / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[cli]",
+                        "default_workspace_root = './workspace'",
+                        "",
+                        "[identity]",
+                        f"path = '{Path('agents/primary-agent/IDENTITY.md').resolve()}'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[persistence]",
+                        f"root_path = '{runtime_root}'",
+                        "metadata_backend = 'sqlite'",
+                        "event_backend = 'sqlite'",
+                        "diagnostic_backend = 'sqlite'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            config = load_runtime_config(str(config_path))
+            identity = load_identity_bundle(config.identity_path)
+
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(outside_cwd)
+                server = create_runtime_server(
+                    config=config,
+                    identity=identity,
+                    agent_harness=StubAgentHarness(),
+                    runtime_root=str(runtime_root),
+                )
+                create_request = JsonRpcRequest(
+                    method=METHOD_TASK_CREATE,
+                    params=TaskCreateParams(
+                        task=TaskCreateRequest(
+                            objective="Inspect the repo",
+                            workspace_roots=[str(workspace_root)],
+                        )
+                    ).to_dict(),
+                    id="cwd-mismatch",
+                    correlation_id=new_correlation_id(),
+                )
+
+                create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            finally:
+                os.chdir(original_cwd)
+
+            payload = create_response.to_dict()["result"]
+            self.assertEqual(payload["status"], "accepted")
 
     def test_runtime_boots_with_real_phase3_harness_and_compiles_all_roles(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -298,7 +370,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/repo-map",
+                    "source_path": "/repo-map",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Needed for recurring repository mapping work.",
@@ -373,7 +445,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/repo-map",
+                    "source_path": "/repo-map",
                     "target_scope": "primary_agent",
                     "install_mode": "replace",
                     "reason": "Upgrade existing repo-map skill.",
@@ -428,7 +500,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/planner-kit",
+                    "source_path": "/planner-kit",
                     "target_scope": "subagent",
                     "target_role": "planner",
                     "install_mode": "fail_if_exists",
@@ -468,7 +540,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/broken-skill",
+                    "source_path": "/broken-skill",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Try invalid skill.",
@@ -510,7 +582,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/repo-map",
+                    "source_path": "/repo-map",
                     "target_scope": "subagent",
                     "target_role": "missing-role",
                     "install_mode": "fail_if_exists",
@@ -545,7 +617,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "workspace/../escape",
+                    "source_path": "/../escape",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Try traversal.",
@@ -640,7 +712,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             server = create_runtime_server(
                 config=config,
                 identity=identity,
-                agent_harness=StubAgentHarness(output_artifact_path="scratch/repo_summary.md"),
+                agent_harness=StubAgentHarness(output_artifact_path="/tmp/repo_summary.md"),
                 runtime_root=str(Path(temp_dir) / "runtime"),
             )
             correlation_id = new_correlation_id()
@@ -1262,12 +1334,12 @@ class _FakeCompiledAgent:
         input: dict[str, Any],
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        listing = self._invoke("list_files", {"root": "workspace"})
-        readme = self._invoke("read_file", {"path": "workspace/README.md"})
+        listing = self._invoke("list_files", {"root": "/"})
+        readme = self._invoke("read_file", {"path": "/README.md"})
         self._invoke(
             "write_file",
             {
-                "path": "workspace/artifacts/repo_summary.md",
+                "path": "/artifacts/repo_summary.md",
                 "content": "\n".join(
                     [
                         "# Repository Architecture Summary",
@@ -1308,11 +1380,11 @@ class _PauseThenResumeHarness:
         metadata = controller.record_checkpoint("resumed")
         if on_event is not None:
             on_event("checkpoint.saved", metadata.to_dict())
-        request.sandbox.write_text("workspace/artifacts/resumed.md", "# Recovered\n")
+        request.sandbox.write_text("/artifacts/resumed.md", "# Recovered\n")
         return AgentExecutionResult(
             success=True,
             summary="Recovered run completed.",
-            output_artifacts=["workspace/artifacts/resumed.md"],
+            output_artifacts=["/artifacts/resumed.md"],
             error_message=None,
             paused=False,
             pause_reason=None,
@@ -1340,7 +1412,7 @@ class _ApprovalHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.write_file("workspace/apps/runtime/guarded.txt", "content\n")
+        bindings.write_file("/apps/runtime/guarded.txt", "content\n")
         return AgentExecutionResult(
             success=True,
             summary="Governed write completed after approval.",
@@ -1369,7 +1441,7 @@ class _NetworkDeniedHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.execute_command(["curl", "https://example.com"], cwd="workspace")
+        bindings.execute_command(["curl", "https://example.com"], cwd="/")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 
@@ -1395,7 +1467,7 @@ class _CapturingCompiledAgent:
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         write_tool.invoke(
             {
-                "path": "workspace/artifacts/phase3-result.md",
+                "path": "/artifacts/phase3-result.md",
                 "content": "# Phase 3\n",
             }
         )

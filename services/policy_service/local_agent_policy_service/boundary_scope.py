@@ -86,11 +86,11 @@ class BoundaryDescriptor:
 
 def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
     if context.operation_type == "file.write" and context.path_scope is not None:
-        if context.path_scope.startswith("workspace/artifacts/"):
+        if context.path_scope.startswith("/artifacts/"):
             return None
-        if context.path_scope.startswith("scratch/"):
+        if context.path_scope == "/tmp" or context.path_scope.startswith("/tmp/"):
             return None
-        if context.path_scope.startswith("workspace/"):
+        if context.path_scope.startswith("/"):
             subtree = _workspace_subtree(context.path_scope)
             return BoundaryDescriptor(
                 boundary_key=f"file.write:{subtree}",
@@ -105,7 +105,7 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
 
     if context.operation_type == "command.execute":
         command_class = context.command_class or "unknown"
-        cwd = context.path_scope or "workspace"
+        cwd = context.path_scope or "/"
         return BoundaryDescriptor(
             boundary_key=f"command.execute:{command_class}:{cwd}",
             scope={"kind": "command.execute", "command_class": command_class, "cwd": cwd},
@@ -146,8 +146,8 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
 
 def _workspace_subtree(path_scope: str) -> str:
     parts = [part for part in path_scope.split("/") if part]
-    if len(parts) <= 2:
-        return "workspace/**"
-    if len(parts) == 3:
-        return f"{'/'.join(parts[:2])}/**"
-    return f"{'/'.join(parts[:3])}/**"
+    if len(parts) == 0:
+        return "/**"
+    if len(parts) == 1:
+        return f"/{parts[0]}/**"
+    return f"/{'/'.join(parts[:2])}/**"

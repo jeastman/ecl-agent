@@ -3,11 +3,15 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from apps.runtime.local_agent_runtime.bootstrap import create_runtime_server
 from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness
 from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
+from services.sandbox_service.local_agent_sandbox_service.sandbox import (
+    LocalExecutionSandboxFactory,
+)
 
 
 class BootstrapTests(unittest.TestCase):
@@ -59,6 +63,65 @@ class BootstrapTests(unittest.TestCase):
                 "runtime-governance",
                 [skill.skill_id for skill in server.handlers.task_runner.primary_skills],
             )
+
+    def test_runtime_bootstrap_uses_configured_workspace_root_for_sandbox_governance(self) -> None:
+        config = load_runtime_config("docs/architecture/runtime.example.toml")
+        identity = load_identity_bundle(config.identity_path)
+        config.cli.default_workspace_root = "/tmp/configured-workspace"
+        captured: dict[str, object] = {}
+        original_init = LocalExecutionSandboxFactory.__init__
+
+        def recording_init(
+            self,
+            runtime_root: str | Path,
+            governed_workspace_root: str | Path,
+        ) -> None:
+            captured["runtime_root"] = Path(runtime_root)
+            captured["governed_workspace_root"] = Path(governed_workspace_root)
+            original_init(self, runtime_root, governed_workspace_root)
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            with patch.object(LocalExecutionSandboxFactory, "__init__", new=recording_init):
+                create_runtime_server(
+                    config=config,
+                    identity=identity,
+                    agent_harness=StubAgentHarness(),
+                    runtime_root=str(runtime_root),
+                )
+
+        self.assertEqual(captured["runtime_root"], runtime_root.resolve())
+        self.assertEqual(
+            captured["governed_workspace_root"],
+            Path("/tmp/configured-workspace").resolve(),
+        )
+
+    def test_runtime_bootstrap_falls_back_to_cwd_for_sandbox_governance(self) -> None:
+        config = load_runtime_config("docs/architecture/runtime.example.toml")
+        identity = load_identity_bundle(config.identity_path)
+        config.cli.default_workspace_root = None
+        captured: dict[str, object] = {}
+        original_init = LocalExecutionSandboxFactory.__init__
+
+        def recording_init(
+            self,
+            runtime_root: str | Path,
+            governed_workspace_root: str | Path,
+        ) -> None:
+            captured["governed_workspace_root"] = Path(governed_workspace_root)
+            original_init(self, runtime_root, governed_workspace_root)
+
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            runtime_root = Path(temp_dir) / "runtime"
+            with patch.object(LocalExecutionSandboxFactory, "__init__", new=recording_init):
+                create_runtime_server(
+                    config=config,
+                    identity=identity,
+                    agent_harness=StubAgentHarness(),
+                    runtime_root=str(runtime_root),
+                )
+
+        self.assertEqual(captured["governed_workspace_root"], Path.cwd().resolve())
 
 
 def _operation_context():

@@ -17,7 +17,10 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         self.workspace_root.mkdir()
         (self.workspace_root / "README.md").write_text("hello\n", encoding="utf-8")
         self.runtime_root = Path(self._temp_dir.name) / "runtime"
-        self.factory = LocalExecutionSandboxFactory(runtime_root=self.runtime_root)
+        self.factory = LocalExecutionSandboxFactory(
+            runtime_root=self.runtime_root,
+            governed_workspace_root=self.workspace_root,
+        )
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
@@ -25,28 +28,28 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         )
 
     def test_read_write_only_inside_governed_zones(self) -> None:
-        self.sandbox.write_text("scratch/output.md", "# generated\n")
-        self.assertEqual(self.sandbox.read_text("scratch/output.md"), "# generated\n")
-        self.assertEqual(self.sandbox.read_text("workspace/README.md"), "hello\n")
+        self.sandbox.write_text("/tmp/output.md", "# generated\n")
+        self.assertEqual(self.sandbox.read_text("/tmp/output.md"), "# generated\n")
+        self.assertEqual(self.sandbox.read_text("/README.md"), "hello\n")
         with self.assertRaisesRegex(ValueError, "cannot traverse"):
-            self.sandbox.write_text("workspace/../escape.txt", "bad")
+            self.sandbox.write_text("/../escape.txt", "bad")
 
     def test_command_execution_allows_governed_cwd(self) -> None:
-        result = self.sandbox.execute_command(["pwd"], cwd="workspace")
+        result = self.sandbox.execute_command(["pwd"], cwd="/")
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(Path(result.cwd), self.workspace_root.resolve())
 
     def test_command_execution_rejects_invalid_working_directory(self) -> None:
-        with self.assertRaisesRegex(ValueError, "relative to a governed zone"):
-            self.sandbox.execute_command(["pwd"], cwd=str(self.workspace_root))
+        with self.assertRaisesRegex(ValueError, "absolute virtual path"):
+            self.sandbox.execute_command(["pwd"], cwd="workspace")
 
     def test_list_files_stays_rooted(self) -> None:
         nested = self.workspace_root / "src"
         nested.mkdir()
         (nested / "main.py").write_text("print('hi')\n", encoding="utf-8")
-        files = self.sandbox.list_files("workspace")
-        self.assertIn("workspace/README.md", files)
-        self.assertIn("workspace/src/main.py", files)
+        files = self.sandbox.list_files("/")
+        self.assertIn("/README.md", files)
+        self.assertIn("/src/main.py", files)
 
 
 if __name__ == "__main__":

@@ -24,6 +24,8 @@ class PromptBuilder:
             [
                 "You are the project-owned primary runtime agent.",
                 "Use only governed tools and delegate specialized work through Deep Agent native subagents when they are available.",
+                "The sandbox exposes a virtual filesystem rooted at /, with /tmp for scratch space and /.memory for runtime memory state.",
+                "Do not use host filesystem paths such as /Users/...; treat / as the full accessible workspace root.",
                 "",
                 "Identity Doctrine:",
                 identity_bundle_text.strip(),
@@ -56,6 +58,7 @@ class PromptBuilder:
             [
                 "Runtime Governance:",
                 "Operate inside the project-owned runtime boundary. Use only your scoped tools, respect policy and sandbox controls, and do not claim capabilities you do not have.",
+                "The virtual filesystem is rooted at /. Use /tmp for scratch space and /.memory for runtime memory state.",
                 "",
                 "Primary Identity Doctrine:",
                 identity_bundle_text.strip(),
