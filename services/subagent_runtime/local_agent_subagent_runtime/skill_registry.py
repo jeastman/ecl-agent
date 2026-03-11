@@ -18,7 +18,9 @@ class FileSystemSkillRegistry:
     ) -> tuple[SkillDescriptor, ...]:
         if skills_path is None:
             return ()
-        if not skills_path.exists() or not skills_path.is_dir():
+        if not skills_path.exists():
+            return ()
+        if not skills_path.is_dir():
             raise SkillRegistryError(f"Skill path is not a directory: {skills_path}")
 
         descriptors: list[SkillDescriptor] = []

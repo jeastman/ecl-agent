@@ -18,6 +18,7 @@ METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
+METHOD_SKILL_INSTALL = "skill.install"
 METHOD_MEMORY_INSPECT = "memory.inspect"
 METHOD_CONFIG_GET = "config.get"
 
@@ -521,6 +522,125 @@ class TaskArtifactsListResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"artifacts": [artifact.to_dict() for artifact in self.artifacts]}
+
+
+@dataclass(slots=True)
+class SkillInstallValidation:
+    status: str
+    findings: list[dict[str, Any]]
+    has_scripts: bool
+    total_bytes: int
+    file_count: int
+    skill_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SkillInstallValidation":
+        status = str(payload.get("status", "")).strip()
+        if status not in {"pass", "pass_with_warnings", "fail"}:
+            raise ValueError(
+                "skill.install validation.status must be pass, pass_with_warnings, or fail"
+            )
+        findings = payload.get("findings", [])
+        if not isinstance(findings, list) or not all(isinstance(item, dict) for item in findings):
+            raise ValueError("skill.install validation.findings must be a list of objects")
+        has_scripts = payload.get("has_scripts", False)
+        total_bytes = payload.get("total_bytes", 0)
+        file_count = payload.get("file_count", 0)
+        skill_id = payload.get("skill_id")
+        if not isinstance(has_scripts, bool):
+            raise ValueError("skill.install validation.has_scripts must be a boolean")
+        if not isinstance(total_bytes, int):
+            raise ValueError("skill.install validation.total_bytes must be an integer")
+        if not isinstance(file_count, int):
+            raise ValueError("skill.install validation.file_count must be an integer")
+        if skill_id is not None and not isinstance(skill_id, str):
+            raise ValueError("skill.install validation.skill_id must be a string when provided")
+        return cls(
+            status=status,
+            findings=findings,
+            has_scripts=has_scripts,
+            total_bytes=total_bytes,
+            file_count=file_count,
+            skill_id=skill_id,
+        )
+
+
+@dataclass(slots=True)
+class SkillInstallParams:
+    task_id: str
+    source_path: str
+    target_scope: str
+    target_role: str | None = None
+    install_mode: str = "fail_if_exists"
+    reason: str = ""
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "SkillInstallParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        source_path = str(payload.get("source_path", "")).strip()
+        target_scope = str(payload.get("target_scope", "")).strip()
+        target_role = payload.get("target_role")
+        install_mode = str(payload.get("install_mode", "")).strip()
+        reason = str(payload.get("reason", "")).strip()
+        run_id = payload.get("run_id")
+        if not task_id:
+            raise ValueError("skill.install requires task_id")
+        if not source_path:
+            raise ValueError("skill.install requires source_path")
+        if target_scope not in {"primary_agent", "subagent"}:
+            raise ValueError("skill.install target_scope must be primary_agent or subagent")
+        if target_role is not None and not isinstance(target_role, str):
+            raise ValueError("skill.install target_role must be a string when provided")
+        if target_scope == "subagent" and (
+            not isinstance(target_role, str) or not target_role.strip()
+        ):
+            raise ValueError("skill.install target_role is required for subagent installs")
+        if install_mode not in {"fail_if_exists", "replace"}:
+            raise ValueError("skill.install install_mode must be fail_if_exists or replace")
+        if not reason:
+            raise ValueError("skill.install requires reason")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("skill.install run_id must be a string when provided")
+        return cls(
+            task_id=task_id,
+            run_id=run_id,
+            source_path=source_path,
+            target_scope=target_scope,
+            target_role=target_role.strip() if isinstance(target_role, str) else None,
+            install_mode=install_mode,
+            reason=reason,
+        )
+
+
+@dataclass(slots=True)
+class SkillInstallResult:
+    status: str
+    target_path: str
+    validation: SkillInstallValidation
+    approval_required: bool
+    summary: str
+    approval_id: str | None = None
+    artifacts: list[str] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        payload = {
+            "status": self.status,
+            "target_path": self.target_path,
+            "validation": self.validation.to_dict(),
+            "approval_required": self.approval_required,
+            "summary": self.summary,
+            "artifacts": list(self.artifacts),
+        }
+        if self.approval_id is not None:
+            payload["approval_id"] = self.approval_id
+        return payload
 
 
 @dataclass(slots=True)

@@ -31,6 +31,7 @@ class SubagentDefinition:
     identity_path: Path | None
     system_prompt_path: Path | None
     skills_path: Path | None
+    role_root_path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)

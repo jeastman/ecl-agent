@@ -18,6 +18,7 @@ from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
     METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
+    METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -257,6 +258,306 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(completed_event.payload["subagentId"], "researcher")
             self.assertEqual(completed_event.payload["status"], "success")
             self.assertGreaterEqual(completed_event.payload["duration"], 0.0)
+
+    def test_skill_install_method_installs_primary_skill_and_next_run_discovers_it(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            staged_skill = workspace_root / "repo-map"
+            staged_skill.mkdir()
+            (staged_skill / "SKILL.md").write_text(
+                "# Repo Map\nInstalled skill.\n", encoding="utf-8"
+            )
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            harness = _SkillCaptureHarness()
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=harness,
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Seed runtime context",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="skill-create-1",
+                correlation_id=new_correlation_id(),
+            )
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/repo-map",
+                    "target_scope": "primary_agent",
+                    "install_mode": "fail_if_exists",
+                    "reason": "Needed for recurring repository mapping work.",
+                },
+                id="skill-install-1",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "completed")
+            self.assertEqual(install_payload["validation"]["status"], "pass")
+            self.assertTrue(
+                (agent_root / "primary-agent" / "skills" / "repo-map" / "SKILL.md").is_file()
+            )
+
+            next_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Use current primary skills",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="skill-create-2",
+                correlation_id=new_correlation_id(),
+            )
+            next_response, _ = server.handle_line(json.dumps(next_request.to_dict()))
+            self.assertEqual(next_response.to_dict()["result"]["status"], "accepted")
+            self.assertIn("repo-map", harness.last_primary_skill_ids)
+
+    def test_skill_install_replace_requires_approval_and_completes_after_task_approve(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            staged_skill = workspace_root / "repo-map"
+            staged_skill.mkdir()
+            (staged_skill / "SKILL.md").write_text(
+                "# Repo Map\nReplacement skill.\n", encoding="utf-8"
+            )
+            scripts_dir = staged_skill / "scripts"
+            scripts_dir.mkdir()
+            (scripts_dir / "install.sh").write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            existing_skill = agent_root / "primary-agent" / "skills" / "repo-map"
+            existing_skill.mkdir(parents=True)
+            (existing_skill / "SKILL.md").write_text("# Existing\n", encoding="utf-8")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Prepare install approval context",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="replace-create",
+                correlation_id=new_correlation_id(),
+            )
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/repo-map",
+                    "target_scope": "primary_agent",
+                    "install_mode": "replace",
+                    "reason": "Upgrade existing repo-map skill.",
+                },
+                id="replace-install",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "approval_required")
+            approval_id = install_payload["approval_id"]
+
+            approve_request = JsonRpcRequest(
+                method=METHOD_TASK_APPROVE,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "approval": {"approval_id": approval_id, "decision": "approved"},
+                },
+                id="replace-approve",
+                correlation_id=new_correlation_id(),
+            )
+            approve_response, _ = server.handle_line(json.dumps(approve_request.to_dict()))
+            approve_payload = approve_response.to_dict()["result"]
+            self.assertTrue(approve_payload["accepted"])
+            self.assertEqual(approve_payload["status"], "approved")
+            self.assertIn(
+                "Replacement skill.",
+                (existing_skill / "SKILL.md").read_text(encoding="utf-8"),
+            )
+
+    def test_skill_install_method_installs_subagent_skill(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            staged_skill = workspace_root / "planner-kit"
+            staged_skill.mkdir()
+            (staged_skill / "SKILL.md").write_text("# Planner Kit\n", encoding="utf-8")
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            created = _create_task(server, workspace_root)
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/planner-kit",
+                    "target_scope": "subagent",
+                    "target_role": "planner",
+                    "install_mode": "fail_if_exists",
+                    "reason": "Add reusable planner skill.",
+                },
+                id="subagent-install",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "completed")
+            self.assertTrue(
+                (
+                    agent_root / "subagents" / "planner" / "skills" / "planner-kit" / "SKILL.md"
+                ).is_file()
+            )
+
+    def test_skill_install_returns_structured_failure_for_missing_skill_md(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            staged_skill = workspace_root / "broken-skill"
+            staged_skill.mkdir()
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            created = _create_task(server, workspace_root)
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/broken-skill",
+                    "target_scope": "primary_agent",
+                    "install_mode": "fail_if_exists",
+                    "reason": "Try invalid skill.",
+                },
+                id="missing-skill-md",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "failed")
+            self.assertEqual(install_payload["validation"]["status"], "fail")
+            self.assertTrue(
+                any(
+                    finding["code"] == "missing_skill_md"
+                    for finding in install_payload["validation"]["findings"]
+                )
+            )
+
+    def test_skill_install_returns_structured_failure_for_invalid_role(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            staged_skill = workspace_root / "repo-map"
+            staged_skill.mkdir()
+            (staged_skill / "SKILL.md").write_text("# Repo Map\n", encoding="utf-8")
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            created = _create_task(server, workspace_root)
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/repo-map",
+                    "target_scope": "subagent",
+                    "target_role": "missing-role",
+                    "install_mode": "fail_if_exists",
+                    "reason": "Try invalid role.",
+                },
+                id="invalid-role",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "failed")
+            self.assertEqual(install_payload["validation"]["status"], "fail")
+            self.assertIn("Unknown subagent role", install_payload["summary"])
+
+    def test_skill_install_returns_structured_failure_for_path_traversal(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
+            config = load_runtime_config(CONFIG_PATH)
+            config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            created = _create_task(server, workspace_root)
+            install_request = JsonRpcRequest(
+                method=METHOD_SKILL_INSTALL,
+                params={
+                    "task_id": created["task_id"],
+                    "run_id": created["run_id"],
+                    "source_path": "workspace/../escape",
+                    "target_scope": "primary_agent",
+                    "install_mode": "fail_if_exists",
+                    "reason": "Try traversal.",
+                },
+                id="path-traversal",
+                correlation_id=new_correlation_id(),
+            )
+            install_response, _ = server.handle_line(json.dumps(install_request.to_dict()))
+            install_payload = install_response.to_dict()["result"]
+            self.assertEqual(install_payload["status"], "failed")
+            self.assertEqual(install_payload["validation"]["status"], "fail")
+            self.assertIn("traverse outside", install_payload["summary"])
 
     def test_runtime_persists_failed_subagent_completion_events(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -1101,6 +1402,19 @@ class _CapturingCompiledAgent:
         return {"messages": [{"role": "assistant", "content": "Phase 3 execution complete."}]}
 
 
+class _SkillCaptureHarness:
+    def __init__(self) -> None:
+        self.last_primary_skill_ids: list[str] = []
+
+    def execute(self, request, on_event=None) -> Any:
+        self.last_primary_skill_ids = [skill.skill_id for skill in request.primary_skills]
+        return AgentExecutionResult(
+            success=True,
+            summary="Captured primary skills.",
+            output_artifacts=[],
+        )
+
+
 class _FakeModelRequest:
     system_message = None
 
@@ -1122,6 +1436,50 @@ class _FailingCompiledAgent:
                         lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
                     )
         raise AssertionError("expected delegated failure to abort execution")
+
+
+def _create_minimal_agent_tree(root: Path) -> Path:
+    primary = root / "primary-agent"
+    primary.mkdir(parents=True)
+    (primary / "IDENTITY.md").write_text("# Primary Identity\n", encoding="utf-8")
+    (primary / "skills").mkdir()
+    subagent = root / "subagents" / "planner"
+    subagent.mkdir(parents=True)
+    (subagent / "manifest.yaml").write_text(
+        "\n".join(
+            [
+                "role_id: planner",
+                "name: Planner",
+                "description: Planning role",
+                "model_profile: planner",
+                "tool_scope:",
+                "  - read_files",
+                "memory_scope:",
+                "  - run",
+                "filesystem_scope:",
+                "  - workspace",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    return root
+
+
+def _create_task(server, workspace_root: Path) -> dict[str, Any]:
+    create_request = JsonRpcRequest(
+        method=METHOD_TASK_CREATE,
+        params=TaskCreateParams(
+            task=TaskCreateRequest(
+                objective="Create context",
+                workspace_roots=[str(workspace_root)],
+            )
+        ).to_dict(),
+        id="helper-create",
+        correlation_id=new_correlation_id(),
+    )
+    create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+    return create_response.to_dict()["result"]
 
 
 if __name__ == "__main__":

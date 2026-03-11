@@ -28,6 +28,8 @@ class ExecutionSandbox(Protocol):
 
     def normalize_path(self, path: str) -> str: ...
 
+    def resolve_path(self, path: str) -> Path: ...
+
     def read_text(self, path: str) -> str: ...
 
     def write_text(self, path: str, content: str) -> None: ...
@@ -105,6 +107,9 @@ class LocalExecutionSandbox:
 
     def normalize_path(self, path: str) -> str:
         return normalize_sandbox_path(path).logical_path
+
+    def resolve_path(self, path: str) -> Path:
+        return self._resolve(path)
 
     def read_text(self, path: str) -> str:
         resolved = self._resolve(path)

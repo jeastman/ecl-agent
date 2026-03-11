@@ -55,9 +55,9 @@ class BootstrapTests(unittest.TestCase):
                 ["read_files", "memory_lookup"],
             )
             self.assertEqual(researcher.skills, ())
-            self.assertEqual(
+            self.assertIn(
+                "runtime-governance",
                 [skill.skill_id for skill in server.handlers.task_runner.primary_skills],
-                ["runtime-governance"],
             )
 
 

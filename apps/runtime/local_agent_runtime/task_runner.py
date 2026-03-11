@@ -47,6 +47,13 @@ from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     ExecutionSandbox,
     LocalExecutionSandboxFactory,
 )
+from services.subagent_runtime.local_agent_subagent_runtime import (
+    RuntimeSkillCatalog,
+    SkillInstallationService,
+    SkillInstallOutcome,
+    SkillValidationFinding,
+    SkillValidationResult,
+)
 
 
 @dataclass(slots=True)
@@ -68,6 +75,7 @@ class AgentExecutionRequest:
     checkpoint_controller: CheckpointController | None = None
     resume_from_checkpoint_id: str | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
+    skill_install_handler: Callable[..., dict[str, Any]] | None = None
 
 
 @dataclass(slots=True)
@@ -143,6 +151,7 @@ class TaskRunner:
         durable_services: DurableRuntimeServices | None = None,
         resolved_subagents: list[ResolvedSubagentConfiguration] | None = None,
         primary_skills: tuple[SkillDescriptor, ...] = (),
+        skill_catalog: RuntimeSkillCatalog | None = None,
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
@@ -152,6 +161,10 @@ class TaskRunner:
         self._durable_services = durable_services
         self._resolved_subagents = list(resolved_subagents or [])
         self._primary_skills = tuple(primary_skills)
+        self._skill_catalog = skill_catalog
+        self._skill_installer = (
+            SkillInstallationService(skill_catalog) if skill_catalog is not None else None
+        )
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
         self._checkpoint_adapter = (
             LangGraphCheckpointAdapter(durable_services.checkpoint_store)
@@ -161,10 +174,14 @@ class TaskRunner:
 
     @property
     def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
+        if self._skill_catalog is not None:
+            return self._skill_catalog.resolve_subagents()
         return list(self._resolved_subagents)
 
     @property
     def primary_skills(self) -> tuple[SkillDescriptor, ...]:
+        if self._skill_catalog is not None:
+            return self._skill_catalog.load_primary_skills()
         return self._primary_skills
 
     def start_run(
@@ -280,7 +297,8 @@ class TaskRunner:
             raise ValueError("approval does not belong to the requested run")
 
         state = self._run_state_store.get(request.task_id, request.run_id)
-        if state.pending_approval_id != approval_id:
+        is_direct_skill_install = request.scope.get("kind") == "skill.install"
+        if not is_direct_skill_install and state.pending_approval_id != approval_id:
             raise ValueError("approval is not the active pending approval for this run")
 
         decided = self._durable_services.approval_store.decide(
@@ -298,6 +316,14 @@ class TaskRunner:
         )
 
         if decided.status == "approved":
+            if is_direct_skill_install:
+                self._approve_skill_install(request, correlation_id=None)
+                return (
+                    approval_id,
+                    True,
+                    decided.status,
+                    self.get_task_snapshot(state.task_id, state.run_id),
+                )
             boundary_key = decided.scope.get("boundary_key")
             if isinstance(boundary_key, str) and boundary_key:
                 self._durable_services.boundary_grant_store.grant(
@@ -315,6 +341,31 @@ class TaskRunner:
                 identity_bundle_text=identity_bundle_text,
             )
             return approval_id, True, decided.status, snapshot
+
+        if is_direct_skill_install:
+            self._append_diagnostic(
+                task_id=state.task_id,
+                run_id=state.run_id,
+                kind="skill_install_approval_rejected",
+                message="Skill installation approval was rejected by the user.",
+                details={"approval_id": approval_id, "scope": decided.scope},
+            )
+            self._publish_skill_install_event(
+                task_id=state.task_id,
+                run_id=state.run_id,
+                correlation_id=None,
+                event_type=EventType.SKILL_INSTALL_FAILED.value,
+                payload={
+                    "summary": "Skill installation approval was rejected.",
+                    "approval_id": approval_id,
+                },
+            )
+            return (
+                approval_id,
+                False,
+                decided.status,
+                self.get_task_snapshot(state.task_id, state.run_id),
+            )
 
         self._append_diagnostic(
             task_id=state.task_id,
@@ -356,6 +407,38 @@ class TaskRunner:
             False,
             decided.status,
             self.get_task_snapshot(state.task_id, state.run_id),
+        )
+
+    def skill_install(
+        self,
+        *,
+        correlation_id: str | None,
+        task_id: str,
+        run_id: str | None,
+        source_path: str,
+        target_scope: str,
+        target_role: str | None,
+        install_mode: str,
+        reason: str,
+    ) -> SkillInstallOutcome:
+        if self._skill_installer is None:
+            raise ValueError("skill.install requires runtime skill catalog support")
+        state = self._run_state_store.get(task_id, run_id)
+        sandbox = self._sandbox_factory.for_run(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            workspace_roots=state.workspace_roots,
+        )
+        return self._install_skill_via_runtime_method(
+            correlation_id=correlation_id,
+            task_id=state.task_id,
+            run_id=state.run_id,
+            sandbox=sandbox,
+            source_path=source_path,
+            target_scope=target_scope,
+            target_role=target_role,
+            install_mode=install_mode,
+            reason=reason,
         )
 
     def get_task_snapshot(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
@@ -491,7 +574,7 @@ class TaskRunner:
                     ),
                     allowed_capabilities=list(state.allowed_capabilities),
                     metadata=dict(state.metadata),
-                    primary_skills=self._primary_skills,
+                    primary_skills=self.primary_skills,
                     constraints=list(state.constraints),
                     success_criteria=list(state.success_criteria),
                     checkpoint_controller=checkpoint_controller,
@@ -504,6 +587,13 @@ class TaskRunner:
                         correlation_id=correlation_id,
                         context=context,
                     ),
+                    skill_install_handler=lambda **kwargs: self._install_skill_via_tool(
+                        correlation_id=correlation_id,
+                        task_id=task_id,
+                        run_id=run_id,
+                        sandbox=sandbox,
+                        **kwargs,
+                    ).to_dict(),
                 ),
                 on_event=lambda event_type, payload: self._handle_harness_event(
                     task_id=task_id,
@@ -913,6 +1003,469 @@ class TaskRunner:
         if self._checkpoint_adapter is None:
             return None
         return self._checkpoint_adapter.begin_run(task_id, run_id).thread_id
+
+    def _install_skill_via_tool(
+        self,
+        *,
+        correlation_id: str | None,
+        task_id: str,
+        run_id: str,
+        sandbox: ExecutionSandbox,
+        source_path: str,
+        target_scope: str,
+        target_role: str | None,
+        install_mode: str,
+        reason: str,
+    ) -> SkillInstallOutcome:
+        installer = self._require_skill_installer()
+        try:
+            prepared = self._prepare_skill_install(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                sandbox=sandbox,
+                source_path=source_path,
+                target_scope=target_scope,
+                target_role=target_role,
+                install_mode=install_mode,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return self._failed_skill_install_outcome(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                summary=str(exc),
+            )
+        if prepared.validation.status == "fail":
+            return self._failed_skill_install_outcome(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                summary="Skill installation validation failed.",
+                validation=prepared.validation,
+                target_path=str(prepared.target_skill_path),
+                sandbox=sandbox,
+                prepared=prepared,
+            )
+        self._govern_operation(
+            correlation_id=correlation_id,
+            context=self._skill_install_operation_context(task_id, run_id, prepared),
+        )
+        installer.execute_install(prepared)
+        artifacts = self._write_skill_install_artifacts(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            sandbox=sandbox,
+            prepared=prepared,
+        )
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_COMPLETED.value,
+            payload={
+                "summary": f"Installed skill into {prepared.target_skill_path}.",
+                "target_path": str(prepared.target_skill_path),
+                "validation": prepared.validation.to_dict(),
+            },
+        )
+        return SkillInstallOutcome(
+            status="completed",
+            summary=f"Installed skill into {prepared.target_skill_path}.",
+            target_path=str(prepared.target_skill_path),
+            validation=prepared.validation,
+            artifacts=artifacts,
+        )
+
+    def _install_skill_via_runtime_method(
+        self,
+        *,
+        correlation_id: str | None,
+        task_id: str,
+        run_id: str,
+        sandbox: ExecutionSandbox,
+        source_path: str,
+        target_scope: str,
+        target_role: str | None,
+        install_mode: str,
+        reason: str,
+    ) -> SkillInstallOutcome:
+        installer = self._require_skill_installer()
+        try:
+            prepared = self._prepare_skill_install(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                sandbox=sandbox,
+                source_path=source_path,
+                target_scope=target_scope,
+                target_role=target_role,
+                install_mode=install_mode,
+                reason=reason,
+            )
+        except ValueError as exc:
+            return self._failed_skill_install_outcome(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                summary=str(exc),
+            )
+        artifacts = self._write_skill_install_artifacts(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            sandbox=sandbox,
+            prepared=prepared,
+        )
+        if prepared.validation.status == "fail":
+            return self._failed_skill_install_outcome(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                summary="Skill installation validation failed.",
+                validation=prepared.validation,
+                target_path=str(prepared.target_skill_path),
+                artifacts=artifacts,
+            )
+        decision = (
+            self._durable_services.policy_engine.evaluate(
+                self._skill_install_operation_context(task_id, run_id, prepared)
+            )
+            if self._durable_services is not None
+            else PolicyDecision(decision="ALLOW", reason="No durable policy engine configured.")
+        )
+        if decision.decision == "DENY":
+            return self._failed_skill_install_outcome(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                summary=decision.reason,
+                validation=prepared.validation,
+                target_path=str(prepared.target_skill_path),
+                artifacts=artifacts,
+                diagnostic_kind="skill_install_denied",
+            )
+        if decision.decision == "REQUIRE_APPROVAL":
+            approval = self._create_skill_install_approval_request(
+                correlation_id=correlation_id,
+                task_id=task_id,
+                run_id=run_id,
+                prepared=prepared,
+                decision=decision,
+            )
+            return SkillInstallOutcome(
+                status="approval_required",
+                summary=approval.description,
+                target_path=str(prepared.target_skill_path),
+                validation=prepared.validation,
+                approval_required=True,
+                approval_id=approval.approval_id,
+                artifacts=artifacts,
+            )
+        installer.execute_install(prepared)
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_COMPLETED.value,
+            payload={
+                "summary": f"Installed skill into {prepared.target_skill_path}.",
+                "target_path": str(prepared.target_skill_path),
+                "validation": prepared.validation.to_dict(),
+            },
+        )
+        return SkillInstallOutcome(
+            status="completed",
+            summary=f"Installed skill into {prepared.target_skill_path}.",
+            target_path=str(prepared.target_skill_path),
+            validation=prepared.validation,
+            artifacts=artifacts,
+        )
+
+    def _prepare_skill_install(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        sandbox: ExecutionSandbox,
+        source_path: str,
+        target_scope: str,
+        target_role: str | None,
+        install_mode: str,
+        reason: str,
+    ):
+        installer = self._require_skill_installer()
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_REQUESTED.value,
+            payload={
+                "source_path": source_path,
+                "target_scope": target_scope,
+                "target_role": target_role,
+                "install_mode": install_mode,
+                "reason": reason,
+            },
+        )
+        prepared = installer.prepare_install(
+            sandbox=sandbox,
+            source_path=source_path,
+            target_scope=target_scope,
+            target_role=target_role,
+            install_mode=install_mode,
+            reason=reason,
+        )
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_VALIDATED.value,
+            payload={
+                "target_path": str(prepared.target_skill_path),
+                "validation": prepared.validation.to_dict(),
+            },
+        )
+        return prepared
+
+    def _failed_skill_install_outcome(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        summary: str,
+        validation: SkillValidationResult | None = None,
+        target_path: str = "",
+        artifacts: tuple[str, ...] = (),
+        sandbox: ExecutionSandbox | None = None,
+        prepared=None,
+        diagnostic_kind: str = "skill_install_validation_failed",
+    ) -> SkillInstallOutcome:
+        resolved_validation = validation or SkillValidationResult(
+            status="fail",
+            findings=(
+                SkillValidationFinding(
+                    severity="error",
+                    code="invalid_request",
+                    message=summary,
+                    path=None,
+                ),
+            ),
+            has_scripts=False,
+            total_bytes=0,
+            file_count=0,
+            skill_id=None,
+        )
+        resolved_artifacts = artifacts
+        if sandbox is not None and prepared is not None:
+            resolved_artifacts = self._write_skill_install_artifacts(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                sandbox=sandbox,
+                prepared=prepared,
+            )
+        self._append_diagnostic(
+            task_id=task_id,
+            run_id=run_id,
+            kind=diagnostic_kind,
+            message=summary,
+            details=resolved_validation.to_dict(),
+        )
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_FAILED.value,
+            payload={
+                "summary": summary,
+                "target_path": target_path,
+                "validation": resolved_validation.to_dict(),
+            },
+        )
+        return SkillInstallOutcome(
+            status="failed",
+            summary=summary,
+            target_path=target_path,
+            validation=resolved_validation,
+            artifacts=resolved_artifacts,
+        )
+
+    def _skill_install_operation_context(
+        self, task_id: str, run_id: str, prepared
+    ) -> OperationContext:
+        return OperationContext(
+            task_id=task_id,
+            run_id=run_id,
+            operation_type="skill.install",
+            path_scope=str(prepared.target_skill_path),
+            metadata={
+                "target_scope": prepared.target.target_scope,
+                "target_role": prepared.target.role_id,
+                "install_mode": prepared.install_mode,
+                "has_scripts": prepared.validation.has_scripts,
+                "overwrite": prepared.overwrite,
+                "skill_id": prepared.validation.skill_id,
+                "source_path": prepared.source_sandbox_path,
+            },
+        )
+
+    def _write_skill_install_artifacts(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        sandbox: ExecutionSandbox,
+        prepared,
+    ) -> tuple[str, ...]:
+        installer = self._require_skill_installer()
+        artifact_paths: list[str] = []
+        existing_paths = {
+            artifact.logical_path
+            for artifact in self._artifact_store.list_artifacts(task_id, run_id)
+        }
+        for sandbox_path, content in installer.artifact_payloads(prepared).items():
+            if not content:
+                continue
+            sandbox.write_text(sandbox_path, content)
+            artifact = self._artifact_store.register_artifact(
+                task_id=task_id,
+                run_id=run_id,
+                sandbox_path=sandbox_path,
+                source_tool="skill_installer",
+            )
+            artifact_paths.append(sandbox_path)
+            state = self._run_state_store.get(task_id, run_id)
+            artifact_count = state.artifact_count + (
+                0 if artifact.logical_path in existing_paths else 1
+            )
+            existing_paths.add(artifact.logical_path)
+            registered_at = utc_now_timestamp()
+            self._run_state_store.update(
+                task_id,
+                run_id,
+                updated_at=registered_at,
+                artifact_count=artifact_count,
+                last_event_at=registered_at,
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.ARTIFACT_CREATED.value,
+                timestamp=registered_at,
+                source=EventSource(kind=EventSourceKind.RUNTIME, component="artifact-store"),
+                payload={"artifact": artifact.to_dict()},
+            )
+            self._write_metrics(task_id, run_id, artifact_count=artifact_count)
+        return tuple(artifact_paths)
+
+    def _require_skill_installer(self) -> SkillInstallationService:
+        installer = self._skill_installer
+        if installer is None:
+            raise ValueError("skill.install requires runtime skill catalog support")
+        return installer
+
+    def _publish_skill_install_event(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=event_type,
+            timestamp=utc_now_timestamp(),
+            source=EventSource(kind=EventSourceKind.RUNTIME, component="skill-installer"),
+            payload=payload,
+        )
+
+    def _create_skill_install_approval_request(
+        self,
+        *,
+        correlation_id: str | None,
+        task_id: str,
+        run_id: str,
+        prepared,
+        decision: PolicyDecision,
+    ) -> ApprovalRequest:
+        assert self._durable_services is not None
+        now = utc_now_timestamp()
+        approval = ApprovalRequest(
+            approval_id=f"approval_{uuid4().hex[:12]}",
+            task_id=task_id,
+            run_id=run_id,
+            type="skill_install",
+            scope={
+                "kind": "skill.install",
+                "boundary_key": decision.boundary_key,
+                "source_path": prepared.source_sandbox_path,
+                "target_scope": prepared.target.target_scope,
+                "target_role": prepared.target.role_id,
+                "install_mode": prepared.install_mode,
+                "reason": prepared.reason,
+            },
+            description=decision.reason,
+            created_at=now,
+            status="pending",
+        )
+        self._durable_services.approval_store.create_request(approval)
+        self._publish_skill_install_event(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.SKILL_INSTALL_APPROVAL_REQUESTED.value,
+            payload={"approval": approval.to_dict()},
+        )
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.APPROVAL_REQUESTED.value,
+            timestamp=now,
+            source=EventSource(kind=EventSourceKind.POLICY, component="policy-engine"),
+            payload={"approval": approval.to_dict()},
+        )
+        self._increment_approval_metrics(task_id, run_id)
+        return approval
+
+    def _approve_skill_install(self, approval: ApprovalRequest, correlation_id: str | None) -> None:
+        scope = approval.scope
+        boundary_key = scope.get("boundary_key")
+        if isinstance(boundary_key, str) and boundary_key and self._durable_services is not None:
+            self._durable_services.boundary_grant_store.grant(
+                BoundaryGrant(
+                    task_id=approval.task_id,
+                    run_id=approval.run_id,
+                    boundary_key=boundary_key,
+                    approval_id=approval.approval_id,
+                    granted_at=utc_now_timestamp(),
+                )
+            )
+        outcome = self.skill_install(
+            correlation_id=correlation_id,
+            task_id=approval.task_id,
+            run_id=approval.run_id,
+            source_path=str(scope.get("source_path", "")),
+            target_scope=str(scope.get("target_scope", "")),
+            target_role=scope.get("target_role")
+            if isinstance(scope.get("target_role"), str)
+            else None,
+            install_mode=str(scope.get("install_mode", "")),
+            reason=str(scope.get("reason", approval.description)),
+        )
+        if outcome.status != "completed":
+            raise ValueError(outcome.summary)
 
     def _checkpoint_controller_for_run(
         self,

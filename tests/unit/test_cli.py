@@ -203,6 +203,45 @@ class CliTests(unittest.TestCase):
         self.assertIn("logical_path=artifacts/repo_summary.md", output)
         self.assertIn("persistence_class=run", output)
 
+    def test_handle_skill_install_renders_runtime_result(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "status": "completed",
+                "target_path": "/tmp/skills/repo-map",
+                "approval_required": False,
+                "summary": "Installed skill.",
+                "validation": {
+                    "status": "pass",
+                    "findings": [],
+                    "has_scripts": False,
+                    "total_bytes": 20,
+                    "file_count": 1,
+                },
+                "artifacts": ["workspace/artifacts/skill-installs/repo-map/install-summary.json"],
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_skill_install(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                    source_path="workspace/repo-map",
+                    target_scope="primary_agent",
+                    target_role=None,
+                    install_mode="fail_if_exists",
+                    reason="Needed for repeated repo mapping work.",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("status=completed", output)
+        self.assertIn("approval_required=False", output)
+        request = fake_client.requests[0]
+        self.assertEqual(request.method, "skill.install")  # type: ignore[attr-defined]
+        self.assertEqual(request.params["task_id"], "task_1")  # type: ignore[attr-defined]
+
     def test_handle_resume_renders_updated_task_snapshot(self) -> None:
         fake_client = _FakeClient()
         fake_client.response = {

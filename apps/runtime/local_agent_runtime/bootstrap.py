@@ -11,10 +11,6 @@ from apps.runtime.local_agent_runtime.recovery_service import RecoveryService
 from apps.runtime.local_agent_runtime.resume_service import ResumeService
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.runtime_server import RuntimeServer
-from apps.runtime.local_agent_runtime.subagents import (
-    ResolvedSubagentConfiguration,
-    ToolResolutionContext,
-)
 from apps.runtime.local_agent_runtime.task_runner import AgentHarness, TaskRunner
 
 from packages.config.local_agent_config.models import RuntimeConfig
@@ -31,6 +27,7 @@ from services.subagent_registry.local_agent_subagent_registry.filesystem_subagen
 from services.subagent_runtime.local_agent_subagent_runtime import (
     FileSystemSkillRegistry,
     RoleToolScopeResolver,
+    RuntimeSkillCatalog,
     RuntimeModelResolver,
 )
 
@@ -50,15 +47,15 @@ def create_runtime_server(
     model_resolver = RuntimeModelResolver(config)
     tool_scope_resolver = RoleToolScopeResolver()
     skill_registry = FileSystemSkillRegistry()
-    primary_skills = skill_registry.list_skill_descriptors_for_path(
-        Path(config.identity_path).resolve().parent / "skills"
-    )
-    resolved_subagents = _resolve_subagent_configurations(
+    skill_catalog = RuntimeSkillCatalog(
+        identity_path=config.identity_path,
         subagent_registry=subagent_registry,
         model_resolver=model_resolver,
         tool_scope_resolver=tool_scope_resolver,
         skill_registry=skill_registry,
     )
+    primary_skills = skill_catalog.load_primary_skills()
+    resolved_subagents = skill_catalog.resolve_subagents()
     primary_model_route = model_resolver.resolve_primary()
     durable_services = create_durable_runtime_services(
         config,
@@ -76,6 +73,7 @@ def create_runtime_server(
         durable_services=durable_services,
         resolved_subagents=resolved_subagents,
         primary_skills=primary_skills,
+        skill_catalog=skill_catalog,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
             model_name=primary_model_route.model,
@@ -108,30 +106,3 @@ def create_runtime_server(
         ],
     )
     return RuntimeServer(handlers=handlers)
-
-
-def _resolve_subagent_configurations(
-    *,
-    subagent_registry: FileSystemSubagentRegistry,
-    model_resolver: RuntimeModelResolver,
-    tool_scope_resolver: RoleToolScopeResolver,
-    skill_registry: FileSystemSkillRegistry,
-) -> list[ResolvedSubagentConfiguration]:
-    resolved: list[ResolvedSubagentConfiguration] = []
-    for asset_bundle in subagent_registry.list_asset_bundles():
-        definition = asset_bundle.definition
-        resolved.append(
-            ResolvedSubagentConfiguration(
-                asset_bundle=asset_bundle,
-                model_route=model_resolver.resolve_subagent(
-                    definition.role_id,
-                    definition.model_profile,
-                ),
-                tool_bindings=tool_scope_resolver.resolve_tools(
-                    definition,
-                    ToolResolutionContext(),
-                ),
-                skills=skill_registry.list_skill_descriptors(definition),
-            )
-        )
-    return resolved

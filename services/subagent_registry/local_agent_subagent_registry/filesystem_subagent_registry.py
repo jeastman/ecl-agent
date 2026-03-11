@@ -105,6 +105,7 @@ class FileSystemSubagentRegistry:
             identity_path=self._optional_file_path(role_dir / "IDENTITY.md"),
             system_prompt_path=self._optional_file_path(role_dir / "SYSTEM_PROMPT.md"),
             skills_path=self._optional_directory_path(role_dir / "skills"),
+            role_root_path=role_dir,
         )
         asset_bundle = SubagentAssetBundle(
             definition=definition,

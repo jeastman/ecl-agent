@@ -19,6 +19,11 @@ class EventType(StrEnum):
     SUBAGENT_COMPLETED = "subagent.completed"
     TOOL_CALLED = "tool.called"
     ARTIFACT_CREATED = "artifact.created"
+    SKILL_INSTALL_REQUESTED = "skill.install.requested"
+    SKILL_INSTALL_VALIDATED = "skill.install.validated"
+    SKILL_INSTALL_APPROVAL_REQUESTED = "skill.install.approval_requested"
+    SKILL_INSTALL_COMPLETED = "skill.install.completed"
+    SKILL_INSTALL_FAILED = "skill.install.failed"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
 

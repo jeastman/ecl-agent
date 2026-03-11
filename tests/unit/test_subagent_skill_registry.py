@@ -74,9 +74,7 @@ class FileSystemSkillRegistryTests(unittest.TestCase):
             Path("agents/primary-agent/skills")
         )
 
-        self.assertEqual(
-            [descriptor.skill_id for descriptor in descriptors], ["runtime-governance"]
-        )
+        self.assertIn("runtime-governance", [descriptor.skill_id for descriptor in descriptors])
 
 
 def _definition(skills_path: Path | None) -> SubagentDefinition:

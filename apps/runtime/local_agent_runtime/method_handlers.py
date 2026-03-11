@@ -22,6 +22,9 @@ from packages.protocol.local_agent_protocol.models import (
     MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeHealthResult,
+    SkillInstallParams,
+    SkillInstallResult,
+    SkillInstallValidation,
     TaskApprovalsListParams,
     TaskApprovalsListResult,
     TaskArtifactsListParams,
@@ -294,6 +297,28 @@ class MethodHandlers:
             loaded_profiles=[],
             config_sources=list(self.config_sources or [self.config.identity_path]),
             redactions=redactions,
+        )
+
+    def skill_install(self, params: dict, correlation_id: str | None) -> SkillInstallResult:
+        request = SkillInstallParams.from_dict(params)
+        outcome = self.task_runner.skill_install(
+            correlation_id=correlation_id,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            source_path=request.source_path,
+            target_scope=request.target_scope,
+            target_role=request.target_role,
+            install_mode=request.install_mode,
+            reason=request.reason,
+        )
+        return SkillInstallResult(
+            status=outcome.status,
+            target_path=outcome.target_path,
+            validation=SkillInstallValidation.from_dict(outcome.validation.to_dict()),
+            approval_required=outcome.approval_required,
+            summary=outcome.summary,
+            approval_id=outcome.approval_id,
+            artifacts=list(outcome.artifacts),
         )
 
     def _select_memory_entries(self, request: MemoryInspectParams) -> list[MemoryRecord]:

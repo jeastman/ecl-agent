@@ -119,6 +119,28 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
             scope={"kind": "memory.write", "scope": "project", "namespace": namespace},
             description=f"Allow durable memory writes in namespace {namespace} for this run",
         )
+    if context.operation_type == "skill.install":
+        metadata = context.metadata or {}
+        target_scope = str(metadata.get("target_scope") or "primary_agent")
+        target_role = str(metadata.get("target_role") or "") or None
+        install_mode = str(metadata.get("install_mode") or "fail_if_exists")
+        skill_id = str(metadata.get("skill_id") or "unknown")
+        scope = {
+            "kind": "skill.install",
+            "target_scope": target_scope,
+            "install_mode": install_mode,
+            "skill_id": skill_id,
+        }
+        boundary_key = (
+            f"skill.install:{target_scope}:{target_role or 'primary'}:{skill_id}:{install_mode}"
+        )
+        if target_role is not None:
+            scope["target_role"] = target_role
+        return BoundaryDescriptor(
+            boundary_key=boundary_key,
+            scope=scope,
+            description=f"Allow {install_mode} installation for skill {skill_id}",
+        )
     return None
 
 

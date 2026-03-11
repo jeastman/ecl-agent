@@ -374,6 +374,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(result.output_artifacts, ["workspace/artifacts/result.md"])
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
         self.assertEqual(captures["agent_kwargs"]["skills"], ["# Skill\nUse it."])
+        self.assertIn("skill-installer", _tool_names(captures["agent_kwargs"]["tools"]))
         self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "Researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
         self.assertIn("subagent.started", [event_type for event_type, _ in events])

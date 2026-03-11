@@ -13,6 +13,7 @@ from apps.cli.local_agent_cli.renderers import (
     render_event_timeline,
     render_health,
     render_memory,
+    render_skill_install,
     render_task_created,
     render_task_snapshot,
 )
@@ -22,6 +23,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
+    METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -31,6 +33,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
     MemoryInspectParams,
+    SkillInstallParams,
     TaskApprovalsListParams,
     TaskApproveParams,
     TaskDiagnosticsListParams,
@@ -126,6 +129,26 @@ def build_parser() -> argparse.ArgumentParser:
     memory.add_argument("--namespace", help="Optional namespace filter.")
 
     subparsers.add_parser("config", help="Inspect redacted runtime config.")
+    skill_install = subparsers.add_parser(
+        "skill-install", help="Install a staged skill through the runtime."
+    )
+    skill_install.add_argument("task_id", help="Task identifier.")
+    skill_install.add_argument("--run-id", required=True, help="Run identifier.")
+    skill_install.add_argument("--source-path", required=True, help="Sandbox source path.")
+    skill_install.add_argument(
+        "--target-scope",
+        required=True,
+        choices=("primary_agent", "subagent"),
+        help="Managed install scope.",
+    )
+    skill_install.add_argument("--target-role", help="Subagent role when target scope is subagent.")
+    skill_install.add_argument(
+        "--install-mode",
+        choices=("fail_if_exists", "replace"),
+        default="fail_if_exists",
+        help="Conflict handling mode.",
+    )
+    skill_install.add_argument("--reason", required=True, help="Reason for installation.")
     return parser
 
 
@@ -340,6 +363,37 @@ def handle_config(config_path: str) -> int:
     return 0
 
 
+def handle_skill_install(
+    config_path: str,
+    task_id: str,
+    run_id: str,
+    source_path: str,
+    target_scope: str,
+    target_role: str | None,
+    install_mode: str,
+    reason: str,
+) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_SKILL_INSTALL,
+        params=SkillInstallParams(
+            task_id=task_id,
+            run_id=run_id,
+            source_path=source_path,
+            target_scope=target_scope,
+            target_role=target_role,
+            install_mode=install_mode,
+            reason=reason,
+        ).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_skill_install(payload["result"]):
+        print(line)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
@@ -402,6 +456,17 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "config":
             return handle_config(config_path=config_path)
+        if args.command == "skill-install":
+            return handle_skill_install(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+                source_path=args.source_path,
+                target_scope=args.target_scope,
+                target_role=args.target_role,
+                install_mode=args.install_mode,
+                reason=args.reason,
+            )
     except RuntimeClientError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

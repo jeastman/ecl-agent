@@ -86,6 +86,14 @@ class RuntimePolicyEngine:
         if context.operation_type == "memory.write":
             return context.memory_scope == "project"
 
+        if context.operation_type == "skill.install":
+            metadata = context.metadata or {}
+            return (
+                bool(metadata.get("has_scripts"))
+                or bool(metadata.get("overwrite"))
+                or (metadata.get("install_mode") == "replace")
+            )
+
         return False
 
     def _is_denied(self, context: OperationContext) -> bool:
@@ -104,6 +112,9 @@ class RuntimePolicyEngine:
                 "identity."
             ):
                 return True
+        if context.operation_type == "skill.install":
+            path_scope = context.path_scope or ""
+            return ".." in path_scope
 
         return False
 
@@ -117,6 +128,8 @@ class RuntimePolicyEngine:
             return f"Command class {command_class} is denied by the runtime policy."
         if context.operation_type == "memory.write":
             return "Identity memory mutation is denied by the runtime policy."
+        if context.operation_type == "skill.install":
+            return "Skill installation target is denied by the runtime policy."
         return "Operation is denied by the runtime policy."
 
 

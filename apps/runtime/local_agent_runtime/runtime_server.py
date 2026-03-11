@@ -10,6 +10,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
+    METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -146,6 +147,15 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.memory_inspect(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_SKILL_INSTALL:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.skill_install(request.params, correlation_id),
                     ),
                     [],
                 )

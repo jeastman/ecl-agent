@@ -103,6 +103,18 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
     if event_type == "artifact.created":
         artifact = payload.get("artifact", {})
         return str(artifact.get("logical_path") or "<unknown-artifact>")
+    if event_type == "skill.install.requested":
+        return str(payload.get("source_path") or "skill install requested")
+    if event_type == "skill.install.validated":
+        validation = payload.get("validation", {})
+        return f"status={validation.get('status', 'unknown')}"
+    if event_type == "skill.install.approval_requested":
+        approval = payload.get("approval", {})
+        return str(approval.get("approval_id") or "skill install approval requested")
+    if event_type == "skill.install.completed":
+        return str(payload.get("target_path") or "skill install completed")
+    if event_type == "skill.install.failed":
+        return str(payload.get("summary") or "skill install failed")
     if event_type == "task.completed":
         return str(payload.get("summary") or "success")
     if event_type == "task.failed":
@@ -125,6 +137,22 @@ def render_artifacts(artifacts: list[dict[str, Any]]) -> list[str]:
         if artifact.get("display_name"):
             line += f" display_name={artifact['display_name']}"
         lines.append(line)
+    return lines
+
+
+def render_skill_install(result: dict[str, Any]) -> list[str]:
+    lines = [
+        f"status={result['status']}",
+        f"target_path={result['target_path']}",
+        f"approval_required={result['approval_required']}",
+        f"validation_status={result['validation']['status']}",
+        f"summary={result['summary']}",
+    ]
+    if result.get("approval_id") is not None:
+        lines.append(f"approval_id={result['approval_id']}")
+    lines.append(f"finding_count={len(result['validation'].get('findings', []))}")
+    for artifact in result.get("artifacts", []):
+        lines.append(f"artifact={artifact}")
     return lines
 
 

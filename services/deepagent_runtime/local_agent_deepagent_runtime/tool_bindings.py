@@ -21,6 +21,7 @@ _EXECUTE_CAPABILITIES = {"execute_command", "commands", "sandbox.execute"}
 _MEMORY_CAPABILITIES = {"memory_lookup", "memory", "memory.read"}
 _PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
 _ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
+_SKILL_INSTALL_CAPABILITIES = {"skill_installer", "skills.install"}
 
 
 class FilesystemScopeError(PermissionError):
@@ -37,6 +38,7 @@ class SandboxToolBindings:
     on_event: EventCallback | None = None
     allowed_capabilities: list[str] | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
+    skill_install_handler: Callable[..., dict[str, Any]] | None = None
     _written_paths: list[str] | None = None
 
     def read_file(self, path: str) -> str:
@@ -183,6 +185,38 @@ class SandboxToolBindings:
         )
         return [self._artifact_payload(artifact) for artifact in artifacts]
 
+    def skill_installer(
+        self,
+        source_path: str,
+        target_scope: str,
+        target_role: str | None,
+        install_mode: str,
+        reason: str,
+    ) -> dict[str, Any]:
+        self._ensure_allowed("skill_installer", _SKILL_INSTALL_CAPABILITIES)
+        if self.skill_install_handler is None:
+            raise ValueError("skill_installer is not configured for this runtime")
+        self._emit(
+            "tool.called",
+            {
+                "tool": "skill_installer",
+                "arguments": {
+                    "source_path": source_path,
+                    "target_scope": target_scope,
+                    "target_role": target_role,
+                    "install_mode": install_mode,
+                    "reason": reason,
+                },
+            },
+        )
+        return self.skill_install_handler(
+            source_path=source_path,
+            target_scope=target_scope,
+            target_role=target_role,
+            install_mode=install_mode,
+            reason=reason,
+        )
+
     def as_langchain_tools(
         self,
         resolved_bindings: tuple[ResolvedToolBinding, ...],
@@ -269,6 +303,32 @@ class SandboxToolBindings:
                 return self.artifact_inspect()
 
             tools.append(artifact_inspect)
+
+        if "skill_installer" in allowed_tool_ids:
+
+            @tool("skill-installer")
+            def skill_installer(
+                source_path: str,
+                target_scope: str,
+                target_role: str | None = None,
+                install_mode: str = "fail_if_exists",
+                reason: str = "",
+            ) -> dict[str, Any]:
+                """Install a staged skill into a managed runtime skill scope."""
+                self._ensure_filesystem_scope(
+                    source_path,
+                    filesystem_scopes or ("workspace", "scratch"),
+                    operation="skill_installer",
+                )
+                return self.skill_installer(
+                    source_path,
+                    target_scope,
+                    target_role,
+                    install_mode,
+                    reason,
+                )
+
+            tools.append(skill_installer)
 
         return tools
 

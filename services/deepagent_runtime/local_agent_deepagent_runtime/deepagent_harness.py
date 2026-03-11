@@ -116,6 +116,7 @@ class LangChainDeepAgentHarness:
             on_event=callback,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=interrupt_bridge.authorize,
+            skill_install_handler=request.skill_install_handler,
         )
         try:
             if request.checkpoint_controller is not None:
@@ -199,6 +200,7 @@ class LangChainDeepAgentHarness:
         primary_tools = tools.as_langchain_tools(
             _primary_tool_bindings(),
             memory_scopes=("project", "run_state", "identity"),
+            filesystem_scopes=("workspace", "scratch"),
         )
         agent = self._agent_factory(
             model=model,
@@ -263,6 +265,11 @@ def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
         ResolvedToolBinding(
             tool_id="artifact_inspect",
             capability_aliases=("artifact_inspect", "artifacts", "artifacts.read"),
+            requires_policy=False,
+        ),
+        ResolvedToolBinding(
+            tool_id="skill_installer",
+            capability_aliases=("skill_installer", "skills.install"),
             requires_policy=False,
         ),
     )
