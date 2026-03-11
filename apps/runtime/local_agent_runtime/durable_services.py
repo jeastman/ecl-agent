@@ -1,0 +1,79 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from pathlib import Path
+
+from packages.config.local_agent_config.models import RuntimeConfig
+from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_store import (
+    CheckpointStore,
+    SQLiteCheckpointStore,
+)
+from services.checkpoint_service.local_agent_checkpoint_service.thread_registry import (
+    SQLiteThreadRegistry,
+    ThreadRegistry,
+)
+from services.memory_service.local_agent_memory_service.memory_store import (
+    MemoryStore,
+    SQLiteMemoryStore,
+)
+from services.observability_service.local_agent_observability_service.diagnostic_store import (
+    DiagnosticStore,
+    SQLiteDiagnosticStore,
+)
+from services.observability_service.local_agent_observability_service.event_store import (
+    EventStore,
+    SQLiteEventStore,
+)
+from services.observability_service.local_agent_observability_service.run_metrics_store import (
+    RunMetricsStore,
+    SQLiteRunMetricsStore,
+)
+from services.policy_service.local_agent_policy_service.approval_store import (
+    ApprovalStore,
+    SQLiteApprovalStore,
+)
+from services.policy_service.local_agent_policy_service.policy_engine import (
+    PlaceholderPolicyEngine,
+    PolicyEngine,
+)
+
+
+@dataclass(slots=True)
+class DurableRuntimeServices:
+    root_path: str
+    database_path: str
+    checkpoint_store: CheckpointStore
+    thread_registry: ThreadRegistry
+    memory_store: MemoryStore
+    approval_store: ApprovalStore
+    policy_engine: PolicyEngine
+    event_store: EventStore
+    diagnostic_store: DiagnosticStore
+    run_metrics_store: RunMetricsStore
+
+
+def create_durable_runtime_services(
+    config: RuntimeConfig,
+    *,
+    runtime_root_override: str | None = None,
+) -> DurableRuntimeServices:
+    root_path = Path(runtime_root_override or config.persistence.root_path).expanduser().resolve()
+    root_path.mkdir(parents=True, exist_ok=True)
+    metadata_root = root_path / "metadata"
+    metadata_root.mkdir(parents=True, exist_ok=True)
+    database_path = metadata_root / "runtime.db"
+    database_path.touch(exist_ok=True)
+
+    thread_registry = SQLiteThreadRegistry(str(database_path))
+    return DurableRuntimeServices(
+        root_path=str(root_path),
+        database_path=str(database_path),
+        checkpoint_store=SQLiteCheckpointStore(str(database_path), thread_registry=thread_registry),
+        thread_registry=thread_registry,
+        memory_store=SQLiteMemoryStore(str(database_path)),
+        approval_store=SQLiteApprovalStore(str(database_path)),
+        policy_engine=PlaceholderPolicyEngine(),
+        event_store=SQLiteEventStore(str(database_path)),
+        diagnostic_store=SQLiteDiagnosticStore(str(database_path)),
+        run_metrics_store=SQLiteRunMetricsStore(str(database_path)),
+    )

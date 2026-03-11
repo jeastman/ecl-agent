@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
+from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
 from apps.runtime.local_agent_runtime.run_state_store import RunStateStore
 from apps.runtime.local_agent_runtime.task_runner import TaskRunner
@@ -30,6 +31,7 @@ class MethodHandlers:
     event_bus: EventBus
     artifact_store: ArtifactStore
     task_runner: TaskRunner
+    durable_services: DurableRuntimeServices
 
     def runtime_health(self, correlation_id: str | None) -> RuntimeHealthResult:
         return RuntimeHealthResult(

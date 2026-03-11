@@ -46,12 +46,16 @@ class ProtocolModelTests(unittest.TestCase):
             objective="Inspect the repo",
             created_at=utc_now_timestamp(),
             updated_at=utc_now_timestamp(),
+            awaiting_approval=False,
+            is_resumable=False,
             links={"events": METHOD_TASK_LOGS_STREAM},
         )
         payload = snapshot.to_dict()
         self.assertEqual(payload["status"], "executing")
         self.assertNotIn("failure", payload)
         self.assertEqual(payload["links"]["events"], METHOD_TASK_LOGS_STREAM)
+        self.assertFalse(payload["awaiting_approval"])
+        self.assertFalse(payload["is_resumable"])
 
     def test_task_query_params_validate(self) -> None:
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")

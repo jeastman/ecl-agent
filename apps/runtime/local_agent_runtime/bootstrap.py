@@ -1,13 +1,12 @@
 from __future__ import annotations
 
 from apps.runtime.local_agent_runtime.artifact_store import InMemoryArtifactStore
+from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.runtime_server import RuntimeServer
 from apps.runtime.local_agent_runtime.task_runner import AgentHarness, TaskRunner
-from pathlib import Path
-import tempfile
 
 from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
@@ -28,7 +27,11 @@ def create_runtime_server(
 ) -> RuntimeServer:
     run_state_store = InMemoryRunStateStore()
     event_bus = InMemoryEventBus()
-    resolved_runtime_root = runtime_root or str(Path(tempfile.gettempdir()) / "local-agent-harness")
+    durable_services = create_durable_runtime_services(
+        config,
+        runtime_root_override=runtime_root,
+    )
+    resolved_runtime_root = runtime_root or config.persistence.root_path
     sandbox_factory = LocalExecutionSandboxFactory(runtime_root=resolved_runtime_root)
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)
     task_runner = TaskRunner(
@@ -36,6 +39,7 @@ def create_runtime_server(
         event_bus=event_bus,
         artifact_store=artifact_store,
         sandbox_factory=sandbox_factory,
+        durable_services=durable_services,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
             model_name=config.default_model.model,
@@ -49,5 +53,6 @@ def create_runtime_server(
         event_bus=event_bus,
         artifact_store=artifact_store,
         task_runner=task_runner,
+        durable_services=durable_services,
     )
     return RuntimeServer(handlers=handlers)

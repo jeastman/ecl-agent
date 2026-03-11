@@ -223,6 +223,11 @@ class TaskSnapshot:
     current_phase: str | None = None
     latest_summary: str | None = None
     awaiting_approval: bool | None = None
+    pending_approval_id: str | None = None
+    is_resumable: bool | None = None
+    pause_reason: str | None = None
+    checkpoint_thread_id: str | None = None
+    latest_checkpoint_id: str | None = None
     active_subagent: str | None = None
     artifact_count: int | None = None
     last_event_at: str | None = None

@@ -25,7 +25,7 @@ uv run pytest
 Observed result:
 
 ```text
-39 passed in 0.78s
+50 passed in 0.88s
 ```
 
 ## Executive Summary
@@ -40,13 +40,15 @@ The repository now implements the Milestone 0 and Milestone 1 vertical slice des
 - identity ingestion exists and is wired into runtime startup and prompt construction
 - runtime event streaming and artifact registration exist
 
-The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1:
+The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the first Milestone 2 durability substrate:
 
-- durable project memory
-- approval workflows
+- durable memory/query contracts and storage seams
+- checkpoint metadata and thread registry seams
+- persistent event/diagnostic/run-metrics storage seams
+- approval and policy storage seams
 - task cancellation
 - memory inspection
-- policy engine behavior
+- policy engine behavior beyond a placeholder runtime-owned boundary
 - sub-agent registry and real multi-role orchestration
 - model routing beyond a single default model plus unused config placeholders
 - future clients such as web
@@ -55,7 +57,8 @@ The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
-- **Milestone 2 and later:** mostly not implemented
+- **Milestone 2:** Phase 1 durability foundations implemented; later Milestone 2 behavior still mostly not implemented
+- **Milestone 3 and later:** mostly not implemented
 
 ## Status Legend
 
@@ -74,7 +77,7 @@ What exists:
 - `apps/cli` with the user-facing CLI entrypoint and runtime client
 - `apps/runtime` with runtime bootstrap, handlers, task runner, and stdio server
 - `packages/config`, `packages/identity`, `packages/observability`, `packages/protocol`, `packages/task_model`
-- `services/artifact_service`, `services/deepagent_runtime`, `services/sandbox_service`
+- `services/artifact_service`, `services/checkpoint_service`, `services/deepagent_runtime`, `services/memory_service`, `services/observability_service`, `services/policy_service`, `services/sandbox_service`
 - `agents/primary-agent/IDENTITY.md`
 - `docs/adr`, `docs/specs`, `docs/plans`, `docs/architecture`
 
@@ -83,8 +86,6 @@ What does not exist from the recommended shape in the master spec:
 - `apps/web`
 - `packages/sdk-client`
 - `packages/sdk-runtime`
-- `services/memory-service`
-- `services/policy-service`
 - `agents/subagents/*`
 - `agents/primary-agent/SYSTEM_PROMPT.md`
 - `agents/*/skills/`
@@ -240,21 +241,23 @@ Implemented lifecycle/status concepts:
 - `accepted`
 - `planning`
 - `executing`
+- `paused`
+- `awaiting_approval`
 - `completed`
 - `failed`
 
 Not implemented:
 
-- `awaitingApproval`
 - `resuming`
 - `cancelled`
 
 Important implementation detail:
 
-- `TaskStatus` defines `CREATED`, `ACCEPTED`, `PLANNING`, `EXECUTING`, `COMPLETED`, and `FAILED`.
+- `TaskStatus` defines `CREATED`, `ACCEPTED`, `PLANNING`, `EXECUTING`, `PAUSED`, `AWAITING_APPROVAL`, `COMPLETED`, and `FAILED`.
 - `RunState` is initially created with `ACCEPTED`.
 - `task.created` is emitted as an event payload/status rather than persisted as the authoritative stored status.
 - planning is represented through `current_phase` updates and `plan.updated` events, not a durable top-level `TaskStatus.PLANNING` transition.
+- `RunState` and `TaskSnapshot` now include resumability and approval-oriented fields such as `awaiting_approval`, `pending_approval_id`, `is_resumable`, `pause_reason`, `checkpoint_thread_id`, and `latest_checkpoint_id`.
 
 Evidence:
 
@@ -264,8 +267,7 @@ Evidence:
 
 Assessment:
 
-- The task model is sufficient for Milestone 1.
-- It does not yet implement the broader lifecycle and approval-oriented state model described for the future platform.
+- The task model still does not implement the full future lifecycle, but it now includes the Milestone 2 Phase 1 state extensions needed for pause/resume and approval-aware execution.
 
 ## 6. DeepAgent Adapter Boundary
 
@@ -341,14 +343,12 @@ Implemented:
 - identity ingestion via `IdentityBundle`
 - ephemeral scratch filesystem zone via sandbox roots
 - memory filesystem zone creation under the runtime root
+- durable memory record model and SQLite-backed `MemoryStore` seam under `services/memory_service`
 
 Not implemented:
 
-- durable project memory store
 - memory retrieval precedence logic
-- provenance-preserving durable memory records
 - promotion rules
-- dedicated memory service package
 - `memory.inspect` protocol method
 
 Important nuance:
@@ -359,12 +359,13 @@ Important nuance:
 Evidence:
 
 - [run_state_store.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/run_state_store.py)
-- absence of any `services/memory_service` implementation
-- absence of durable memory models or methods in `packages/protocol`
+- [memory_models.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_models.py)
+- [memory_store.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_store.py)
+- absence of durable memory inspection methods in `packages/protocol`
 
 Assessment:
 
-- Memory taxonomy exists conceptually in docs and partially in code shape, but only run-local state and identity ingestion are real today.
+- Memory taxonomy now exists in code shape with durable storage seams, but retrieval, promotion, and inspection behavior are still unfinished.
 
 ## 9. Identity and Policy
 
@@ -378,12 +379,13 @@ Implemented:
 - SHA-256 based identity version/hash generation
 - identity content injected into system prompt construction
 - config model contains a `policy` table
+- config model contains a dedicated `persistence` section
 - task request may carry `allowed_capabilities`
 - tool bindings enforce `allowed_capabilities` if provided
+- runtime bootstrap now composes a runtime-owned `PolicyEngine` boundary plus durable `ApprovalStore`
 
 Not implemented:
 
-- policy engine
 - approval thresholds or approval workflow
 - config-driven policy enforcement
 - policy-driven memory rules
@@ -392,7 +394,8 @@ Not implemented:
 Important implementation detail:
 
 - The `[policy]` table from [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml) is loaded into `RuntimeConfig.policy`.
-- That config policy is not consumed by the runtime bootstrap, task runner, harness, or sandbox.
+- The `[persistence]` table is loaded into `RuntimeConfig.persistence` and used by runtime bootstrap to compose SQLite-backed durable stores.
+- Policy is represented by a placeholder runtime-owned engine boundary in Phase 1; real policy evaluation and approval handling are still deferred.
 - Current policy enforcement is limited to per-task `allowed_capabilities` passed into `SandboxToolBindings`.
 
 Evidence:
@@ -405,7 +408,7 @@ Evidence:
 Assessment:
 
 - Identity is implemented as a real runtime concern.
-- Policy exists mostly as configuration shape and vocabulary, not as a fully implemented subsystem.
+- Policy is no longer just vocabulary: the runtime now owns policy and approval seams, but behavior remains placeholder-only.
 
 ## 10. Sub-Agent Strategy
 
@@ -495,16 +498,18 @@ Implemented:
 
 - in-memory append-only event bus per run
 - correlated runtime events with timestamps and source metadata
+- SQLite-backed persistent `EventStore`
+- SQLite-backed persistent `DiagnosticStore`
+- SQLite-backed persistent `RunMetricsStore`
 - stderr log emission via `log_record`
 - stderr event emission via `emit_event`
 - `task.logs.stream` history replay
 
 Not implemented:
 
-- persistent event store
 - tracing integrations
 - explicit run trace model
-- richer diagnostics pipeline
+- richer diagnostics pipeline beyond foundational durable records
 
 Evidence:
 
@@ -515,7 +520,7 @@ Evidence:
 Assessment:
 
 - Eventing is implemented and central to the runtime.
-- Observability beyond logs and event emission remains minimal.
+- Milestone 2 Phase 1 observability foundations are now present, but higher-level diagnostics and trace behavior remain minimal.
 
 ## 14. Artifact Model
 
@@ -615,14 +620,20 @@ Verified deliverables:
 
 ### 16.3 Milestone 2
 
-**Observed status:** `Not Implemented`, except for a few structural placeholders.
+**Observed status:** `Partial`.
 
-Absent or incomplete:
+Implemented in Phase 1:
 
-- durable project memory
-- checkpoints/resumption
-- approval contract and policy engine
-- richer observability
+- persistent service packages for checkpoints, memory, policy, and observability
+- runtime-owned SQLite-backed seams for checkpoint metadata, thread bindings, approvals, memory records, persisted events, diagnostics, and run metrics
+- persistence config and runtime bootstrap wiring
+- pause/resume/approval-oriented run state extensions
+
+Still absent or incomplete:
+
+- real checkpoint-backed resume behavior
+- approval workflow and policy enforcement
+- richer observability behavior on top of the new stores
 - memory inspection support
 
 ### 16.4 Milestone 3
@@ -669,10 +680,10 @@ These are the main verified gaps between the current implementation and the broa
 
 1. Missing protocol methods: `task.cancel`, `task.approve`, `config.get`, `memory.inspect`.
 2. Missing event types: `subagent.completed`, `approval.requested`, `memory.updated`.
-3. No durable project memory implementation.
-4. No memory service package or promotion/provenance model.
-5. No policy engine; config policy is loaded but not enforced.
-6. No approval workflow or approval-aware task lifecycle state.
+3. No end-to-end durable project memory retrieval, promotion, or inspection behavior.
+4. No checkpoint-backed resume execution flow, despite the new metadata and thread-registry seams.
+5. No policy enforcement or approval workflow, despite the new runtime-owned policy and approval boundaries.
+6. No approval request events or CLI approval handling yet.
 7. No sub-agent registry or multi-role orchestration.
 8. No actual use of `subagent_model_overrides` for model routing.
 9. No skill discovery or loading subsystem.

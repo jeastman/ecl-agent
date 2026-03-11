@@ -21,6 +21,8 @@ class TaskStatus(StrEnum):
     ACCEPTED = "accepted"
     PLANNING = "planning"
     EXECUTING = "executing"
+    PAUSED = "paused"
+    AWAITING_APPROVAL = "awaiting_approval"
     COMPLETED = "completed"
     FAILED = "failed"
 
@@ -55,6 +57,12 @@ class RunState:
     artifact_count: int = 0
     last_event_at: str | None = None
     failure: FailureInfo | None = None
+    awaiting_approval: bool = False
+    pending_approval_id: str | None = None
+    is_resumable: bool = False
+    pause_reason: str | None = None
+    checkpoint_thread_id: str | None = None
+    latest_checkpoint_id: str | None = None
     links: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

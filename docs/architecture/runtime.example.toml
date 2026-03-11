@@ -16,7 +16,12 @@ model = "gpt-5"
 provider = "openai"
 model = "gpt-5-mini"
 
+[persistence]
+root_path = "~/.local-agent-harness"
+metadata_backend = "sqlite"
+event_backend = "sqlite"
+diagnostic_backend = "sqlite"
+
 [policy]
 approval_mode = "placeholder"
 sandbox_mode = "placeholder"
-

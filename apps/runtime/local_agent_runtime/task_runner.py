@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
+from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
 from apps.runtime.local_agent_runtime.run_state_store import RunStateStore
 from packages.protocol.local_agent_protocol.models import (
@@ -106,12 +107,14 @@ class TaskRunner:
         artifact_store: ArtifactStore,
         sandbox_factory: LocalExecutionSandboxFactory,
         agent_harness: AgentHarness,
+        durable_services: DurableRuntimeServices | None = None,
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
         self._artifact_store = artifact_store
         self._sandbox_factory = sandbox_factory
         self._agent_harness = agent_harness
+        self._durable_services = durable_services
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
 
     def start_run(
@@ -141,6 +144,8 @@ class TaskRunner:
             success_criteria=list(success_criteria or []),
             current_phase="accepted",
             latest_summary="Task accepted by runtime.",
+            awaiting_approval=False,
+            is_resumable=False,
             links={
                 "artifacts": "task.artifacts.list",
                 "events": "task.logs.stream",
@@ -205,6 +210,13 @@ class TaskRunner:
                 ),
             )
         except Exception as exc:
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="agent_harness_error",
+                message=str(exc),
+                details={"phase": "execute"},
+            )
             result = AgentExecutionResult(
                 success=False,
                 summary="Agent harness raised an unexpected error.",
@@ -267,6 +279,13 @@ class TaskRunner:
             )
         else:
             failed_at = utc_now_timestamp()
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="task_failure",
+                message=result.error_message or result.summary,
+                details={"summary": result.summary},
+            )
             self._run_state_store.update(
                 task_id,
                 run_id,
@@ -309,6 +328,12 @@ class TaskRunner:
             workspace_roots=state.workspace_roots or None,
             current_phase=state.current_phase,
             latest_summary=state.latest_summary,
+            awaiting_approval=state.awaiting_approval,
+            pending_approval_id=state.pending_approval_id,
+            is_resumable=state.is_resumable,
+            pause_reason=state.pause_reason,
+            checkpoint_thread_id=state.checkpoint_thread_id,
+            latest_checkpoint_id=state.latest_checkpoint_id,
             active_subagent=state.active_subagent,
             artifact_count=state.artifact_count,
             last_event_at=state.last_event_at,
@@ -341,20 +366,21 @@ class TaskRunner:
         source: EventSource,
         payload: dict[str, Any],
     ) -> None:
-        self._event_bus.publish(
-            RuntimeEvent(
-                event=EventEnvelope(
-                    event_id=new_event_id(),
-                    event_type=event_type,
-                    timestamp=timestamp,
-                    correlation_id=correlation_id,
-                    task_id=task_id,
-                    run_id=run_id,
-                    source=source,
-                    payload=payload,
-                )
+        runtime_event = RuntimeEvent(
+            event=EventEnvelope(
+                event_id=new_event_id(),
+                event_type=event_type,
+                timestamp=timestamp,
+                correlation_id=correlation_id,
+                task_id=task_id,
+                run_id=run_id,
+                source=source,
+                payload=payload,
             )
         )
+        self._event_bus.publish(runtime_event)
+        if self._durable_services is not None:
+            self._durable_services.event_store.append_event(runtime_event.event)
 
     def _handle_harness_event(
         self,
@@ -392,6 +418,25 @@ class TaskRunner:
             timestamp=timestamp,
             source=_source_for_harness_event(event_type, payload),
             payload=payload,
+        )
+
+    def _append_diagnostic(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        kind: str,
+        message: str,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        if self._durable_services is None:
+            return
+        self._durable_services.diagnostic_store.append_diagnostic(
+            task_id=task_id,
+            run_id=run_id,
+            kind=kind,
+            message=message,
+            details=details or {},
         )
 
 
