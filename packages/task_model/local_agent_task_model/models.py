@@ -16,6 +16,7 @@ class EventType(StrEnum):
     RECOVERY_DISCOVERED = "recovery.discovered"
     PLAN_UPDATED = "plan.updated"
     SUBAGENT_STARTED = "subagent.started"
+    SUBAGENT_COMPLETED = "subagent.completed"
     TOOL_CALLED = "tool.called"
     ARTIFACT_CREATED = "artifact.created"
     TASK_COMPLETED = "task.completed"

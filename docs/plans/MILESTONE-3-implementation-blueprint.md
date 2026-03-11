@@ -2,7 +2,7 @@
 
 Deep Agent Native Subagent Integration
 
-This blueprint translates the Milestone-3 specification into an implementation plan for the current codebase. It is grounded in the project’s present state: Milestone-2 is complete, subagent support is still largely absent, config already anticipates subagent model overrides, `subagent.started` exists as a placeholder, and the DeepAgent adapter remains properly isolated behind project-owned ports.
+This blueprint translates the Milestone-3 specification into an implementation plan for the codebase as it stood at the start of Milestone 3 work: Milestone-2 was complete, subagent support was still largely absent, config already anticipated subagent model overrides, `subagent.started` existed only as a placeholder, and the DeepAgent adapter remained properly isolated behind project-owned ports.
 
 The key architectural constraint for this milestone is that the project must **use LangChain Deep Agent’s native subagent mechanism**, while preserving the project’s own bounded concepts, runtime ownership, and adapter containment. The runtime owns role definitions, policy, model routing, tool scoping, and observability; the adapter compiles those definitions into Deep Agent-native subagents. This preserves the Triadic Lens and respects the existing architecture and ADR direction.
 
@@ -518,7 +518,7 @@ Add the missing event type to:
 
 ### 14.2 Upgrade `subagent.started`
 
-Today it is effectively a placeholder. Replace the synthetic single-role behavior with real role data derived from the executing Deep Agent subagent.
+At planning time it was effectively a placeholder. Phase 4 replaces the synthetic single-role behavior with real role data derived from the executing Deep Agent subagent.
 
 Suggested payload for `subagent.started`:
 

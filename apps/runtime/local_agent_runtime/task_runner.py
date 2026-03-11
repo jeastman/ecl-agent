@@ -430,6 +430,7 @@ class TaskRunner:
                 if checkpoint_controller is not None
                 else state.latest_checkpoint_id
             ),
+            active_subagent=None,
         )
         self._publish(
             task_id=task_id,
@@ -579,6 +580,7 @@ class TaskRunner:
                     pending_approval_id=result.pending_approval_id,
                     is_resumable=True,
                     pause_reason=result.pause_reason or "awaiting approval",
+                    active_subagent=None,
                 )
             else:
                 self._run_state_store.update(
@@ -592,6 +594,7 @@ class TaskRunner:
                     last_event_at=paused_at,
                     is_resumable=True,
                     pause_reason=result.pause_reason or "execution paused",
+                    active_subagent=None,
                 )
                 self._publish(
                     task_id=task_id,
@@ -622,6 +625,7 @@ class TaskRunner:
                 last_event_at=completed_at,
                 is_resumable=False,
                 pause_reason=None,
+                active_subagent=None,
             )
             self._publish(
                 task_id=task_id,
@@ -669,6 +673,7 @@ class TaskRunner:
             pending_approval_id=None,
             is_resumable=False,
             pause_reason=None,
+            active_subagent=None,
         )
         self._publish(
             task_id=task_id,
@@ -738,6 +743,9 @@ class TaskRunner:
             role = payload.get("role")
             if isinstance(role, str) and role.strip():
                 updates["active_subagent"] = role.strip()
+        elif event_type == EventType.SUBAGENT_COMPLETED.value:
+            updates["current_phase"] = "executing"
+            updates["active_subagent"] = None
         summary = payload.get("summary")
         if isinstance(summary, str) and summary.strip():
             updates["latest_summary"] = summary.strip()
@@ -939,11 +947,15 @@ class TaskRunner:
 
 
 def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> EventSource:
-    if event_type == EventType.SUBAGENT_STARTED.value:
+    if event_type in {
+        EventType.SUBAGENT_STARTED.value,
+        EventType.SUBAGENT_COMPLETED.value,
+    }:
+        role = str(payload.get("role", "subagent"))
         return EventSource(
             kind=EventSourceKind.SUBAGENT,
-            role=str(payload.get("role", "primary")),
-            name=str(payload.get("name", "primary-agent")),
+            role=role,
+            name=role,
             component="langchain-deepagent-harness",
         )
     if event_type == EventType.TOOL_CALLED.value:

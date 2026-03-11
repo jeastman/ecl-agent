@@ -132,7 +132,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             get_payload = get_response.to_dict()
             self.assertEqual(get_payload["result"]["task"]["task_id"], task_id)
             self.assertEqual(get_payload["result"]["task"]["artifact_count"], 1)
-            self.assertEqual(get_payload["result"]["task"]["active_subagent"], "primary")
+            self.assertNotIn("active_subagent", get_payload["result"]["task"])
 
             artifacts_request = JsonRpcRequest(
                 method=METHOD_TASK_ARTIFACTS_LIST,
@@ -158,7 +158,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             event_types = [event.event.event_type for event in stream_events]
             self.assertEqual(event_types[0:2], ["task.created", "task.started"])
             self.assertIn("plan.updated", event_types)
-            self.assertIn("subagent.started", event_types)
+            self.assertNotIn("subagent.started", event_types)
+            self.assertNotIn("subagent.completed", event_types)
             self.assertIn("artifact.created", event_types)
             self.assertEqual(event_types[-1], "task.completed")
             artifact_event = next(
@@ -223,6 +224,34 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(researcher["model"]["model_name"], "gpt-5-mini")
             self.assertTrue((workspace_root / "artifacts" / "phase3-result.md").is_file())
+
+            logs_request = JsonRpcRequest(
+                method=METHOD_TASK_LOGS_STREAM,
+                params={
+                    "task_id": payload["task_id"],
+                    "run_id": payload["run_id"],
+                    "include_history": True,
+                },
+                id="phase3-logs",
+                correlation_id=new_correlation_id(),
+            )
+            logs_response, stream_events = server.handle_line(json.dumps(logs_request.to_dict()))
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            started_event = next(
+                event.event
+                for event in stream_events
+                if event.event.event_type == "subagent.started"
+            )
+            completed_event = next(
+                event.event
+                for event in stream_events
+                if event.event.event_type == "subagent.completed"
+            )
+            self.assertEqual(started_event.payload["role"], "researcher")
+            self.assertEqual(started_event.payload["model_profile"], "researcher")
+            self.assertEqual(started_event.payload["objective"], "Inspect the repo")
+            self.assertEqual(completed_event.payload["role"], "researcher")
+            self.assertEqual(completed_event.payload["outcome"], "success")
 
     def test_runtime_server_streams_events_on_stdout_after_ack(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -960,12 +989,18 @@ def _network_denied_harness() -> _NetworkDeniedHarness:
 class _CapturingCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
         self._tools = kwargs["tools"]
+        self._subagents = kwargs.get("subagents") or []
         self._captures = captures
         captures["agent_kwargs"] = kwargs
 
     def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
         self._captures["invoke_payload"] = input
         self._captures["invoke_config"] = config
+        for subagent in self._subagents:
+            if subagent.get("name") == "researcher":
+                for middleware in subagent.get("middleware", []):
+                    middleware.wrap_model_call(_FakeModelRequest(), lambda request: {"ok": True})
+                break
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         write_tool.invoke(
             {
@@ -974,6 +1009,10 @@ class _CapturingCompiledAgent:
             }
         )
         return {"messages": [{"role": "assistant", "content": "Phase 3 execution complete."}]}
+
+
+class _FakeModelRequest:
+    system_message = None
 
 
 if __name__ == "__main__":

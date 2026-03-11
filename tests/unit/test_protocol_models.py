@@ -215,6 +215,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["type"], "runtime.event")
         self.assertEqual(payload["protocol_version"], PROTOCOL_VERSION)
         self.assertEqual(payload["event"]["source"]["component"], "tests")
+        self.assertEqual(EventType.SUBAGENT_COMPLETED.value, "subagent.completed")
 
 
 if __name__ == "__main__":

@@ -35,6 +35,7 @@ class SubagentCompiler:
         *,
         resolved_subagents: list[ResolvedSubagentConfiguration],
         identity_bundle_text: str,
+        task_objective: str,
         tool_bindings: SandboxToolBindings,
         on_event: EventCallback | None = None,
     ) -> list[SubAgent]:
@@ -56,6 +57,8 @@ class SubagentCompiler:
                     _SubagentEventMiddleware(
                         role=definition.role_id,
                         agent_name=definition.name,
+                        model_profile=resolved.model_route.profile_name,
+                        objective=task_objective,
                         on_event=on_event,
                     )
                 )
@@ -108,12 +111,23 @@ def _normalize_memory_scopes(scopes: tuple[str, ...]) -> tuple[str, ...]:
 
 
 class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
-    def __init__(self, *, role: str, agent_name: str, on_event: EventCallback) -> None:
+    def __init__(
+        self,
+        *,
+        role: str,
+        agent_name: str,
+        model_profile: str,
+        objective: str,
+        on_event: EventCallback,
+    ) -> None:
         super().__init__()
         self.role = role
         self.agent_name = agent_name
+        self.model_profile = model_profile
+        self.objective = objective
         self.on_event = on_event
         self._emitted = False
+        self._completed = False
 
     def wrap_model_call(
         self,
@@ -125,9 +139,20 @@ class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
                 "subagent.started",
                 {
                     "role": self.role,
-                    "name": self.agent_name,
-                    "summary": f"Delegated execution started for {self.role}.",
+                    "model_profile": self.model_profile,
+                    "objective": self.objective,
                 },
             )
             self._emitted = True
-        return handler(request)
+        response = handler(request)
+        if not self._completed:
+            self.on_event(
+                "subagent.completed",
+                {
+                    "role": self.role,
+                    "summary": f"{self.agent_name} completed delegated execution.",
+                    "outcome": "success",
+                },
+            )
+            self._completed = True
+        return response

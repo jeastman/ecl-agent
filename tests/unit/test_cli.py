@@ -84,7 +84,6 @@ class CliTests(unittest.TestCase):
                     "objective": "Inspect the repo",
                     "current_phase": "completed",
                     "latest_summary": "Summary created.",
-                    "active_subagent": "primary",
                     "artifact_count": 1,
                     "failure": {"message": "ignored for completed"},
                 }
@@ -101,7 +100,6 @@ class CliTests(unittest.TestCase):
         self.assertEqual(exit_code, 0)
         self.assertIn("status=completed", stdout.getvalue())
         self.assertIn("latest_summary=Summary created.", stdout.getvalue())
-        self.assertIn("active_subagent=primary", stdout.getvalue())
         self.assertIn("artifact_count=1", stdout.getvalue())
 
     def test_handle_logs_renders_stream_ack_and_events(self) -> None:
@@ -118,6 +116,28 @@ class CliTests(unittest.TestCase):
                 {
                     "type": "runtime.event",
                     "event": {"event_type": "task.started", "payload": {}},
+                },
+                {
+                    "type": "runtime.event",
+                    "event": {
+                        "event_type": "subagent.started",
+                        "payload": {
+                            "role": "researcher",
+                            "model_profile": "researcher",
+                            "objective": "Inspect the repository structure.",
+                        },
+                    },
+                },
+                {
+                    "type": "runtime.event",
+                    "event": {
+                        "event_type": "subagent.completed",
+                        "payload": {
+                            "role": "researcher",
+                            "summary": "Research complete.",
+                            "outcome": "success",
+                        },
+                    },
                 },
                 {
                     "type": "runtime.event",
@@ -141,7 +161,15 @@ class CliTests(unittest.TestCase):
         lines = output.strip().splitlines()
         self.assertIn("stream_open=True", lines[0])
         self.assertEqual(lines[1], "[task.started] execution started")
-        self.assertEqual(lines[2], "[artifact.created] artifacts/repo_summary.md")
+        self.assertEqual(
+            lines[2],
+            "[subagent.started] researcher model_profile=researcher objective=Inspect the repository structure.",
+        )
+        self.assertEqual(
+            lines[3],
+            "[subagent.completed] researcher outcome=success summary=Research complete.",
+        )
+        self.assertEqual(lines[4], "[artifact.created] artifacts/repo_summary.md")
 
     def test_handle_artifacts_renders_runtime_artifact_metadata(self) -> None:
         fake_client = _FakeClient()

@@ -193,6 +193,7 @@ class SubagentCompilerTests(unittest.TestCase):
         compiled = compiler.compile_subagents(
             resolved_subagents=[resolved],
             identity_bundle_text="Primary identity",
+            task_objective="Inspect the repository",
             tool_bindings=bindings,
         )
 
@@ -200,9 +201,7 @@ class SubagentCompilerTests(unittest.TestCase):
         self.assertEqual(compiled[0]["name"], "researcher")
         self.assertIn("Researcher identity", compiled[0]["system_prompt"])
         self.assertEqual(captures, [("gpt-5-mini", "openai")])
-        self.assertEqual(
-            _tool_names(compiled[0]["tools"]), ["list_files", "read_file"]
-        )
+        self.assertEqual(_tool_names(compiled[0]["tools"]), ["list_files", "read_file"])
         self.assertEqual(compiled[0]["skills"], ["# Skill\nFollow the skill."])
 
     def test_compiler_preserves_multi_role_model_tool_and_skill_isolation(self) -> None:
@@ -243,14 +242,13 @@ class SubagentCompilerTests(unittest.TestCase):
                 ),
             ],
             identity_bundle_text="Primary identity",
+            task_objective="Inspect the repository",
             tool_bindings=bindings,
         )
 
         self.assertEqual(len(compiled), 2)
         self.assertEqual(captures, [("gpt-5-mini", "openai"), ("gpt-5-coder", "openai")])
-        self.assertEqual(
-            _tool_names(compiled[0]["tools"]), ["list_files", "read_file"]
-        )
+        self.assertEqual(_tool_names(compiled[0]["tools"]), ["list_files", "read_file"])
         self.assertEqual(
             _tool_names(compiled[1]["tools"]),
             ["execute_command", "list_files", "read_file", "write_file"],
@@ -289,6 +287,7 @@ class SubagentCompilerTests(unittest.TestCase):
                     )
                 ],
                 identity_bundle_text="Primary identity",
+                task_objective="Inspect the repository",
                 tool_bindings=bindings,
             )
 
@@ -344,11 +343,21 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
         self.assertIn("subagent.started", [event_type for event_type, _ in events])
+        self.assertIn("subagent.completed", [event_type for event_type, _ in events])
         self.assertTrue(
             any(
-                "Delegated execution started" in str(payload.get("summary", ""))
+                payload.get("role") == "researcher"
+                and payload.get("model_profile") == "researcher"
+                and payload.get("objective") == "Inspect the repository"
                 for event_type, payload in events
                 if event_type == "subagent.started"
+            )
+        )
+        self.assertTrue(
+            any(
+                payload.get("role") == "researcher" and payload.get("outcome") == "success"
+                for event_type, payload in events
+                if event_type == "subagent.completed"
             )
         )
 

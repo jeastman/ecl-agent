@@ -58,15 +58,15 @@ The main remaining gaps against the spec are:
 
 - the recommended future-client structure remains only partially realized (`apps/web`, `packages/sdk-client`, and `packages/sdk-runtime` do not exist)
 - the protocol surface still omits `task.cancel`
-- the event vocabulary still omits `subagent.completed` and `memory.updated`
-- richer lifecycle projection and follow-on observability for multi-agent execution remain incomplete
+- the event vocabulary still omits `memory.updated`
+- richer web/operator observability beyond the runtime and CLI remains incomplete
 
 The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
 - **Milestone 2:** implemented as the durable, resumable, governed, and inspectable single-agent runtime baseline
-- **Milestone 3:** partially implemented
+- **Milestone 3:** implemented
 - **Milestone 4 and later:** mostly not implemented
 
 In master-spec terms, the repository is **substantially aligned** with the intended architecture, but it is **not yet fully compliant** with every acceptance item in section 28.
@@ -197,6 +197,7 @@ Implemented and emitted:
 - `recovery.discovered`
 - `plan.updated`
 - `subagent.started`
+- `subagent.completed`
 - `tool.called`
 - `artifact.created`
 - `task.completed`
@@ -210,7 +211,6 @@ Evidence:
 
 Specified by the master spec but not implemented:
 
-- `subagent.completed`
 - `memory.updated`
 
 ### 4.3 Envelope shape and correlation
@@ -390,7 +390,7 @@ Assessment:
 
 **Spec expectation:** identity bundle loading, controlled policy/config inputs, policy influence on prompt construction, tool exposure, sandbox access, memory persistence, and approvals.
 
-**Observed implementation:** `Partial`.
+**Observed implementation:** `Implemented` for the Milestone 3 runtime scope.
 
 Implemented:
 
@@ -449,18 +449,17 @@ What exists:
 - manifest validation for role IDs, tool scopes, memory scopes, filesystem scopes, and optional assets
 - runtime bootstrap composes and exposes resolved subagent inspection state
 - `models.subagents.*` overrides are now consumed by runtime model resolution
-- `subagent.started` events are emitted
-- the adapter synthesizes a single role `"primary"` with name `"repo-summarizer"`
-- `TaskSnapshot.active_subagent` can store the current role
+- adapter compiles registry-loaded roles into live Deep Agent-native subagents
+- role-specific prompt assembly happens inside the adapter
+- runtime uses resolved role-local skills during execution
+- role-specific tool scopes are wired into live adapter bindings
+- `subagent.started` and `subagent.completed` events are emitted with runtime-owned payloads
+- `TaskSnapshot.active_subagent` reflects the currently executing delegated role
+- planner/researcher/coder/verifier/librarian definitions are available for Deep Agent-native delegation
 
 What does not exist:
 
-- adapter-side compilation of registry-loaded roles into live Deep Agent subagents
-- role-specific prompt assembly inside the adapter
-- runtime use of resolved role-local skills during execution
-- role-specific tool scopes wired into live adapter binding
-- subagent completion events
-- planner/researcher/coder/verifier/librarian execution flow
+- richer multi-agent observability beyond lifecycle, tool, artifact, and plan events
 
 Evidence:
 
@@ -686,7 +685,7 @@ Explicitly deferred beyond Milestone 2:
 
 ### 16.4 Milestone 3
 
-**Observed status:** `Partial`.
+**Observed status:** `Implemented`.
 
 Implemented foundations:
 
@@ -696,11 +695,12 @@ Implemented foundations:
 - runtime-owned per-role model routing, tool-scope resolution, and skill discovery
 - adapter compilation of runtime-owned subagent definitions into native Deep Agent subagents
 - live execution with role-scoped tools and primary-agent delegation through Deep Agent
+- runtime-visible `subagent.started` and `subagent.completed` lifecycle projection
+- `TaskSnapshot.active_subagent` tracking for live delegated execution
 
-Still absent:
+Still deferred beyond Milestone 3:
 
-- `subagent.completed` lifecycle projection
-- richer multi-agent observability beyond current start/tool/plan events
+- richer multi-agent observability beyond current lifecycle/tool/plan/artifact events
 - any future-client work deferred to Milestone 4+
 
 ### 16.5 Milestone 4
@@ -744,7 +744,7 @@ Conclusion:
 These are the main verified gaps between the current implementation and the broader master spec:
 
 1. Missing protocol method: `task.cancel`.
-2. Missing event types: `subagent.completed`, `memory.updated`.
+2. Missing event type: `memory.updated`.
 3. No retrieval precedence or richer policy-governed memory behavior beyond current promotion/storage support.
 4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
 5. No web client or client SDK packages.

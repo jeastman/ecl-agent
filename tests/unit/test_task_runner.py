@@ -131,6 +131,7 @@ class TaskRunnerTests(unittest.TestCase):
                 "task.started",
                 "plan.updated",
                 "subagent.started",
+                "subagent.completed",
                 "tool.called",
                 "artifact.created",
                 "task.completed",
@@ -141,7 +142,7 @@ class TaskRunnerTests(unittest.TestCase):
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
-        self.assertEqual(snapshot.active_subagent, "primary")
+        self.assertIsNone(snapshot.active_subagent)
 
     def test_task_runner_marks_run_failed_when_harness_raises(self) -> None:
         store = InMemoryRunStateStore()
@@ -387,9 +388,17 @@ class EventingHarness:
             on_event(
                 "subagent.started",
                 {
-                    "role": "primary",
-                    "name": "repo-summarizer",
-                    "summary": "Primary agent execution started.",
+                    "role": "researcher",
+                    "model_profile": "researcher",
+                    "objective": "Inspect the repository structure.",
+                },
+            )
+            on_event(
+                "subagent.completed",
+                {
+                    "role": "researcher",
+                    "summary": "Researcher finished repository inspection.",
+                    "outcome": "success",
                 },
             )
             on_event(

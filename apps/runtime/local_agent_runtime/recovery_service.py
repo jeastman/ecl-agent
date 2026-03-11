@@ -236,6 +236,8 @@ def _has_unresolved_approval(events: list[PersistedEvent]) -> bool:
 
 def _latest_active_subagent(events: list[PersistedEvent]) -> str | None:
     for event in reversed(events):
+        if event.event_type == "subagent.completed":
+            return None
         if event.event_type == "subagent.started":
             role = event.payload.get("role")
             if isinstance(role, str) and role.strip():

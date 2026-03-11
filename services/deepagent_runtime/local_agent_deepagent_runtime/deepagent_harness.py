@@ -100,14 +100,6 @@ class LangChainDeepAgentHarness:
                 "prompt_preview": _truncate(prompt, 280),
             },
         )
-        callback(
-            "subagent.started",
-            {
-                "role": "primary",
-                "name": "primary",
-                "summary": "Primary Deep Agent execution started.",
-            },
-        )
         interrupt_bridge = InterruptBridge(
             governed_operation=request.governed_operation,
             checkpoint_controller=request.checkpoint_controller,
@@ -185,6 +177,7 @@ class LangChainDeepAgentHarness:
         compiled_subagents = self._subagent_compiler.compile_subagents(
             resolved_subagents=request.resolved_subagents,
             identity_bundle_text=request.identity_bundle_text,
+            task_objective=request.objective,
             tool_bindings=tools,
             on_event=callback,
         )

@@ -51,7 +51,6 @@ class CliIntegrationTests(unittest.TestCase):
                     output = stdout.getvalue()
                 self.assertIn("status=completed", output)
                 self.assertIn("latest_summary=Summary created.", output)
-                self.assertIn("active_subagent=primary", output)
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -64,7 +63,15 @@ class CliIntegrationTests(unittest.TestCase):
                 lines = output.strip().splitlines()
                 self.assertIn("stream_open=True", lines[0])
                 self.assertEqual(lines[1], "[task.created] objective=Inspect repo")
-                self.assertEqual(lines[2], "[artifact.created] artifacts/repo_summary.md")
+                self.assertEqual(
+                    lines[2],
+                    "[subagent.started] researcher model_profile=researcher objective=Inspect repo",
+                )
+                self.assertEqual(
+                    lines[3],
+                    "[subagent.completed] researcher outcome=success summary=Research complete.",
+                )
+                self.assertEqual(lines[4], "[artifact.created] artifacts/repo_summary.md")
 
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     self.assertEqual(
@@ -196,7 +203,6 @@ def _fake_runtime_script() -> str:
                         "objective": "Inspect repo",
                         "current_phase": "completed",
                         "latest_summary": "Summary created.",
-                        "active_subagent": "primary",
                         "artifact_count": 1,
                     }
                 },
@@ -221,6 +227,36 @@ def _fake_runtime_script() -> str:
                         "event": {
                             "event_type": "task.created",
                             "payload": {"objective": "Inspect repo"},
+                        },
+                    }
+                )
+            )
+            print(
+                json.dumps(
+                    {
+                        "type": "runtime.event",
+                        "event": {
+                            "event_type": "subagent.started",
+                            "payload": {
+                                "role": "researcher",
+                                "model_profile": "researcher",
+                                "objective": "Inspect repo",
+                            },
+                        },
+                    }
+                )
+            )
+            print(
+                json.dumps(
+                    {
+                        "type": "runtime.event",
+                        "event": {
+                            "event_type": "subagent.completed",
+                            "payload": {
+                                "role": "researcher",
+                                "summary": "Research complete.",
+                                "outcome": "success",
+                            },
                         },
                     }
                 )
