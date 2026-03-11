@@ -5,6 +5,7 @@ from typing import Any, Callable, Protocol
 from uuid import uuid4
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedSubagentConfiguration
+from apps.runtime.local_agent_runtime.subagents import SkillDescriptor
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
@@ -61,6 +62,7 @@ class AgentExecutionRequest:
     memory_store: MemoryStore | None
     allowed_capabilities: list[str]
     metadata: dict[str, Any]
+    primary_skills: tuple[SkillDescriptor, ...] = ()
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
     checkpoint_controller: CheckpointController | None = None
@@ -140,6 +142,7 @@ class TaskRunner:
         agent_harness: AgentHarness,
         durable_services: DurableRuntimeServices | None = None,
         resolved_subagents: list[ResolvedSubagentConfiguration] | None = None,
+        primary_skills: tuple[SkillDescriptor, ...] = (),
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
@@ -148,6 +151,7 @@ class TaskRunner:
         self._agent_harness = agent_harness
         self._durable_services = durable_services
         self._resolved_subagents = list(resolved_subagents or [])
+        self._primary_skills = tuple(primary_skills)
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
         self._checkpoint_adapter = (
             LangGraphCheckpointAdapter(durable_services.checkpoint_store)
@@ -158,6 +162,10 @@ class TaskRunner:
     @property
     def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
         return list(self._resolved_subagents)
+
+    @property
+    def primary_skills(self) -> tuple[SkillDescriptor, ...]:
+        return self._primary_skills
 
     def start_run(
         self,
@@ -483,6 +491,7 @@ class TaskRunner:
                     ),
                     allowed_capabilities=list(state.allowed_capabilities),
                     metadata=dict(state.metadata),
+                    primary_skills=self._primary_skills,
                     constraints=list(state.constraints),
                     success_criteria=list(state.success_criteria),
                     checkpoint_controller=checkpoint_controller,
@@ -651,7 +660,28 @@ class TaskRunner:
             return
 
         failed_at = utc_now_timestamp()
-        if result.failure_code != "policy_denied":
+        if result.failure_code == "scope_denied":
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="filesystem_scope_denied",
+                message=result.error_message or result.summary,
+                details={"summary": result.summary, "resume": resume},
+            )
+            self._publish(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.POLICY_DENIED.value,
+                timestamp=failed_at,
+                source=EventSource(kind=EventSourceKind.POLICY, component="filesystem-scope"),
+                payload={
+                    "status": TaskStatus.FAILED.value,
+                    "reason": result.error_message or result.summary,
+                    "context": {"kind": "filesystem_scope"},
+                },
+            )
+        elif result.failure_code != "policy_denied":
             self._append_diagnostic(
                 task_id=task_id,
                 run_id=run_id,
@@ -740,7 +770,7 @@ class TaskRunner:
             updates["current_phase"] = "planning"
         elif event_type == EventType.SUBAGENT_STARTED.value:
             updates["current_phase"] = "executing"
-            role = payload.get("role")
+            role = payload.get("subagentId")
             if isinstance(role, str) and role.strip():
                 updates["active_subagent"] = role.strip()
         elif event_type == EventType.SUBAGENT_COMPLETED.value:
@@ -951,7 +981,7 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
         EventType.SUBAGENT_STARTED.value,
         EventType.SUBAGENT_COMPLETED.value,
     }:
-        role = str(payload.get("role", "subagent"))
+        role = str(payload.get("subagentId", "subagent"))
         return EventSource(
             kind=EventSourceKind.SUBAGENT,
             role=role,

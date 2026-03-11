@@ -23,6 +23,10 @@ _PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
 _ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
 
 
+class FilesystemScopeError(PermissionError):
+    pass
+
+
 @dataclass(slots=True)
 class SandboxToolBindings:
     sandbox: ExecutionSandbox
@@ -184,6 +188,7 @@ class SandboxToolBindings:
         resolved_bindings: tuple[ResolvedToolBinding, ...],
         *,
         memory_scopes: tuple[str, ...] = (),
+        filesystem_scopes: tuple[str, ...] = (),
     ) -> list[BaseTool]:
         allowed_tool_ids = {binding.tool_id for binding in resolved_bindings}
         tools: list[BaseTool] = []
@@ -193,11 +198,13 @@ class SandboxToolBindings:
             @tool
             def read_file(path: str) -> str:
                 """Read a UTF-8 text file from a governed sandbox path."""
+                self._ensure_filesystem_scope(path, filesystem_scopes, operation="read_file")
                 return self.read_file(path)
 
             @tool
             def list_files(root: str = "workspace") -> list[str]:
                 """List governed files rooted at a sandbox path."""
+                self._ensure_filesystem_scope(root, filesystem_scopes, operation="list_files")
                 return self.list_files(root)
 
             tools.extend([read_file, list_files])
@@ -207,6 +214,7 @@ class SandboxToolBindings:
             @tool
             def write_file(path: str, content: str) -> str:
                 """Write UTF-8 text content to a governed sandbox path."""
+                self._ensure_filesystem_scope(path, filesystem_scopes, operation="write_file")
                 return self.write_file(path, content)
 
             tools.append(write_file)
@@ -216,6 +224,11 @@ class SandboxToolBindings:
             @tool
             def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
                 """Execute a command inside the governed sandbox and return structured output."""
+                self._ensure_filesystem_scope(
+                    cwd or "workspace",
+                    filesystem_scopes,
+                    operation="execute_command",
+                )
                 return self.execute_command(command, cwd)
 
             tools.append(execute_command)
@@ -290,6 +303,26 @@ class SandboxToolBindings:
     def _govern(self, context: OperationContext) -> None:
         if self.governed_operation is not None:
             self.governed_operation(context)
+
+    def _ensure_filesystem_scope(
+        self,
+        sandbox_path: str,
+        filesystem_scopes: tuple[str, ...],
+        *,
+        operation: str,
+    ) -> None:
+        allowed_scopes = {scope.strip() for scope in filesystem_scopes if scope.strip()}
+        if not allowed_scopes:
+            return
+        normalized_path = self.sandbox.normalize_path(sandbox_path)
+        root = normalized_path.split("/", 1)[0]
+        if root == "scratch":
+            root = "workspace"
+        if root not in allowed_scopes:
+            allowed = ", ".join(sorted(allowed_scopes))
+            raise FilesystemScopeError(
+                f"{operation} denied for {normalized_path}: allowed filesystem scopes are {allowed}"
+            )
 
 
 def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:

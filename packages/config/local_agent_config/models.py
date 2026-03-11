@@ -33,7 +33,7 @@ class RuntimeConfig:
     runtime: RuntimeSettings
     identity_path: str
     transport: TransportConfig
-    default_model: ModelConfig
+    primary_model: ModelConfig
     persistence: PersistenceConfig
     subagent_model_overrides: dict[str, ModelConfig] = field(default_factory=dict)
     policy: dict[str, object] = field(default_factory=dict)

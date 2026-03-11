@@ -10,10 +10,10 @@ class RuntimeModelResolver:
 
     def resolve_primary(self) -> ResolvedModelRoute:
         return ResolvedModelRoute(
-            provider=self._config.default_model.provider,
-            model=self._config.default_model.model,
-            profile_name="default",
-            source="default_model",
+            provider=self._config.primary_model.provider,
+            model=self._config.primary_model.model,
+            profile_name="primary",
+            source="primary_model",
         )
 
     def resolve_subagent(self, role_id: str, model_profile: str | None) -> ResolvedModelRoute:
@@ -36,4 +36,10 @@ class RuntimeModelResolver:
                 source="role_profile",
             )
 
-        return self.resolve_primary()
+        primary = self.resolve_primary()
+        return ResolvedModelRoute(
+            provider=primary.provider,
+            model=primary.model,
+            profile_name=primary.profile_name,
+            source=primary.source,
+        )

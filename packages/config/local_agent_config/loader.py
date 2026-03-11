@@ -61,7 +61,7 @@ def load_runtime_config(path: str) -> RuntimeConfig:
     transport_payload = _required_table(payload, "transport")
     identity_payload = _required_table(payload, "identity")
     model_payload = _required_table(payload, "models")
-    default_model_payload = _required_table(model_payload, "default")
+    primary_model_payload = _required_table(model_payload, "primary")
     persistence_payload = payload.get("persistence", {})
     policy_payload = payload.get("policy", {})
     if not isinstance(persistence_payload, dict):
@@ -95,9 +95,9 @@ def load_runtime_config(path: str) -> RuntimeConfig:
         ),
         identity_path=str(resolved_identity_path),
         transport=TransportConfig(mode=_required_str(transport_payload, "mode")),
-        default_model=ModelConfig(
-            provider=_required_str(default_model_payload, "provider"),
-            model=_required_str(default_model_payload, "model"),
+        primary_model=ModelConfig(
+            provider=_required_str(primary_model_payload, "provider"),
+            model=_required_str(primary_model_payload, "model"),
         ),
         persistence=PersistenceConfig(
             root_path=str(resolved_root_path),

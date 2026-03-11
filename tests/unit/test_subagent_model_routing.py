@@ -30,15 +30,15 @@ class RuntimeModelResolverTests(unittest.TestCase):
         self.assertEqual(route.profile_name, "researcher")
         self.assertEqual(route.source, "role_profile")
 
-    def test_missing_override_or_profile_falls_back_to_default_model(self) -> None:
+    def test_missing_override_or_profile_falls_back_to_primary_model(self) -> None:
         config = load_runtime_config("docs/architecture/runtime.example.toml")
 
         route = RuntimeModelResolver(config).resolve_subagent("verifier", "verifier")
 
-        self.assertEqual(route.provider, config.default_model.provider)
-        self.assertEqual(route.model, config.default_model.model)
-        self.assertEqual(route.profile_name, "default")
-        self.assertEqual(route.source, "default_model")
+        self.assertEqual(route.provider, config.primary_model.provider)
+        self.assertEqual(route.model, config.primary_model.model)
+        self.assertEqual(route.profile_name, "primary")
+        self.assertEqual(route.source, "primary_model")
 
 
 if __name__ == "__main__":

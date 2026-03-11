@@ -38,7 +38,9 @@ class FileSystemSkillRegistryTests(unittest.TestCase):
                 [descriptor.skill_id for descriptor in descriptors], ["quick-check", "repo-map"]
             )
             self.assertEqual(descriptors[0].source, "file")
+            self.assertEqual(descriptors[0].prompt_text, "# Quick Check")
             self.assertEqual(descriptors[1].source, "directory")
+            self.assertEqual(descriptors[1].prompt_text, "# Repo Map")
 
     def test_invalid_skill_directory_fails_clearly(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -66,6 +68,15 @@ class FileSystemSkillRegistryTests(unittest.TestCase):
                 [descriptor.skill_id for descriptor in planner_descriptors], ["planner"]
             )
             self.assertEqual([descriptor.skill_id for descriptor in coder_descriptors], ["coder"])
+
+    def test_primary_agent_skill_directory_uses_shared_loader(self) -> None:
+        descriptors = self.registry.list_skill_descriptors_for_path(
+            Path("agents/primary-agent/skills")
+        )
+
+        self.assertEqual(
+            [descriptor.skill_id for descriptor in descriptors], ["runtime-governance"]
+        )
 
 
 def _definition(skills_path: Path | None) -> SubagentDefinition:

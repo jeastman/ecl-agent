@@ -183,8 +183,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             identity = load_identity_bundle(config.identity_path)
             captures: dict[str, Any] = {}
             harness = LangChainDeepAgentHarness(
-                model_name=config.default_model.model,
-                model_provider=config.default_model.provider,
+                model_name=config.primary_model.model,
+                model_provider=config.primary_model.provider,
                 model_factory=lambda model_name, *, model_provider: {
                     "model_name": model_name,
                     "model_provider": model_provider,
@@ -247,11 +247,13 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 for event in stream_events
                 if event.event.event_type == "subagent.completed"
             )
-            self.assertEqual(started_event.payload["role"], "researcher")
-            self.assertEqual(started_event.payload["model_profile"], "researcher")
-            self.assertEqual(started_event.payload["objective"], "Inspect the repo")
-            self.assertEqual(completed_event.payload["role"], "researcher")
-            self.assertEqual(completed_event.payload["outcome"], "success")
+            self.assertEqual(started_event.payload["runId"], payload["run_id"])
+            self.assertEqual(started_event.payload["subagentId"], "researcher")
+            self.assertEqual(started_event.payload["taskDescription"], "Inspect the repo")
+            self.assertEqual(completed_event.payload["runId"], payload["run_id"])
+            self.assertEqual(completed_event.payload["subagentId"], "researcher")
+            self.assertEqual(completed_event.payload["status"], "success")
+            self.assertGreaterEqual(completed_event.payload["duration"], 0.0)
 
     def test_runtime_server_streams_events_on_stdout_after_ack(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -565,7 +567,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["effective_config"]["policy"]["api_token"], "***REDACTED***")
             self.assertEqual(
                 payload["effective_config"]["models"]["resolved"]["primary"]["source"],
-                "default_model",
+                "primary_model",
             )
             self.assertEqual(
                 payload["effective_config"]["models"]["resolved"]["subagents"]["researcher"][

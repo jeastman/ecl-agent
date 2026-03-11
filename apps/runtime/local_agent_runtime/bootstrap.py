@@ -50,6 +50,9 @@ def create_runtime_server(
     model_resolver = RuntimeModelResolver(config)
     tool_scope_resolver = RoleToolScopeResolver()
     skill_registry = FileSystemSkillRegistry()
+    primary_skills = skill_registry.list_skill_descriptors_for_path(
+        Path(config.identity_path).resolve().parent / "skills"
+    )
     resolved_subagents = _resolve_subagent_configurations(
         subagent_registry=subagent_registry,
         model_resolver=model_resolver,
@@ -72,6 +75,7 @@ def create_runtime_server(
         sandbox_factory=sandbox_factory,
         durable_services=durable_services,
         resolved_subagents=resolved_subagents,
+        primary_skills=primary_skills,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
             model_name=primary_model_route.model,

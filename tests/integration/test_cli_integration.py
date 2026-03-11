@@ -65,11 +65,11 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertEqual(lines[1], "[task.created] objective=Inspect repo")
                 self.assertEqual(
                     lines[2],
-                    "[subagent.started] researcher model_profile=researcher objective=Inspect repo",
+                    "[subagent.started] researcher taskDescription=Inspect repo",
                 )
                 self.assertEqual(
                     lines[3],
-                    "[subagent.completed] researcher outcome=success summary=Research complete.",
+                    "[subagent.completed] researcher status=success duration=0.42",
                 )
                 self.assertEqual(lines[4], "[artifact.created] artifacts/repo_summary.md")
 
@@ -238,9 +238,10 @@ def _fake_runtime_script() -> str:
                         "event": {
                             "event_type": "subagent.started",
                             "payload": {
-                                "role": "researcher",
-                                "model_profile": "researcher",
-                                "objective": "Inspect repo",
+                                "runId": "run_456",
+                                "subagentId": "researcher",
+                                "taskDescription": "Inspect repo",
+                                "timestamp": "2026-03-11T10:00:00Z",
                             },
                         },
                     }
@@ -253,9 +254,11 @@ def _fake_runtime_script() -> str:
                         "event": {
                             "event_type": "subagent.completed",
                             "payload": {
-                                "role": "researcher",
-                                "summary": "Research complete.",
-                                "outcome": "success",
+                                "runId": "run_456",
+                                "subagentId": "researcher",
+                                "status": "success",
+                                "duration": 0.42,
+                                "timestamp": "2026-03-11T10:00:01Z",
                             },
                         },
                     }

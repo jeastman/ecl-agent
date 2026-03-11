@@ -46,6 +46,7 @@ class SkillDescriptor:
     name: str
     prompt_path: Path
     source: str
+    prompt_text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -76,6 +77,12 @@ class ResolvedSubagentConfiguration:
     skills: tuple[SkillDescriptor, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class PrimaryAgentConfiguration:
+    model_route: ResolvedModelRoute
+    skills: tuple[SkillDescriptor, ...]
+
+
 class SubagentRegistry(Protocol):
     def list_roles(self) -> list[str]: ...
 
@@ -95,4 +102,8 @@ class ModelResolver(Protocol):
 class SkillRegistry(Protocol):
     def list_skill_descriptors(
         self, definition: SubagentDefinition
+    ) -> tuple[SkillDescriptor, ...]: ...
+
+    def list_skill_descriptors_for_path(
+        self, skills_path: Path | None
     ) -> tuple[SkillDescriptor, ...]: ...

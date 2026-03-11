@@ -234,9 +234,9 @@ class MethodHandlers:
                 "identity": {"path": self.config.identity_path},
                 "transport": {"mode": self.config.transport.mode},
                 "models": {
-                    "default": {
-                        "provider": self.config.default_model.provider,
-                        "model": self.config.default_model.model,
+                    "primary": {
+                        "provider": self.config.primary_model.provider,
+                        "model": self.config.primary_model.model,
                     },
                     "subagents": {
                         role: {"provider": model.provider, "model": model.model}
@@ -244,10 +244,10 @@ class MethodHandlers:
                     },
                     "resolved": {
                         "primary": {
-                            "provider": self.config.default_model.provider,
-                            "model": self.config.default_model.model,
-                            "profile_name": "default",
-                            "source": "default_model",
+                            "provider": self.config.primary_model.provider,
+                            "model": self.config.primary_model.model,
+                            "profile_name": "primary",
+                            "source": "primary_model",
                         },
                         "subagents": {
                             role: definition["resolved_model"]

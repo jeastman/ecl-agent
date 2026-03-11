@@ -82,19 +82,18 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
     if event_type == "plan.updated":
         return str(payload.get("summary") or payload.get("plan") or "plan updated")
     if event_type == "subagent.started":
-        role = payload.get("role") or "primary"
-        model_profile = payload.get("model_profile") or "default"
-        objective = payload.get("objective")
-        if objective:
-            return f"{role} model_profile={model_profile} objective={objective}"
-        return f"{role} model_profile={model_profile}"
+        subagent_id = payload.get("subagentId") or "primary"
+        task_description = payload.get("taskDescription")
+        if task_description:
+            return f"{subagent_id} taskDescription={task_description}"
+        return str(subagent_id)
     if event_type == "subagent.completed":
-        role = payload.get("role") or "primary"
-        outcome = payload.get("outcome") or "completed"
-        summary = payload.get("summary")
-        if summary:
-            return f"{role} outcome={outcome} summary={summary}"
-        return f"{role} outcome={outcome}"
+        subagent_id = payload.get("subagentId") or "primary"
+        status = payload.get("status") or "completed"
+        duration = payload.get("duration")
+        if duration is not None:
+            return f"{subagent_id} status={status} duration={duration}"
+        return f"{subagent_id} status={status}"
     if event_type == "tool.called":
         tool = payload.get("tool") or "unknown-tool"
         arguments = payload.get("arguments")

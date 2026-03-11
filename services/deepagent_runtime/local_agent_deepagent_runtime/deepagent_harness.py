@@ -6,7 +6,7 @@ from deepagents import create_deep_agent
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain.chat_models import init_chat_model
 
-from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding
+from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, SkillDescriptor
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
@@ -18,6 +18,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
     SubagentCompiler,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
+    FilesystemScopeError,
     SandboxToolBindings,
 )
 
@@ -43,6 +44,7 @@ class AgentFactory(Protocol):
         tools: list[Any],
         system_prompt: str,
         subagents: list[SubAgent | CompiledSubAgent] | None = None,
+        skills: list[str] | None = None,
         name: str,
         **kwargs: Any,
     ) -> "CompiledAgent": ...
@@ -148,6 +150,14 @@ class LangChainDeepAgentHarness:
                 error_message=exc.reason,
                 failure_code="policy_denied",
             )
+        except FilesystemScopeError as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary="Agent execution violated a delegated filesystem scope.",
+                output_artifacts=[],
+                error_message=str(exc),
+                failure_code="scope_denied",
+            )
         except (SubagentCompilationError, PermissionError, ValueError) as exc:
             return AgentExecutionResult(
                 success=False,
@@ -178,6 +188,7 @@ class LangChainDeepAgentHarness:
             resolved_subagents=request.resolved_subagents,
             identity_bundle_text=request.identity_bundle_text,
             task_objective=request.objective,
+            run_id=request.run_id,
             tool_bindings=tools,
             on_event=callback,
         )
@@ -194,6 +205,7 @@ class LangChainDeepAgentHarness:
             tools=primary_tools,
             system_prompt=prompt,
             subagents=subagents_for_agent,
+            skills=_skill_payloads(request.primary_skills),
             name="primary",
             **(
                 request.checkpoint_controller.build_agent_kwargs()
@@ -269,6 +281,10 @@ def _execution_prompt(request: "AgentExecutionRequest") -> str:
         sections.extend(["", "Success Criteria:"])
         sections.extend(f"- {item}" for item in request.success_criteria if item.strip())
     return "\n".join(sections).strip()
+
+
+def _skill_payloads(skills: tuple[SkillDescriptor, ...]) -> list[str]:
+    return [skill.prompt_text for skill in skills]
 
 
 def _noop_event(_: str, __: dict[str, Any]) -> None:

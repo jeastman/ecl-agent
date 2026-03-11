@@ -30,6 +30,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
     SubagentCompiler,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
+    FilesystemScopeError,
     SandboxToolBindings,
 )
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
@@ -162,6 +163,26 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(artifacts[0]["logical_path"], "artifacts/report.md")
         self.assertEqual(artifacts[0]["preview"], "# Report\n")
 
+    def test_filesystem_scope_denies_workspace_access_when_only_memory_is_allowed(self) -> None:
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+        )
+        read_tool = next(
+            tool
+            for tool in bindings.as_langchain_tools(
+                (ResolvedToolBinding("read_files", ("read_file", "list_files"), True),),
+                filesystem_scopes=("memory",),
+            )
+            if tool.name == "read_file"
+        )
+
+        with self.assertRaisesRegex(FilesystemScopeError, "allowed filesystem scopes are memory"):
+            read_tool.invoke({"path": "workspace/README.md"})
+
 
 class SubagentCompilerTests(unittest.TestCase):
     def test_compiler_builds_subagent_with_prompt_model_tools_and_skills(self) -> None:
@@ -194,6 +215,7 @@ class SubagentCompilerTests(unittest.TestCase):
             resolved_subagents=[resolved],
             identity_bundle_text="Primary identity",
             task_objective="Inspect the repository",
+            run_id="run_1",
             tool_bindings=bindings,
         )
 
@@ -243,6 +265,7 @@ class SubagentCompilerTests(unittest.TestCase):
             ],
             identity_bundle_text="Primary identity",
             task_objective="Inspect the repository",
+            run_id="run_1",
             tool_bindings=bindings,
         )
 
@@ -288,6 +311,7 @@ class SubagentCompilerTests(unittest.TestCase):
                 ],
                 identity_bundle_text="Primary identity",
                 task_objective="Inspect the repository",
+                run_id="run_1",
                 tool_bindings=bindings,
             )
 
@@ -325,6 +349,15 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             memory_store=self.memory_store,
             allowed_capabilities=[],
             metadata={},
+            primary_skills=(
+                SkillDescriptor(
+                    skill_id="runtime-governance",
+                    name="Runtime governance",
+                    prompt_path=skill_path,
+                    source="file",
+                    prompt_text="# Skill\nUse it.",
+                ),
+            ),
         )
 
         result = LangChainDeepAgentHarness(
@@ -340,22 +373,25 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertTrue(result.success)
         self.assertEqual(result.output_artifacts, ["workspace/artifacts/result.md"])
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
+        self.assertEqual(captures["agent_kwargs"]["skills"], ["# Skill\nUse it."])
         self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
         self.assertIn("subagent.started", [event_type for event_type, _ in events])
         self.assertIn("subagent.completed", [event_type for event_type, _ in events])
         self.assertTrue(
             any(
-                payload.get("role") == "researcher"
-                and payload.get("model_profile") == "researcher"
-                and payload.get("objective") == "Inspect the repository"
+                payload.get("subagentId") == "researcher"
+                and payload.get("taskDescription") == "Inspect the repository"
+                and payload.get("runId") == "run_1"
                 for event_type, payload in events
                 if event_type == "subagent.started"
             )
         )
         self.assertTrue(
             any(
-                payload.get("role") == "researcher" and payload.get("outcome") == "success"
+                payload.get("subagentId") == "researcher"
+                and payload.get("status") == "success"
+                and isinstance(payload.get("duration"), float)
                 for event_type, payload in events
                 if event_type == "subagent.completed"
             )
@@ -589,6 +625,11 @@ def _resolved_subagent_with_options(
                     name=f"{role_id.title()} skill",
                     prompt_path=skill_path,
                     source="file",
+                    prompt_text=(
+                        skill_path.read_text(encoding="utf-8").strip()
+                        if skill_path.is_file()
+                        else ""
+                    ),
                 ),
             )
         ),

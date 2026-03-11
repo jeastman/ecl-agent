@@ -51,6 +51,10 @@ class BootstrapTests(unittest.TestCase):
                 ["read_files", "memory_lookup"],
             )
             self.assertEqual(researcher.skills, ())
+            self.assertEqual(
+                [skill.skill_id for skill in server.handlers.task_runner.primary_skills],
+                ["runtime-governance"],
+            )
 
 
 def _operation_context():
