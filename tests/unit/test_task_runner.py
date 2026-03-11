@@ -6,7 +6,11 @@ from pathlib import Path
 
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
-from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness, TaskRunner
+from apps.runtime.local_agent_runtime.task_runner import (
+    AgentExecutionResult,
+    StubAgentHarness,
+    TaskRunner,
+)
 from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
@@ -94,6 +98,97 @@ class TaskRunnerTests(unittest.TestCase):
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.FAILED)
         self.assertEqual(bus.list_events(task_id, run_id)[-1].event.event_type, "task.failed")
+
+    def test_task_runner_translates_harness_callbacks_into_runtime_events(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=EventingHarness(),
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertEqual(
+            event_types,
+            [
+                "task.created",
+                "task.started",
+                "plan.updated",
+                "subagent.started",
+                "tool.called",
+                "artifact.created",
+                "task.completed",
+            ],
+        )
+        artifact = runner.list_artifacts(task_id, run_id)[0]
+        self.assertEqual(artifact.logical_path, "artifacts/repo_summary.md")
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
+        self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
+
+    def test_task_runner_marks_run_failed_when_harness_raises(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=RaisingHarness(),
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        failure = snapshot.failure
+        self.assertIsNotNone(failure)
+        assert failure is not None
+        self.assertEqual(failure.message, "boom")
+        self.assertEqual(bus.list_events(task_id, run_id)[-1].event.event_type, "task.failed")
+
+
+class EventingHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        if on_event is not None:
+            on_event(
+                "plan.updated",
+                {"phase": "planning", "summary": "Building the execution plan."},
+            )
+            on_event(
+                "subagent.started",
+                {
+                    "role": "primary",
+                    "name": "repo-summarizer",
+                    "summary": "Primary agent execution started.",
+                },
+            )
+            on_event(
+                "tool.called",
+                {"tool": "write_file", "path": "workspace/artifacts/repo_summary.md"},
+            )
+        request.sandbox.write_text("workspace/artifacts/repo_summary.md", "# Summary\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Generated the repository summary artifact.",
+            output_artifacts=["workspace/artifacts/repo_summary.md"],
+        )
+
+
+class RaisingHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        raise RuntimeError("boom")
 
 
 if __name__ == "__main__":

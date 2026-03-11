@@ -514,6 +514,9 @@ class LangChainDeepAgentHarness(AgentHarness):
         ...
 ```
 
+Repository note:
+the Python package path follows the repo convention `services/deepagent_runtime/local_agent_deepagent_runtime`, while this blueprint uses `services/deepagent-runtime` as the conceptual service name.
+
 ## 8.2 Milestone 1 design constraint
 
 The adapter should support a **minimal but real** DeepAgent configuration:
@@ -563,6 +566,7 @@ The adapter should emit at least:
 - `tool.called`
 
 If the framework cannot produce plan callbacks directly in a clean way for the first pass, synthesize a simple `plan.updated` event from the adapter before execution begins.
+The current Milestone 1 implementation also synthesizes the initial `subagent.started` event before the main DeepAgent invocation, while `tool.called` events come from sandbox-backed tool wrappers.
 
 ---
 
@@ -780,6 +784,11 @@ The agent should:
 Preferred:
 ```text
 <workspace_root>/artifacts/repo_summary.md
+```
+
+Runtime-visible logical path:
+```text
+artifacts/repo_summary.md
 ```
 
 Fallback:

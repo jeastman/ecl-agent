@@ -153,6 +153,7 @@ class TaskRunner:
             correlation_id=correlation_id,
             event_type=EventType.TASK_CREATED.value,
             timestamp=accepted_at,
+            source=self._source,
             payload={"status": TaskStatus.CREATED.value, "objective": objective},
         )
 
@@ -163,7 +164,7 @@ class TaskRunner:
             status=TaskStatus.EXECUTING,
             updated_at=started_at,
             current_phase="executing",
-            latest_summary="Stub harness execution started.",
+            latest_summary="Agent harness execution started.",
             last_event_at=started_at,
         )
         self._publish(
@@ -172,6 +173,7 @@ class TaskRunner:
             correlation_id=correlation_id,
             event_type=EventType.TASK_STARTED.value,
             timestamp=started_at,
+            source=self._source,
             payload={"status": TaskStatus.EXECUTING.value, "started_at": started_at},
         )
 
@@ -180,20 +182,35 @@ class TaskRunner:
             run_id=run_id,
             workspace_roots=workspace_roots,
         )
-        result = self._agent_harness.execute(
-            AgentExecutionRequest(
-                task_id=task_id,
-                run_id=run_id,
-                objective=objective,
-                workspace_roots=list(workspace_roots),
-                identity_bundle_text=identity_bundle_text,
-                sandbox=sandbox,
-                allowed_capabilities=list(allowed_capabilities or []),
-                metadata=dict(metadata or {}),
-                constraints=list(constraints or []),
-                success_criteria=list(success_criteria or []),
+        try:
+            result = self._agent_harness.execute(
+                AgentExecutionRequest(
+                    task_id=task_id,
+                    run_id=run_id,
+                    objective=objective,
+                    workspace_roots=list(workspace_roots),
+                    identity_bundle_text=identity_bundle_text,
+                    sandbox=sandbox,
+                    allowed_capabilities=list(allowed_capabilities or []),
+                    metadata=dict(metadata or {}),
+                    constraints=list(constraints or []),
+                    success_criteria=list(success_criteria or []),
+                ),
+                on_event=lambda event_type, payload: self._handle_harness_event(
+                    task_id=task_id,
+                    run_id=run_id,
+                    correlation_id=correlation_id,
+                    event_type=event_type,
+                    payload=payload,
+                ),
             )
-        )
+        except Exception as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary="Agent harness raised an unexpected error.",
+                output_artifacts=[],
+                error_message=str(exc),
+            )
 
         artifact_count = 0
         for sandbox_path in result.output_artifacts:
@@ -217,6 +234,7 @@ class TaskRunner:
                 correlation_id=correlation_id,
                 event_type=EventType.ARTIFACT_CREATED.value,
                 timestamp=registered_at,
+                source=EventSource(kind=EventSourceKind.RUNTIME, component="artifact-store"),
                 payload={"artifact": artifact.to_dict()},
             )
 
@@ -238,6 +256,7 @@ class TaskRunner:
                 correlation_id=correlation_id,
                 event_type=EventType.TASK_COMPLETED.value,
                 timestamp=completed_at,
+                source=self._source,
                 payload={
                     "status": TaskStatus.COMPLETED.value,
                     "completed_at": completed_at,
@@ -265,6 +284,7 @@ class TaskRunner:
                 correlation_id=correlation_id,
                 event_type=EventType.TASK_FAILED.value,
                 timestamp=failed_at,
+                source=self._source,
                 payload={
                     "status": TaskStatus.FAILED.value,
                     "failed_at": failed_at,
@@ -317,6 +337,7 @@ class TaskRunner:
         correlation_id: str | None,
         event_type: str,
         timestamp: str,
+        source: EventSource,
         payload: dict[str, Any],
     ) -> None:
         self._event_bus.publish(
@@ -328,8 +349,60 @@ class TaskRunner:
                     correlation_id=correlation_id,
                     task_id=task_id,
                     run_id=run_id,
-                    source=self._source,
+                    source=source,
                     payload=payload,
                 )
             )
         )
+
+    def _handle_harness_event(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> None:
+        timestamp = utc_now_timestamp()
+        updates: dict[str, Any] = {
+            "updated_at": timestamp,
+            "last_event_at": timestamp,
+        }
+        phase = payload.get("phase")
+        if isinstance(phase, str) and phase.strip():
+            updates["current_phase"] = phase.strip()
+        elif event_type == EventType.PLAN_UPDATED.value:
+            updates["current_phase"] = "planning"
+        elif event_type == EventType.SUBAGENT_STARTED.value:
+            updates["current_phase"] = "executing"
+        summary = payload.get("summary")
+        if isinstance(summary, str) and summary.strip():
+            updates["latest_summary"] = summary.strip()
+        self._run_state_store.update(task_id, run_id, **updates)
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=event_type,
+            timestamp=timestamp,
+            source=_source_for_harness_event(event_type, payload),
+            payload=payload,
+        )
+
+
+def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> EventSource:
+    if event_type == EventType.SUBAGENT_STARTED.value:
+        return EventSource(
+            kind=EventSourceKind.SUBAGENT,
+            role=str(payload.get("role", "primary")),
+            name=str(payload.get("name", "primary-agent")),
+            component="langchain-deepagent-harness",
+        )
+    if event_type == EventType.TOOL_CALLED.value:
+        return EventSource(
+            kind=EventSourceKind.TOOL,
+            name=str(payload.get("tool", "sandbox-tool")),
+            component="sandbox-tool-bindings",
+        )
+    return EventSource(kind=EventSourceKind.RUNTIME, component="langchain-deepagent-harness")

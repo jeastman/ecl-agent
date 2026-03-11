@@ -7,6 +7,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from apps.runtime.local_agent_runtime.bootstrap import create_runtime_server
 from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness
@@ -23,6 +24,9 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCreateRequest,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
+from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
+    LangChainDeepAgentHarness,
+)
 
 
 CONFIG_PATH = "docs/architecture/runtime.example.toml"
@@ -76,12 +80,13 @@ class RuntimeIntegrationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
             config = load_runtime_config(CONFIG_PATH)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
                 identity=identity,
-                agent_harness=StubAgentHarness(output_artifact_path="scratch/repo_summary.md"),
+                agent_harness=_fake_langchain_harness(),
                 runtime_root=str(Path(temp_dir) / "runtime"),
             )
             correlation_id = new_correlation_id()
@@ -122,7 +127,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             artifacts_response, _ = server.handle_line(json.dumps(artifacts_request.to_dict()))
             artifact_payload = artifacts_response.to_dict()["result"]["artifacts"]
             self.assertEqual(len(artifact_payload), 1)
-            self.assertEqual(artifact_payload[0]["logical_path"], "scratch/repo_summary.md")
+            self.assertEqual(artifact_payload[0]["logical_path"], "artifacts/repo_summary.md")
 
             logs_request = JsonRpcRequest(
                 method=METHOD_TASK_LOGS_STREAM,
@@ -134,17 +139,22 @@ class RuntimeIntegrationTests(unittest.TestCase):
             logs_payload = logs_response.to_dict()
             self.assertTrue(logs_payload["result"]["stream_open"])
             self.assertEqual(logs_payload["result"]["run_id"], run_id)
-            self.assertEqual(
-                [event.event.event_type for event in stream_events],
-                ["task.created", "task.started", "artifact.created", "task.completed"],
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertEqual(event_types[0:2], ["task.created", "task.started"])
+            self.assertIn("plan.updated", event_types)
+            self.assertIn("subagent.started", event_types)
+            self.assertIn("artifact.created", event_types)
+            self.assertEqual(event_types[-1], "task.completed")
+            artifact_event = next(
+                event for event in stream_events if event.event.event_type == "artifact.created"
             )
             self.assertEqual(
-                stream_events[2].event.payload["artifact"]["logical_path"],
-                "scratch/repo_summary.md",
+                artifact_event.event.payload["artifact"]["logical_path"],
+                "artifacts/repo_summary.md",
             )
             self.assertEqual(
-                stream_events[2].event.payload["artifact"]["persistence_class"],
-                "ephemeral",
+                artifact_event.event.payload["artifact"]["persistence_class"],
+                "run",
             )
 
     def test_runtime_server_streams_events_on_stdout_after_ack(self) -> None:
@@ -188,6 +198,49 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(output_lines[0]["result"]["stream_open"], True)
             self.assertEqual(output_lines[1]["type"], "runtime.event")
             self.assertEqual(output_lines[1]["event"]["event_type"], "task.created")
+
+
+def _fake_langchain_harness() -> LangChainDeepAgentHarness:
+    return LangChainDeepAgentHarness(
+        model_name="gpt-5",
+        model_provider="openai",
+        model_factory=lambda model_name, model_provider: {
+            "model_name": model_name,
+            "model_provider": model_provider,
+        },
+        agent_factory=lambda **kwargs: _FakeCompiledAgent(kwargs["tools"]),
+    )
+
+
+class _FakeCompiledAgent:
+    def __init__(self, tools: list[Any]) -> None:
+        self._tools = tools
+
+    def invoke(self, input: dict[str, Any]) -> dict[str, Any]:
+        listing = self._invoke("list_files", {"root": "workspace"})
+        readme = self._invoke("read_file", {"path": "workspace/README.md"})
+        self._invoke(
+            "write_file",
+            {
+                "path": "workspace/artifacts/repo_summary.md",
+                "content": "\n".join(
+                    [
+                        "# Repository Architecture Summary",
+                        "",
+                        f"Files observed: {len(listing)}",
+                        f"First line: {readme.splitlines()[0]}",
+                    ]
+                )
+                + "\n",
+            },
+        )
+        return {"messages": [{"role": "assistant", "content": "Summary created."}]}
+
+    def _invoke(self, name: str, arguments: dict[str, Any]) -> Any:
+        for tool in self._tools:
+            if tool.name == name:
+                return tool.invoke(arguments)
+        raise AssertionError(f"missing tool: {name}")
 
 
 if __name__ == "__main__":

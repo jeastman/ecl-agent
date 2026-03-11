@@ -39,6 +39,16 @@ class ArtifactStoreTests(unittest.TestCase):
         self.assertEqual(artifact.display_name, "repo_summary.md")
         self.assertIsNotNone(artifact.hash)
 
+    def test_workspace_artifacts_are_exposed_relative_to_workspace_root(self) -> None:
+        self.sandbox.write_text("workspace/artifacts/repo_summary.md", "# Summary\n")
+        artifact = self.store.register_artifact(
+            task_id="task_1",
+            run_id="run_1",
+            sandbox_path="workspace/artifacts/repo_summary.md",
+        )
+        self.assertEqual(artifact.logical_path, "artifacts/repo_summary.md")
+        self.assertEqual(artifact.persistence_class, "run")
+
     def test_lookup_supports_task_run_and_filters(self) -> None:
         self.sandbox.write_text("scratch/repo_summary.md", "# Summary\n")
         self.sandbox.write_text("memory/session.json", "{}\n")

@@ -259,6 +259,9 @@ Artifact output:
 
 artifacts/repo_summary.md
 
+Implementation note:
+The physical file is written to `<workspace_root>/artifacts/repo_summary.md` and registered by the runtime as the logical artifact path `artifacts/repo_summary.md`.
+
 ---
 
 # 11. Package Changes
@@ -270,6 +273,9 @@ task_runner.py
 event_bus.py  
 
 services/deepagent-runtime
+
+Repo package path:
+`services/deepagent_runtime/local_agent_deepagent_runtime`
 
 deepagent_harness.py  
 tool_bindings.py  

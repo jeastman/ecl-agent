@@ -5,12 +5,15 @@ from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.runtime_server import RuntimeServer
-from apps.runtime.local_agent_runtime.task_runner import AgentHarness, StubAgentHarness, TaskRunner
+from apps.runtime.local_agent_runtime.task_runner import AgentHarness, TaskRunner
 from pathlib import Path
 import tempfile
 
 from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
+from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
+    LangChainDeepAgentHarness,
+)
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
@@ -33,7 +36,11 @@ def create_runtime_server(
         event_bus=event_bus,
         artifact_store=artifact_store,
         sandbox_factory=sandbox_factory,
-        agent_harness=agent_harness or StubAgentHarness(),
+        agent_harness=agent_harness
+        or LangChainDeepAgentHarness(
+            model_name=config.default_model.model,
+            model_provider=config.default_model.provider,
+        ),
     )
     handlers = MethodHandlers(
         config=config,
