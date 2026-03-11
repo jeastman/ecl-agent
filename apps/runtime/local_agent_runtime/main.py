@@ -22,7 +22,7 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     config = load_runtime_config(args.config)
     identity = load_identity_bundle(config.identity_path)
-    server = create_runtime_server(config=config, identity=identity)
+    server = create_runtime_server(config=config, identity=identity, config_path=args.config)
     return server.serve(sys.stdin, sys.stdout)
 
 

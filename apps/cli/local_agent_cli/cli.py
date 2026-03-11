@@ -6,20 +6,34 @@ from pathlib import Path
 
 from apps.cli.local_agent_cli.client import RuntimeClient, RuntimeClientError
 from apps.cli.local_agent_cli.renderers import (
+    render_approvals,
     render_artifacts,
+    render_config,
+    render_diagnostics,
     render_event_timeline,
     render_health,
+    render_memory,
     render_task_created,
     render_task_snapshot,
 )
 from packages.protocol.local_agent_protocol.models import (
+    ApprovalDecisionPayload,
     JsonRpcRequest,
+    METHOD_CONFIG_GET,
+    METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
+    METHOD_TASK_APPROVE,
+    METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
+    MemoryInspectParams,
+    TaskApprovalsListParams,
+    TaskApproveParams,
+    TaskDiagnosticsListParams,
     TaskArtifactsListParams,
     TaskCreateParams,
     TaskCreateRequest,
@@ -76,9 +90,40 @@ def build_parser() -> argparse.ArgumentParser:
     artifacts.add_argument("task_id", help="Task identifier.")
     artifacts.add_argument("--run-id", help="Optional run identifier.")
 
+    approvals = subparsers.add_parser("approvals", help="List approvals for a task.")
+    approvals.add_argument("task_id", help="Task identifier.")
+    approvals.add_argument("--run-id", help="Optional run identifier.")
+
+    diagnostics = subparsers.add_parser("diagnostics", help="List persisted diagnostics for a task.")
+    diagnostics.add_argument("task_id", help="Task identifier.")
+    diagnostics.add_argument("--run-id", help="Optional run identifier.")
+
+    approve = subparsers.add_parser("approve", help="Submit an approval decision.")
+    approve.add_argument("approval_id", help="Approval identifier.")
+    approve.add_argument(
+        "--decision",
+        choices=("approve", "reject"),
+        required=True,
+        help="Decision to submit.",
+    )
+    approve.add_argument("--task-id", help="Optional task identifier.")
+    approve.add_argument("--run-id", help="Optional run identifier.")
+
     resume = subparsers.add_parser("resume", help="Resume a paused or resumable task.")
     resume.add_argument("task_id", help="Task identifier.")
     resume.add_argument("--run-id", help="Optional run identifier.")
+
+    memory = subparsers.add_parser("memory", help="Inspect runtime memory entries.")
+    memory.add_argument("--task-id", help="Optional task identifier.")
+    memory.add_argument("--run-id", help="Optional run identifier.")
+    memory.add_argument(
+        "--scope",
+        choices=("project", "identity", "run_state", "scratch"),
+        help="Optional memory scope filter.",
+    )
+    memory.add_argument("--namespace", help="Optional namespace filter.")
+
+    subparsers.add_parser("config", help="Inspect redacted runtime config.")
     return parser
 
 
@@ -179,6 +224,66 @@ def handle_artifacts(config_path: str, task_id: str, run_id: str | None) -> int:
     return 0
 
 
+def handle_approvals(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_APPROVALS_LIST,
+        params=TaskApprovalsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_approvals(payload["result"]["approvals"]):
+        print(line)
+    return 0
+
+
+def handle_diagnostics(config_path: str, task_id: str, run_id: str | None) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_TASK_DIAGNOSTICS_LIST,
+        params=TaskDiagnosticsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_diagnostics(payload["result"]["diagnostics"]):
+        print(line)
+    return 0
+
+
+def handle_approve(
+    config_path: str,
+    task_id: str | None,
+    approval_id: str,
+    decision: str,
+    run_id: str | None,
+) -> int:
+    client = make_client(config_path)
+    normalized_decision = "approved" if decision == "approve" else "rejected"
+    request = JsonRpcRequest(
+        method=METHOD_TASK_APPROVE,
+        params=TaskApproveParams(
+            task_id=task_id,
+            run_id=run_id,
+            approval=ApprovalDecisionPayload(
+                approval_id=approval_id,
+                decision=normalized_decision,
+            ),
+        ).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    result = payload["result"]
+    print(
+        f"approval_id={result['approval_id']} accepted={result['accepted']} status={result['status']}"
+    )
+    for line in render_task_snapshot(result["task"]):
+        print(line)
+    return 0
+
+
 def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
     client = make_client(config_path)
     request = JsonRpcRequest(
@@ -189,6 +294,46 @@ def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
     )
     payload = client.send(request)
     for line in render_task_snapshot(payload["result"]["task"]):
+        print(line)
+    return 0
+
+
+def handle_memory(
+    config_path: str,
+    task_id: str | None,
+    run_id: str | None,
+    scope: str | None,
+    namespace: str | None,
+) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_MEMORY_INSPECT,
+        params=MemoryInspectParams(
+            task_id=task_id,
+            run_id=run_id,
+            scope=scope,
+            namespace=namespace,
+        ).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    result = payload["result"]
+    for line in render_memory(result["entries"], scope=result["scope"], count=result["count"]):
+        print(line)
+    return 0
+
+
+def handle_config(config_path: str) -> int:
+    client = make_client(config_path)
+    request = JsonRpcRequest(
+        method=METHOD_CONFIG_GET,
+        params={},
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    for line in render_config(payload["result"]):
         print(line)
     return 0
 
@@ -219,12 +364,42 @@ def main(argv: list[str] | None = None) -> int:
                 task_id=args.task_id,
                 run_id=args.run_id,
             )
+        if args.command == "approvals":
+            return handle_approvals(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+            )
+        if args.command == "diagnostics":
+            return handle_diagnostics(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+            )
+        if args.command == "approve":
+            return handle_approve(
+                config_path=config_path,
+                task_id=args.task_id,
+                approval_id=args.approval_id,
+                decision=args.decision,
+                run_id=args.run_id,
+            )
         if args.command == "resume":
             return handle_resume(
                 config_path=config_path,
                 task_id=args.task_id,
                 run_id=args.run_id,
             )
+        if args.command == "memory":
+            return handle_memory(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+                scope=args.scope,
+                namespace=args.namespace,
+            )
+        if args.command == "config":
+            return handle_config(config_path=config_path)
     except RuntimeClientError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

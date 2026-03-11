@@ -7,9 +7,12 @@ from typing import TextIO
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
 from packages.observability.local_agent_observability.logging import log_record
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
     METHOD_TASK_APPROVE,
+    METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
@@ -96,6 +99,24 @@ class RuntimeServer:
                     ),
                     [],
                 )
+            if request.method == METHOD_TASK_APPROVALS_LIST:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_approvals_list(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_TASK_DIAGNOSTICS_LIST:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_diagnostics_list(request.params),
+                    ),
+                    [],
+                )
             if request.method == METHOD_TASK_RESUME:
                 return (
                     JsonRpcResponse(
@@ -125,6 +146,15 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.memory_inspect(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_CONFIG_GET:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.config_get(),
                     ),
                     [],
                 )

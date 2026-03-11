@@ -4,12 +4,18 @@ import unittest
 
 from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_APPROVE,
+    METHOD_TASK_APPROVALS_LIST,
+    METHOD_CONFIG_GET,
+    METHOD_TASK_DIAGNOSTICS_LIST,
+    DiagnosticEntry,
     EventEnvelope,
     EventSource,
     EventSourceKind,
     METHOD_MEMORY_INSPECT,
     METHOD_TASK_LOGS_STREAM,
     ApprovalDecisionPayload,
+    ConfigGetResult,
+    ConfigRedaction,
     MemoryInspectEntry,
     MemoryInspectParams,
     MemoryInspectResult,
@@ -17,6 +23,9 @@ from packages.protocol.local_agent_protocol.models import (
     RuntimeEvent,
     TaskArtifactsListParams,
     TaskApproveParams,
+    TaskApprovalsListParams,
+    TaskDiagnosticsListParams,
+    TaskDiagnosticsListResult,
     TaskCreateParams,
     TaskCreateRequest,
     TaskGetParams,
@@ -90,18 +99,30 @@ class ProtocolModelTests(unittest.TestCase):
             TaskResumeParams.from_dict({})
         with self.assertRaisesRegex(ValueError, "task.approve requires approval"):
             TaskApproveParams.from_dict({"task_id": "task_1"})
+        self.assertIsNone(
+            TaskApproveParams.from_dict(
+                {"approval": {"approval_id": "approval_1", "decision": "approved"}}
+            ).task_id
+        )
 
     def test_memory_inspect_params_validate(self) -> None:
         params = MemoryInspectParams.from_dict(
-            {"task_id": "task_1", "run_id": "run_1", "scope": "run_state"}
+            {
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "scope": "run_state",
+                "namespace": "run.notes",
+            }
         )
         self.assertEqual(params.task_id, "task_1")
         self.assertEqual(params.run_id, "run_1")
         self.assertEqual(params.scope, "run_state")
+        self.assertEqual(params.namespace, "run.notes")
         self.assertEqual(METHOD_MEMORY_INSPECT, "memory.inspect")
         with self.assertRaisesRegex(ValueError, "memory.inspect run_id requires task_id"):
             MemoryInspectParams.from_dict({"run_id": "run_1"})
         self.assertEqual(METHOD_TASK_APPROVE, "task.approve")
+        self.assertEqual(METHOD_TASK_APPROVALS_LIST, "task.approvals.list")
 
     def test_approval_payload_validation(self) -> None:
         payload = ApprovalDecisionPayload.from_dict(
@@ -134,6 +155,48 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["scope"], "project")
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["entries"][0]["memory_id"], "mem_1")
+
+    def test_task_approvals_list_params_validate(self) -> None:
+        params = TaskApprovalsListParams.from_dict({"task_id": "task_1", "run_id": "run_1"})
+        self.assertEqual(params.task_id, "task_1")
+        self.assertEqual(params.run_id, "run_1")
+        with self.assertRaisesRegex(ValueError, "task.approvals.list requires task_id"):
+            TaskApprovalsListParams.from_dict({})
+        self.assertEqual(METHOD_TASK_DIAGNOSTICS_LIST, "task.diagnostics.list")
+
+    def test_task_diagnostics_list_params_and_result_validate(self) -> None:
+        params = TaskDiagnosticsListParams.from_dict({"task_id": "task_1", "run_id": "run_1"})
+        self.assertEqual(params.task_id, "task_1")
+        self.assertEqual(params.run_id, "run_1")
+        with self.assertRaisesRegex(ValueError, "task.diagnostics.list requires task_id"):
+            TaskDiagnosticsListParams.from_dict({})
+        result = TaskDiagnosticsListResult(
+            diagnostics=[
+                DiagnosticEntry(
+                    diagnostic_id="diag_1",
+                    task_id="task_1",
+                    run_id="run_1",
+                    kind="policy_denied",
+                    message="Denied",
+                    created_at=utc_now_timestamp(),
+                    details={"path": "workspace"},
+                )
+            ],
+            count=1,
+        )
+        self.assertEqual(result.to_dict()["diagnostics"][0]["diagnostic_id"], "diag_1")
+
+    def test_config_get_result_serialization(self) -> None:
+        result = ConfigGetResult(
+            effective_config={"runtime": {"name": "demo"}},
+            loaded_profiles=[],
+            config_sources=["docs/architecture/runtime.example.toml"],
+            redactions=[ConfigRedaction(path="policy.api_token", reason="sensitive-key")],
+        )
+        payload = result.to_dict()
+        self.assertEqual(payload["effective_config"]["runtime"]["name"], "demo")
+        self.assertEqual(payload["redactions"][0]["path"], "policy.api_token")
+        self.assertEqual(METHOD_CONFIG_GET, "config.get")
 
     def test_runtime_event_serialization(self) -> None:
         event = RuntimeEvent(

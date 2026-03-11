@@ -37,9 +37,14 @@ class DiagnosticRecord:
 class RunMetricsRecord:
     task_id: str
     run_id: str
+    started_at: str | None = None
+    ended_at: str | None = None
+    event_count: int = 0
+    artifact_count: int = 0
     checkpoint_count: int = 0
     approval_count: int = 0
     resume_count: int = 0
+    deny_count: int = 0
     last_updated_at: str | None = None
 
     def to_dict(self) -> dict[str, Any]:

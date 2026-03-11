@@ -661,7 +661,43 @@ Submits an approval decision.
 
 ---
 
-## 14.8 `task.artifacts.list`
+## 14.8 `task.approvals.list`
+
+### Purpose
+Lists persisted approval requests for a task or run.
+
+### Params
+- `correlation_id`
+- `task_id`
+
+Optional:
+- `run_id`
+
+### Result
+- `approvals`
+- `count`
+
+---
+
+## 14.9 `task.diagnostics.list`
+
+### Purpose
+Lists persisted diagnostics for a task or run.
+
+### Params
+- `correlation_id`
+- `task_id`
+
+Optional:
+- `run_id`
+
+### Result
+- `diagnostics`
+- `count`
+
+---
+
+## 14.10 `task.artifacts.list`
 
 ### Purpose
 Lists artifacts associated with a task/run.
@@ -680,7 +716,7 @@ Optional:
 
 ---
 
-## 14.9 `task.logs.stream`
+## 14.11 `task.logs.stream`
 
 ### Purpose
 Subscribes the client to runtime events for a task or run.
@@ -712,7 +748,7 @@ For transports that do not support a shared event stream naturally, this method 
 
 ---
 
-## 14.9 `memory.inspect`
+## 14.12 `memory.inspect`
 
 ### Purpose
 Returns runtime-inspectable memory information appropriate for clients.
@@ -723,6 +759,7 @@ Optional:
 - `task_id`
 - `run_id`
 - `scope` (`run_state`, `project`, `identity`, `scratch`)
+- `namespace`
 
 ### Result
 - `entries`

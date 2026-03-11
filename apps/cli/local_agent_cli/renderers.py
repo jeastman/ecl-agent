@@ -117,3 +117,69 @@ def render_artifacts(artifacts: list[dict[str, Any]]) -> list[str]:
             line += f" display_name={artifact['display_name']}"
         lines.append(line)
     return lines
+
+
+def render_approvals(approvals: list[dict[str, Any]]) -> list[str]:
+    if not approvals:
+        return ["no_approvals=true"]
+    lines: list[str] = []
+    for approval in approvals:
+        line = (
+            f"approval_id={approval['approval_id']} status={approval['status']} "
+            f"type={approval['type']} scope={approval['scope_summary']}"
+        )
+        if approval.get("decision") is not None:
+            line += f" decision={approval['decision']}"
+        if approval.get("decided_at") is not None:
+            line += f" decided_at={approval['decided_at']}"
+        line += f" created_at={approval['created_at']}"
+        if approval.get("description"):
+            line += f" description={approval['description']}"
+        lines.append(line)
+    return lines
+
+
+def render_diagnostics(diagnostics: list[dict[str, Any]]) -> list[str]:
+    if not diagnostics:
+        return ["no_diagnostics=true"]
+    lines: list[str] = []
+    for diagnostic in diagnostics:
+        line = (
+            f"diagnostic_id={diagnostic['diagnostic_id']} kind={diagnostic['kind']} "
+            f"created_at={diagnostic['created_at']} message={diagnostic['message']}"
+        )
+        details = diagnostic.get("details")
+        if details:
+            line += f" details={json.dumps(details, sort_keys=True)}"
+        lines.append(line)
+    return lines
+
+
+def render_memory(entries: list[dict[str, Any]], *, scope: str, count: int) -> list[str]:
+    lines = [f"scope={scope}", f"count={count}"]
+    if not entries:
+        lines.append("no_memory=true")
+        return lines
+    for entry in entries:
+        line = (
+            f"memory_id={entry['memory_id']} scope={entry['scope']} "
+            f"namespace={entry['namespace']} summary={entry['summary']}"
+        )
+        if entry.get("source_run") is not None:
+            line += f" source_run={entry['source_run']}"
+        line += f" created_at={entry['created_at']} updated_at={entry['updated_at']}"
+        provenance = entry.get("provenance")
+        if provenance:
+            line += f" provenance={json.dumps(provenance, sort_keys=True)}"
+        lines.append(line)
+    return lines
+
+
+def render_config(result: dict[str, Any]) -> list[str]:
+    lines = [
+        f"loaded_profiles={','.join(result.get('loaded_profiles', [])) or '<none>'}",
+        f"config_sources={','.join(result.get('config_sources', [])) or '<none>'}",
+        f"redaction_count={len(result.get('redactions', []))}",
+        json.dumps(result["effective_config"], sort_keys=True),
+    ]
+    return lines

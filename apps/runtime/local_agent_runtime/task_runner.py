@@ -188,6 +188,7 @@ class TaskRunner:
             },
         )
         self._run_state_store.create(state)
+        self._write_metrics(task_id, run_id, started_at=accepted_at)
         self._publish(
             task_id=task_id,
             run_id=run_id,
@@ -242,7 +243,7 @@ class TaskRunner:
 
     def approve(
         self,
-        task_id: str,
+        task_id: str | None,
         approval_id: str,
         decision: str,
         *,
@@ -254,12 +255,12 @@ class TaskRunner:
         request = self._durable_services.approval_store.get_request(approval_id)
         if request is None:
             raise KeyError(f"unknown approval: {approval_id}")
-        if request.task_id != task_id:
+        if task_id is not None and request.task_id != task_id:
             raise ValueError("approval does not belong to the requested task")
         if run_id is not None and request.run_id != run_id:
             raise ValueError("approval does not belong to the requested run")
 
-        state = self._run_state_store.get(task_id, request.run_id)
+        state = self._run_state_store.get(request.task_id, request.run_id)
         if state.pending_approval_id != approval_id:
             raise ValueError("approval is not the active pending approval for this run")
 
@@ -542,6 +543,7 @@ class TaskRunner:
                 source=EventSource(kind=EventSourceKind.RUNTIME, component="artifact-store"),
                 payload={"artifact": artifact.to_dict()},
             )
+            self._write_metrics(task_id, run_id, artifact_count=artifact_count)
 
         if result.paused:
             paused_at = utc_now_timestamp()
@@ -586,6 +588,7 @@ class TaskRunner:
                         "summary": result.summary,
                     },
                 )
+            self._write_metrics(task_id, run_id, artifact_count=artifact_count)
             return
 
         if result.success:
@@ -616,6 +619,12 @@ class TaskRunner:
                     "outcome": "success",
                     "artifact_count": artifact_count,
                 },
+            )
+            self._write_metrics(
+                task_id,
+                run_id,
+                ended_at=completed_at,
+                artifact_count=artifact_count,
             )
             return
 
@@ -657,6 +666,7 @@ class TaskRunner:
                 "error": result.error_message or result.summary,
             },
         )
+        self._write_metrics(task_id, run_id, ended_at=failed_at, artifact_count=artifact_count)
 
     def _publish(
         self,
@@ -684,6 +694,7 @@ class TaskRunner:
         self._event_bus.publish(runtime_event)
         if self._durable_services is not None:
             self._durable_services.event_store.append_event(runtime_event.event)
+        self._write_metrics(task_id, run_id, event_count_increment=1)
 
     def _handle_harness_event(
         self,
@@ -784,6 +795,7 @@ class TaskRunner:
                     "context": context.to_dict(),
                 },
             )
+            self._write_metrics(context.task_id, context.run_id, deny_count_increment=1)
             raise PolicyDeniedInterrupt(decision.reason)
         approval = self._create_approval_request(
             correlation_id=correlation_id,
@@ -866,70 +878,46 @@ class TaskRunner:
         return self._checkpoint_adapter.begin_run(task_id, run_id)
 
     def _increment_checkpoint_metrics(self, task_id: str, run_id: str) -> None:
-        if self._durable_services is None:
-            return
-        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
-        checkpoint_count = 1 if metrics is None else metrics.checkpoint_count + 1
-        approval_count = 0 if metrics is None else metrics.approval_count
-        resume_count = 0 if metrics is None else metrics.resume_count
-        self._durable_services.run_metrics_store.write_metrics(
-            record=type(metrics)(
-                task_id=task_id,
-                run_id=run_id,
-                checkpoint_count=checkpoint_count,
-                approval_count=approval_count,
-                resume_count=resume_count,
-                last_updated_at=utc_now_timestamp(),
-            )
-            if metrics is not None
-            else _run_metrics_record(
-                task_id, run_id, checkpoint_count, approval_count, resume_count
-            )
-        )
+        self._write_metrics(task_id, run_id, checkpoint_count_increment=1)
 
     def _increment_resume_metrics(self, task_id: str, run_id: str) -> None:
-        if self._durable_services is None:
-            return
-        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
-        checkpoint_count = 0 if metrics is None else metrics.checkpoint_count
-        approval_count = 0 if metrics is None else metrics.approval_count
-        resume_count = 1 if metrics is None else metrics.resume_count + 1
-        self._durable_services.run_metrics_store.write_metrics(
-            record=type(metrics)(
-                task_id=task_id,
-                run_id=run_id,
-                checkpoint_count=checkpoint_count,
-                approval_count=approval_count,
-                resume_count=resume_count,
-                last_updated_at=utc_now_timestamp(),
-            )
-            if metrics is not None
-            else _run_metrics_record(
-                task_id, run_id, checkpoint_count, approval_count, resume_count
-            )
-        )
+        self._write_metrics(task_id, run_id, resume_count_increment=1)
 
     def _increment_approval_metrics(self, task_id: str, run_id: str) -> None:
+        self._write_metrics(task_id, run_id, approval_count_increment=1)
+
+    def _write_metrics(
+        self,
+        task_id: str,
+        run_id: str,
+        *,
+        started_at: str | None = None,
+        ended_at: str | None = None,
+        artifact_count: int | None = None,
+        event_count_increment: int = 0,
+        checkpoint_count_increment: int = 0,
+        approval_count_increment: int = 0,
+        resume_count_increment: int = 0,
+        deny_count_increment: int = 0,
+    ) -> None:
         if self._durable_services is None:
             return
-        metrics = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
-        checkpoint_count = 0 if metrics is None else metrics.checkpoint_count
-        approval_count = 1 if metrics is None else metrics.approval_count + 1
-        resume_count = 0 if metrics is None else metrics.resume_count
-        self._durable_services.run_metrics_store.write_metrics(
-            record=type(metrics)(
-                task_id=task_id,
-                run_id=run_id,
-                checkpoint_count=checkpoint_count,
-                approval_count=approval_count,
-                resume_count=resume_count,
-                last_updated_at=utc_now_timestamp(),
-            )
-            if metrics is not None
-            else _run_metrics_record(
-                task_id, run_id, checkpoint_count, approval_count, resume_count
-            )
-        )
+        record = self._durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        if record is None:
+            record = _run_metrics_record(task_id, run_id)
+        if record.started_at is None and started_at is not None:
+            record.started_at = started_at
+        if ended_at is not None:
+            record.ended_at = ended_at
+        if artifact_count is not None:
+            record.artifact_count = artifact_count
+        record.event_count += event_count_increment
+        record.checkpoint_count += checkpoint_count_increment
+        record.approval_count += approval_count_increment
+        record.resume_count += resume_count_increment
+        record.deny_count += deny_count_increment
+        record.last_updated_at = utc_now_timestamp()
+        self._durable_services.run_metrics_store.write_metrics(record)
 
 
 def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> EventSource:
@@ -952,15 +940,9 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
 def _run_metrics_record(
     task_id: str,
     run_id: str,
-    checkpoint_count: int,
-    approval_count: int,
-    resume_count: int,
 ) -> RunMetricsRecord:
     return RunMetricsRecord(
         task_id=task_id,
         run_id=run_id,
-        checkpoint_count=checkpoint_count,
-        approval_count=approval_count,
-        resume_count=resume_count,
         last_updated_at=utc_now_timestamp(),
     )

@@ -385,9 +385,14 @@ class RunMetricsStoreTests(unittest.TestCase):
             record = RunMetricsRecord(
                 task_id="task_1",
                 run_id="run_1",
+                started_at="2026-03-10T00:00:00Z",
+                ended_at="2026-03-10T00:10:00Z",
+                event_count=4,
+                artifact_count=1,
                 checkpoint_count=2,
                 approval_count=1,
                 resume_count=1,
+                deny_count=1,
                 last_updated_at=utc_now_timestamp(),
             )
 
@@ -397,7 +402,11 @@ class RunMetricsStoreTests(unittest.TestCase):
 
             self.assertIsNotNone(loaded)
             assert loaded is not None
+            self.assertEqual(loaded.started_at, "2026-03-10T00:00:00Z")
+            self.assertEqual(loaded.event_count, 4)
+            self.assertEqual(loaded.artifact_count, 1)
             self.assertEqual(loaded.checkpoint_count, 2)
+            self.assertEqual(loaded.deny_count, 1)
 
 
 class ApprovalAndPolicyTests(unittest.TestCase):

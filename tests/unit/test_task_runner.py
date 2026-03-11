@@ -222,6 +222,10 @@ class TaskRunnerTests(unittest.TestCase):
         assert metrics is not None
         self.assertEqual(metrics.checkpoint_count, 2)
         self.assertEqual(metrics.resume_count, 1)
+        self.assertEqual(metrics.event_count, 8)
+        self.assertEqual(metrics.artifact_count, 1)
+        self.assertIsNotNone(metrics.started_at)
+        self.assertIsNotNone(metrics.ended_at)
 
     def test_task_runner_requests_approval_and_resumes_after_approval(self) -> None:
         store = InMemoryRunStateStore()
@@ -265,6 +269,10 @@ class TaskRunnerTests(unittest.TestCase):
         event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
         self.assertEqual(event_types.count("approval.requested"), 1)
         self.assertIn("task.resumed", event_types)
+        metrics = durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        assert metrics is not None
+        self.assertEqual(metrics.approval_count, 1)
+        self.assertEqual(metrics.resume_count, 1)
 
     def test_task_runner_fails_run_when_approval_rejected(self) -> None:
         store = InMemoryRunStateStore()
@@ -328,6 +336,9 @@ class TaskRunnerTests(unittest.TestCase):
 
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        metrics = durable_services.run_metrics_store.read_metrics(task_id, run_id)
+        assert metrics is not None
+        self.assertEqual(metrics.deny_count, 1)
         self.assertFalse(snapshot.is_resumable)
         assert snapshot.latest_summary is not None
         self.assertIn("network access", snapshot.latest_summary.lower())

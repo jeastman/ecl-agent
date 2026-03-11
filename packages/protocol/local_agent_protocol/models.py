@@ -13,10 +13,13 @@ METHOD_RUNTIME_HEALTH = "runtime.health"
 METHOD_TASK_CREATE = "task.create"
 METHOD_TASK_GET = "task.get"
 METHOD_TASK_APPROVE = "task.approve"
+METHOD_TASK_APPROVALS_LIST = "task.approvals.list"
+METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
 METHOD_MEMORY_INSPECT = "memory.inspect"
+METHOD_CONFIG_GET = "config.get"
 
 
 def utc_now_timestamp() -> str:
@@ -320,7 +323,7 @@ class ApprovalDecisionPayload:
 
 @dataclass(slots=True)
 class TaskApproveParams:
-    task_id: str
+    task_id: str | None
     approval: ApprovalDecisionPayload
     run_id: str | None = None
 
@@ -331,9 +334,10 @@ class TaskApproveParams:
 
     @classmethod
     def from_dict(cls, payload: dict[str, Any]) -> "TaskApproveParams":
-        task_id = str(payload.get("task_id", "")).strip()
-        if not task_id:
-            raise ValueError("task.approve requires task_id")
+        task_id_value = payload.get("task_id")
+        if task_id_value is not None and not isinstance(task_id_value, str):
+            raise ValueError("task.approve task_id must be a string when provided")
+        task_id = str(task_id_value).strip() if isinstance(task_id_value, str) else None
         run_id = payload.get("run_id")
         if run_id is not None and not isinstance(run_id, str):
             raise ValueError("task.approve run_id must be a string when provided")
@@ -360,6 +364,100 @@ class TaskApproveResult:
             "accepted": self.accepted,
             "status": self.status,
             "task": self.task.to_dict(),
+        }
+
+
+@dataclass(slots=True)
+class TaskApprovalsListParams:
+    task_id: str
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskApprovalsListParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.approvals.list requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.approvals.list run_id must be a string when provided")
+        return cls(task_id=task_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class ApprovalEntry:
+    approval_id: str
+    task_id: str
+    run_id: str
+    status: str
+    type: str
+    scope: dict[str, Any]
+    scope_summary: str
+    description: str
+    created_at: str
+    decision: str | None = None
+    decided_at: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass(slots=True)
+class TaskApprovalsListResult:
+    approvals: list[ApprovalEntry]
+    count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "approvals": [approval.to_dict() for approval in self.approvals],
+            "count": self.count,
+        }
+
+
+@dataclass(slots=True)
+class TaskDiagnosticsListParams:
+    task_id: str
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskDiagnosticsListParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.diagnostics.list requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.diagnostics.list run_id must be a string when provided")
+        return cls(task_id=task_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class DiagnosticEntry:
+    diagnostic_id: str
+    task_id: str
+    run_id: str
+    kind: str
+    message: str
+    created_at: str
+    details: dict[str, Any]
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class TaskDiagnosticsListResult:
+    diagnostics: list[DiagnosticEntry]
+    count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "diagnostics": [diagnostic.to_dict() for diagnostic in self.diagnostics],
+            "count": self.count,
         }
 
 
@@ -489,6 +587,7 @@ class MemoryInspectParams:
     task_id: str | None = None
     run_id: str | None = None
     scope: str | None = None
+    namespace: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return _strip_none(asdict(self))
@@ -498,12 +597,18 @@ class MemoryInspectParams:
         task_id = payload.get("task_id")
         run_id = payload.get("run_id")
         scope = payload.get("scope")
-        for name, value in (("task_id", task_id), ("run_id", run_id), ("scope", scope)):
+        namespace = payload.get("namespace")
+        for name, value in (
+            ("task_id", task_id),
+            ("run_id", run_id),
+            ("scope", scope),
+            ("namespace", namespace),
+        ):
             if value is not None and not isinstance(value, str):
                 raise ValueError(f"memory.inspect {name} must be a string when provided")
         if run_id is not None and task_id is None:
             raise ValueError("memory.inspect run_id requires task_id")
-        return cls(task_id=task_id, run_id=run_id, scope=scope)
+        return cls(task_id=task_id, run_id=run_id, scope=scope, namespace=namespace)
 
 
 @dataclass(slots=True)
@@ -517,6 +622,31 @@ class MemoryInspectResult:
             "entries": [entry.to_dict() for entry in self.entries],
             "scope": self.scope,
             "count": self.count,
+        }
+
+
+@dataclass(slots=True)
+class ConfigRedaction:
+    path: str
+    reason: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class ConfigGetResult:
+    effective_config: dict[str, Any]
+    loaded_profiles: list[str]
+    config_sources: list[str]
+    redactions: list[ConfigRedaction]
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "effective_config": self.effective_config,
+            "loaded_profiles": list(self.loaded_profiles),
+            "config_sources": list(self.config_sources),
+            "redactions": [redaction.to_dict() for redaction in self.redactions],
         }
 
 

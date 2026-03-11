@@ -42,17 +42,17 @@ The repository now implements the Milestone 0 and Milestone 1 vertical slice des
 - identity ingestion exists and is wired into runtime startup and prompt construction
 - runtime event streaming and artifact registration exist
 
-The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the Milestone 2 durability substrate plus Phase 2 checkpoint/resume behavior:
+The repository does **not** yet implement most of the spec areas that are explicitly deferred beyond Milestone 1, but it now includes the Milestone 2 durability substrate plus Phase 5 inspection/config/CLI completion:
 
 - durable memory/query contracts and storage seams
 - checkpoint metadata and thread registry seams
 - checkpoint-backed pause/resume execution flow
 - restart-time recovery of resumable runs
-- `task.resume` protocol and CLI support
-- persistent event/diagnostic/run-metrics storage seams
+- `task.resume`, `task.approve`, `task.approvals.list`, `task.diagnostics.list`, `memory.inspect`, and `config.get` protocol support
+- CLI support for approvals, diagnostics, approval decisions, resume, memory inspection, and redacted config inspection
+- persistent event/diagnostic/run-metrics storage with restart-safe inspection
 - approval and policy storage seams
 - task cancellation
-- memory inspection
 - policy engine behavior beyond a placeholder runtime-owned boundary
 - sub-agent registry and real multi-role orchestration
 - model routing beyond a single default model plus unused config placeholders
@@ -62,7 +62,7 @@ The net result is:
 
 - **Milestone 0:** implemented
 - **Milestone 1:** implemented as a single-agent local runtime vertical slice
-- **Milestone 2:** Phase 1 durability foundations and Phase 2 checkpoint/resume/recovery implemented; later governance and memory phases still incomplete
+- **Milestone 2:** durable memory, approval-governed pause/resume, restart recovery, and inspection-oriented protocol/CLI surfaces implemented; some later-spec behaviors still incomplete
 - **Milestone 3 and later:** mostly not implemented
 
 ## Status Legend
@@ -152,10 +152,13 @@ Implemented and wired end to end:
 - `task.create`
 - `task.get`
 - `task.approve`
+- `task.approvals.list`
+- `task.diagnostics.list`
 - `task.resume`
 - `task.logs.stream`
 - `task.artifacts.list`
 - `memory.inspect`
+- `config.get`
 
 Evidence:
 
@@ -166,12 +169,11 @@ Evidence:
 Specified by the master spec but not implemented:
 
 - `task.cancel`
-- `config.get`
 
 Evidence of absence:
 
-- no method constants or handler branches for these methods in the runtime or protocol package
-- repository search returns only documentation references for these names
+- no method constants or handler branches for `task.cancel` in the runtime or protocol package
+- repository search returns only documentation references for `task.cancel`
 
 ### 4.2 Implemented event types
 
@@ -533,7 +535,7 @@ Evidence:
 Assessment:
 
 - Eventing is implemented and central to the runtime.
-- Milestone 2 Phase 1 observability foundations are now present, but higher-level diagnostics and trace behavior remain minimal.
+- Persistent event history, diagnostics, and richer run metrics now support restart-safe inspection, but higher-level tracing and deeper diagnostics remain minimal.
 
 ## 14. Artifact Model
 
@@ -701,10 +703,10 @@ Master spec section 28 says the initial architecture baseline is satisfied when 
 
 These are the main verified gaps between the current implementation and the broader master spec:
 
-1. Missing protocol methods: `task.cancel`, `config.get`.
+1. Missing protocol method: `task.cancel`.
 2. Missing event types: `subagent.completed`, `memory.updated`.
 3. No retrieval precedence or policy-governed promotion behavior for durable memory yet.
-4. No CLI approval browsing/approval UX yet, even though runtime approval handling and `task.approve` exist.
+4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
 5. No sub-agent registry or multi-role orchestration.
 6. No actual use of `subagent_model_overrides` for model routing.
 7. No skill discovery or loading subsystem.

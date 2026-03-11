@@ -27,6 +27,7 @@ def create_runtime_server(
     *,
     agent_harness: AgentHarness | None = None,
     runtime_root: str | None = None,
+    config_path: str | None = None,
 ) -> RuntimeServer:
     run_state_store = InMemoryRunStateStore()
     event_bus = InMemoryEventBus()
@@ -71,5 +72,6 @@ def create_runtime_server(
         task_runner=task_runner,
         durable_services=durable_services,
         resume_service=resume_service,
+        config_sources=[source for source in (config_path, config.identity_path) if source is not None],
     )
     return RuntimeServer(handlers=handlers)

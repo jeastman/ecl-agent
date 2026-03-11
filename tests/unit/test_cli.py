@@ -201,6 +201,148 @@ class CliTests(unittest.TestCase):
         self.assertIn("latest_summary=Resumed successfully.", output)
         self.assertIn("latest_checkpoint_id=ckpt_2", output)
 
+    def test_handle_approvals_renders_runtime_owned_approvals(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "approvals": [
+                    {
+                        "approval_id": "approval_1",
+                        "status": "pending",
+                        "type": "boundary",
+                        "scope_summary": "file.write:workspace/**",
+                        "description": "Allow write access",
+                        "created_at": "2026-03-10T00:00:00Z",
+                    }
+                ]
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_approvals(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                )
+        self.assertEqual(exit_code, 0)
+        self.assertIn("approval_id=approval_1", stdout.getvalue())
+        self.assertIn("scope=file.write:workspace/**", stdout.getvalue())
+
+    def test_handle_approve_accepts_runtime_snapshot(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "approval_id": "approval_1",
+                "accepted": True,
+                "status": "approved",
+                "task": {
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "status": "completed",
+                    "objective": "Inspect the repo",
+                },
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_approve(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id=None,
+                    approval_id="approval_1",
+                    decision="approve",
+                    run_id="run_1",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("approval_id=approval_1 accepted=True status=approved", output)
+        self.assertIn("status=completed", output)
+        request = fake_client.requests[0]
+        self.assertEqual(request.params["approval"]["decision"], "approved")  # type: ignore[attr-defined]
+
+    def test_handle_diagnostics_renders_persisted_diagnostics(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "diagnostics": [
+                    {
+                        "diagnostic_id": "diag_1",
+                        "kind": "policy_denied",
+                        "created_at": "2026-03-10T00:00:00Z",
+                        "message": "Network access denied",
+                        "details": {"phase": "execute"},
+                    }
+                ]
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_diagnostics(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("diagnostic_id=diag_1", output)
+        self.assertIn("kind=policy_denied", output)
+
+    def test_handle_memory_renders_entries(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "scope": "project",
+                "count": 1,
+                "entries": [
+                    {
+                        "memory_id": "mem_1",
+                        "scope": "project",
+                        "namespace": "project.conventions",
+                        "summary": "Convention",
+                        "created_at": "2026-03-10T00:00:00Z",
+                        "updated_at": "2026-03-10T00:00:00Z",
+                        "provenance": {"task_id": "task_1"},
+                    }
+                ],
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_memory(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id=None,
+                    run_id=None,
+                    scope="project",
+                    namespace="project.conventions",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("scope=project", output)
+        self.assertIn("memory_id=mem_1", output)
+        self.assertIn('provenance={"task_id": "task_1"}', output)
+
+    def test_handle_config_renders_redacted_effective_config(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "loaded_profiles": [],
+                "config_sources": ["docs/architecture/runtime.example.toml"],
+                "redactions": [{"path": "policy.api_token", "reason": "sensitive-key"}],
+                "effective_config": {"policy": {"api_token": "***REDACTED***"}},
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_config("docs/architecture/runtime.example.toml")
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("redaction_count=1", output)
+        self.assertIn('"api_token": "***REDACTED***"', output)
+
 
 if __name__ == "__main__":
     unittest.main()

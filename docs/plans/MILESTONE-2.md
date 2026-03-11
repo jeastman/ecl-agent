@@ -392,7 +392,7 @@ Milestone 2 upgrades runtime observability.
 Events must persist beyond runtime restart.
 
 EventStore should support:
-ppend_event()
+append_event()
 get_events()
 stream_events()
 

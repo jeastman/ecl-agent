@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Any
 
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
@@ -12,17 +13,25 @@ from apps.runtime.local_agent_runtime.task_runner import TaskRunner
 from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
 from packages.protocol.local_agent_protocol.models import (
+    ApprovalEntry,
+    ConfigGetResult,
+    ConfigRedaction,
+    DiagnosticEntry,
     MemoryInspectEntry,
     MemoryInspectParams,
     MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeHealthResult,
+    TaskApprovalsListParams,
+    TaskApprovalsListResult,
     TaskArtifactsListParams,
     TaskArtifactsListResult,
     TaskApproveParams,
     TaskApproveResult,
     TaskCreateParams,
     TaskCreateResult,
+    TaskDiagnosticsListParams,
+    TaskDiagnosticsListResult,
     TaskGetParams,
     TaskGetResult,
     TaskResumeParams,
@@ -49,6 +58,7 @@ class MethodHandlers:
     task_runner: TaskRunner
     durable_services: DurableRuntimeServices
     resume_service: ResumeService
+    config_sources: list[str] | None = None
 
     def runtime_health(self, correlation_id: str | None) -> RuntimeHealthResult:
         return RuntimeHealthResult(
@@ -110,6 +120,52 @@ class MethodHandlers:
         request = TaskResumeParams.from_dict(params)
         return TaskResumeResult(task=self.resume_service.resume(request.task_id, request.run_id))
 
+    def task_approvals_list(self, params: dict) -> TaskApprovalsListResult:
+        request = TaskApprovalsListParams.from_dict(params)
+        approvals = self.durable_services.approval_store.list_for_task(
+            request.task_id,
+            request.run_id,
+        )
+        entries = [
+            ApprovalEntry(
+                approval_id=approval.approval_id,
+                task_id=approval.task_id,
+                run_id=approval.run_id,
+                status=approval.status,
+                type=approval.type,
+                scope=dict(approval.scope),
+                scope_summary=_scope_summary(approval.scope),
+                description=approval.description,
+                created_at=approval.created_at,
+                decision=approval.decision,
+                decided_at=approval.decided_at,
+            )
+            for approval in approvals
+        ]
+        return TaskApprovalsListResult(approvals=entries, count=len(entries))
+
+    def task_diagnostics_list(self, params: dict) -> TaskDiagnosticsListResult:
+        request = TaskDiagnosticsListParams.from_dict(params)
+        diagnostics = self.durable_services.diagnostic_store.list_diagnostics(
+            request.task_id,
+            request.run_id,
+        )
+        return TaskDiagnosticsListResult(
+            diagnostics=[
+                DiagnosticEntry(
+                    diagnostic_id=diagnostic.diagnostic_id,
+                    task_id=diagnostic.task_id,
+                    run_id=diagnostic.run_id,
+                    kind=diagnostic.kind,
+                    message=diagnostic.message,
+                    created_at=diagnostic.created_at,
+                    details=dict(diagnostic.details),
+                )
+                for diagnostic in diagnostics
+            ],
+            count=len(diagnostics),
+        )
+
     def task_artifacts_list(self, params: dict) -> TaskArtifactsListResult:
         request = TaskArtifactsListParams.from_dict(params)
         return TaskArtifactsListResult(
@@ -152,24 +208,66 @@ class MethodHandlers:
             count=len(entries),
         )
 
+    def config_get(self) -> ConfigGetResult:
+        redactions: list[ConfigRedaction] = []
+        effective_config = _redact_config(
+            {
+                "runtime": {
+                    "name": self.config.runtime.name,
+                    "log_level": self.config.runtime.log_level,
+                },
+                "identity": {"path": self.config.identity_path},
+                "transport": {"mode": self.config.transport.mode},
+                "models": {
+                    "default": {
+                        "provider": self.config.default_model.provider,
+                        "model": self.config.default_model.model,
+                    },
+                    "subagents": {
+                        role: {"provider": model.provider, "model": model.model}
+                        for role, model in self.config.subagent_model_overrides.items()
+                    },
+                },
+                "persistence": {
+                    "root_path": self.config.persistence.root_path,
+                    "metadata_backend": self.config.persistence.metadata_backend,
+                    "event_backend": self.config.persistence.event_backend,
+                    "diagnostic_backend": self.config.persistence.diagnostic_backend,
+                },
+                "policy": dict(self.config.policy),
+            },
+            redactions,
+        )
+        return ConfigGetResult(
+            effective_config=effective_config,
+            loaded_profiles=[],
+            config_sources=list(self.config_sources or [self.config.identity_path]),
+            redactions=redactions,
+        )
+
     def _select_memory_entries(self, request: MemoryInspectParams) -> list[MemoryRecord]:
         store = self.durable_services.memory_store
         if request.scope is None:
-            entries = list(store.list_memory(scope=MEMORY_SCOPE_PROJECT))
+            entries = list(
+                store.list_memory(scope=MEMORY_SCOPE_PROJECT, namespace=request.namespace)
+            )
             if request.task_id is not None:
                 entries.extend(
                     entry
-                    for entry in store.list_memory(scope=MEMORY_SCOPE_RUN_STATE)
+                    for entry in store.list_memory(
+                        scope=MEMORY_SCOPE_RUN_STATE,
+                        namespace=request.namespace,
+                    )
                     if _matches_memory_context(entry, request.task_id, request.run_id)
                 )
             return sorted(entries, key=lambda entry: (entry.created_at, entry.memory_id))
 
         if request.scope == MEMORY_SCOPE_PROJECT:
-            return store.list_memory(scope=MEMORY_SCOPE_PROJECT)
+            return store.list_memory(scope=MEMORY_SCOPE_PROJECT, namespace=request.namespace)
         if request.scope == MEMORY_SCOPE_IDENTITY:
-            return store.list_memory(scope=MEMORY_SCOPE_IDENTITY)
+            return store.list_memory(scope=MEMORY_SCOPE_IDENTITY, namespace=request.namespace)
         if request.scope == MEMORY_SCOPE_RUN_STATE:
-            entries = store.list_memory(scope=MEMORY_SCOPE_RUN_STATE)
+            entries = store.list_memory(scope=MEMORY_SCOPE_RUN_STATE, namespace=request.namespace)
             if request.task_id is None:
                 return entries
             return [
@@ -178,7 +276,7 @@ class MethodHandlers:
                 if _matches_memory_context(entry, request.task_id, request.run_id)
             ]
         if request.scope == MEMORY_SCOPE_SCRATCH:
-            entries = store.list_memory(scope=MEMORY_SCOPE_SCRATCH)
+            entries = store.list_memory(scope=MEMORY_SCOPE_SCRATCH, namespace=request.namespace)
             if request.task_id is None:
                 return entries
             return [
@@ -215,3 +313,46 @@ def _matches_memory_context(record: MemoryRecord, task_id: str, run_id: str | No
     if run_id is None:
         return True
     return record.source_run == run_id or provenance_run_id == run_id
+
+
+def _scope_summary(scope: dict[str, Any]) -> str:
+    if "boundary_key" in scope:
+        return str(scope["boundary_key"])
+    if "path_scope" in scope:
+        return str(scope["path_scope"])
+    if "memory_scope" in scope:
+        return f"memory:{scope['memory_scope']}"
+    if not scope:
+        return "unspecified"
+    return ", ".join(f"{key}={value}" for key, value in sorted(scope.items()))
+
+
+def _redact_config(
+    value: Any,
+    redactions: list[ConfigRedaction],
+    *,
+    path: str = "",
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _redact_config(
+                child,
+                redactions,
+                path=f"{path}.{key}" if path else str(key),
+            )
+            for key, child in value.items()
+        }
+    if isinstance(value, list):
+        return [
+            _redact_config(child, redactions, path=f"{path}[{index}]")
+            for index, child in enumerate(value)
+        ]
+    if _is_sensitive_path(path):
+        redactions.append(ConfigRedaction(path=path, reason="sensitive-key"))
+        return "***REDACTED***"
+    return value
+
+
+def _is_sensitive_path(path: str) -> bool:
+    lowered = path.lower()
+    return any(token in lowered for token in ("secret", "token", "password", "api_key"))

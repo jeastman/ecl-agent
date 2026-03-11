@@ -16,8 +16,11 @@ from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
+    METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
     METHOD_TASK_APPROVE,
+    METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
@@ -403,6 +406,138 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["count"], 1)
             self.assertEqual(payload["entries"][0]["namespace"], "scratch.notes")
 
+    def test_memory_inspect_supports_namespace_filter(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            timestamp = utc_now_timestamp()
+            server.handlers.durable_services.memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="project_1",
+                    scope="project",
+                    namespace="project.conventions",
+                    content="Convention",
+                    summary="Convention",
+                    provenance={"task_id": "task_1"},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+            server.handlers.durable_services.memory_store.write_memory(
+                MemoryRecord(
+                    memory_id="project_2",
+                    scope="project",
+                    namespace="project.outcomes",
+                    content="Outcome",
+                    summary="Outcome",
+                    provenance={"task_id": "task_1"},
+                    created_at=timestamp,
+                    updated_at=timestamp,
+                )
+            )
+
+            response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"scope": "project", "namespace": "project.outcomes"},
+                        id="6",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            payload = response.to_dict()["result"]
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["entries"][0]["memory_id"], "project_2")
+
+    def test_config_get_returns_redacted_effective_config(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config = load_runtime_config(CONFIG_PATH)
+            config.policy["api_token"] = "super-secret-token"
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+                config_path=CONFIG_PATH,
+            )
+
+            response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_CONFIG_GET,
+                        params={},
+                        id="7",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            payload = response.to_dict()["result"]
+            self.assertEqual(payload["effective_config"]["policy"]["api_token"], "***REDACTED***")
+            self.assertEqual(payload["redactions"][0]["path"], "policy.api_token")
+            self.assertIn(CONFIG_PATH, payload["config_sources"])
+
+    def test_diagnostics_remain_available_after_restart(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            runtime_root = str(Path(temp_dir) / "runtime")
+            correlation_id = new_correlation_id()
+
+            first_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_network_denied_harness(),
+                runtime_root=runtime_root,
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Attempt denied network access",
+                        workspace_roots=[str(workspace_root)],
+                    )
+                ).to_dict(),
+                id="8",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = first_server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+
+            recovered_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_network_denied_harness(),
+                runtime_root=runtime_root,
+            )
+            diagnostics_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_DIAGNOSTICS_LIST,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="9",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            payload = diagnostics_response.to_dict()["result"]
+            self.assertEqual(payload["count"], 1)
+            self.assertEqual(payload["diagnostics"][0]["kind"], "policy_denied")
+            self.assertIn("context", payload["diagnostics"][0]["details"])
+
     def test_runtime_restart_recovers_paused_run_and_resumes_it(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             workspace_root = Path(temp_dir) / "workspace"
@@ -567,12 +702,26 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(recovered_task["pending_approval_id"], approval_id)
             self.assertEqual(recovered_task["links"]["approve"], "task.approve")
 
+            approvals_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_APPROVALS_LIST,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="3b",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            approvals = approvals_response.to_dict()["result"]["approvals"]
+            self.assertEqual(len(approvals), 1)
+            self.assertEqual(approvals[0]["approval_id"], approval_id)
+            self.assertEqual(approvals[0]["status"], "pending")
+
             approve_response, _ = recovered_server.handle_line(
                 json.dumps(
                     JsonRpcRequest(
                         method=METHOD_TASK_APPROVE,
                         params={
-                            "task_id": task_id,
                             "run_id": run_id,
                             "approval": {
                                 "approval_id": approval_id,
@@ -713,6 +862,29 @@ class _ApprovalHarness:
 
 def _approval_harness() -> _ApprovalHarness:
     return _ApprovalHarness()
+
+
+class _NetworkDeniedHarness:
+    def execute(self, request, on_event=None) -> Any:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.execute_command(["curl", "https://example.com"], cwd="workspace")
+        return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
+
+
+def _network_denied_harness() -> _NetworkDeniedHarness:
+    return _NetworkDeniedHarness()
 
 
 if __name__ == "__main__":

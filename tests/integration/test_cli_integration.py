@@ -84,6 +84,60 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("artifact_id=artifact_1", output)
                 self.assertIn("content_type=text/markdown", output)
 
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(
+                        cli.main(["--config", "ignored.toml", "approvals", "task_123"]), 0
+                    )
+                    output = stdout.getvalue()
+                self.assertIn("approval_id=approval_1", output)
+
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(
+                        cli.main(["--config", "ignored.toml", "diagnostics", "task_123"]), 0
+                    )
+                    output = stdout.getvalue()
+                self.assertIn("diagnostic_id=diag_1", output)
+
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(
+                        cli.main(
+                            [
+                                "--config",
+                                "ignored.toml",
+                                "approve",
+                                "approval_1",
+                                "--decision",
+                                "approve",
+                            ]
+                        ),
+                        0,
+                    )
+                    output = stdout.getvalue()
+                self.assertIn("accepted=True", output)
+                self.assertIn("status=completed", output)
+
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(
+                        cli.main(
+                            [
+                                "--config",
+                                "ignored.toml",
+                                "memory",
+                                "--scope",
+                                "project",
+                            ]
+                        ),
+                        0,
+                    )
+                    output = stdout.getvalue()
+                self.assertIn("memory_id=mem_1", output)
+
+                with patch("sys.stdout", new=io.StringIO()) as stdout:
+                    self.assertEqual(cli.main(["--config", "ignored.toml", "config"]), 0)
+                    output = stdout.getvalue()
+                self.assertIn("redaction_count=1", output)
+                self.assertIn('"api_token": "***REDACTED***"', output)
+
 
 def _fake_runtime_script() -> str:
     return textwrap.dedent(
@@ -180,6 +234,98 @@ def _fake_runtime_script() -> str:
                             "display_name": "repo_summary.md",
                         }
                     ]
+                },
+            }
+            print(json.dumps(response))
+        elif method == "task.approvals.list":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "approvals": [
+                        {
+                            "approval_id": "approval_1",
+                            "status": "pending",
+                            "type": "boundary",
+                            "scope_summary": "file.write:workspace/**",
+                            "description": "Allow writes",
+                            "created_at": "2026-03-10T00:00:00Z",
+                        }
+                    ]
+                },
+            }
+            print(json.dumps(response))
+        elif method == "task.diagnostics.list":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "diagnostics": [
+                        {
+                            "diagnostic_id": "diag_1",
+                            "task_id": "task_123",
+                            "run_id": "run_456",
+                            "kind": "policy_denied",
+                            "message": "Network access denied",
+                            "created_at": "2026-03-10T00:00:00Z",
+                            "details": {"phase": "execute"},
+                        }
+                    ]
+                },
+            }
+            print(json.dumps(response))
+        elif method == "task.approve":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "approval_id": request["params"]["approval"]["approval_id"],
+                    "accepted": True,
+                    "status": "approved",
+                    "task": {
+                        "task_id": "task_123",
+                        "run_id": "run_456",
+                        "status": "completed",
+                        "objective": "Inspect repo",
+                    },
+                },
+            }
+            print(json.dumps(response))
+        elif method == "memory.inspect":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "scope": "project",
+                    "count": 1,
+                    "entries": [
+                        {
+                            "memory_id": "mem_1",
+                            "scope": "project",
+                            "namespace": "project.conventions",
+                            "summary": "Convention",
+                            "created_at": "2026-03-10T00:00:00Z",
+                            "updated_at": "2026-03-10T00:00:00Z",
+                            "provenance": {"task_id": "task_123"},
+                        }
+                    ],
+                },
+            }
+            print(json.dumps(response))
+        elif method == "config.get":
+            response = {
+                "jsonrpc": "2.0",
+                "id": request.get("id"),
+                "correlation_id": correlation_id,
+                "result": {
+                    "loaded_profiles": [],
+                    "config_sources": ["ignored.toml"],
+                    "redactions": [{"path": "policy.api_token", "reason": "sensitive-key"}],
+                    "effective_config": {"policy": {"api_token": "***REDACTED***"}},
                 },
             }
             print(json.dumps(response))
