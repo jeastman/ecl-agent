@@ -34,6 +34,23 @@ class BootstrapTests(unittest.TestCase):
             identity_records = services.memory_store.list_memory(scope="identity")
             self.assertEqual(len(identity_records), 1)
             self.assertEqual(identity_records[0].namespace, "identity.bundle")
+            resolved_subagents = server.handlers.task_runner.resolved_subagents
+            self.assertEqual(
+                [resolved.asset_bundle.definition.role_id for resolved in resolved_subagents],
+                ["coder", "librarian", "planner", "researcher", "verifier"],
+            )
+            researcher = next(
+                resolved
+                for resolved in resolved_subagents
+                if resolved.asset_bundle.definition.role_id == "researcher"
+            )
+            self.assertEqual(researcher.model_route.source, "subagent_override")
+            self.assertEqual(researcher.model_route.model, "gpt-5-mini")
+            self.assertEqual(
+                [binding.tool_id for binding in researcher.tool_bindings],
+                ["read_files", "memory_lookup"],
+            )
+            self.assertEqual(researcher.skills, ())
 
 
 def _operation_context():

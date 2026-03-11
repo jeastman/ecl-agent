@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+
 from apps.runtime.local_agent_runtime.artifact_store import InMemoryArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
@@ -9,6 +11,10 @@ from apps.runtime.local_agent_runtime.recovery_service import RecoveryService
 from apps.runtime.local_agent_runtime.resume_service import ResumeService
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
 from apps.runtime.local_agent_runtime.runtime_server import RuntimeServer
+from apps.runtime.local_agent_runtime.subagents import (
+    ResolvedSubagentConfiguration,
+    ToolResolutionContext,
+)
 from apps.runtime.local_agent_runtime.task_runner import AgentHarness, TaskRunner
 
 from packages.config.local_agent_config.models import RuntimeConfig
@@ -18,6 +24,14 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness 
 )
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
+)
+from services.subagent_registry.local_agent_subagent_registry.filesystem_subagent_registry import (
+    FileSystemSubagentRegistry,
+)
+from services.subagent_runtime.local_agent_subagent_runtime import (
+    FileSystemSkillRegistry,
+    RoleToolScopeResolver,
+    RuntimeModelResolver,
 )
 
 
@@ -31,6 +45,17 @@ def create_runtime_server(
 ) -> RuntimeServer:
     run_state_store = InMemoryRunStateStore()
     event_bus = InMemoryEventBus()
+    subagent_root = Path(config.identity_path).resolve().parent.parent / "subagents"
+    subagent_registry = FileSystemSubagentRegistry(subagent_root)
+    model_resolver = RuntimeModelResolver(config)
+    tool_scope_resolver = RoleToolScopeResolver()
+    skill_registry = FileSystemSkillRegistry()
+    resolved_subagents = _resolve_subagent_configurations(
+        subagent_registry=subagent_registry,
+        model_resolver=model_resolver,
+        tool_scope_resolver=tool_scope_resolver,
+        skill_registry=skill_registry,
+    )
     durable_services = create_durable_runtime_services(
         config,
         runtime_root_override=runtime_root,
@@ -45,6 +70,7 @@ def create_runtime_server(
         artifact_store=artifact_store,
         sandbox_factory=sandbox_factory,
         durable_services=durable_services,
+        resolved_subagents=resolved_subagents,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
             model_name=config.default_model.model,
@@ -75,3 +101,30 @@ def create_runtime_server(
         config_sources=[source for source in (config_path, config.identity_path) if source is not None],
     )
     return RuntimeServer(handlers=handlers)
+
+
+def _resolve_subagent_configurations(
+    *,
+    subagent_registry: FileSystemSubagentRegistry,
+    model_resolver: RuntimeModelResolver,
+    tool_scope_resolver: RoleToolScopeResolver,
+    skill_registry: FileSystemSkillRegistry,
+) -> list[ResolvedSubagentConfiguration]:
+    resolved: list[ResolvedSubagentConfiguration] = []
+    for asset_bundle in subagent_registry.list_asset_bundles():
+        definition = asset_bundle.definition
+        resolved.append(
+            ResolvedSubagentConfiguration(
+                asset_bundle=asset_bundle,
+                model_route=model_resolver.resolve_subagent(
+                    definition.role_id,
+                    definition.model_profile,
+                ),
+                tool_bindings=tool_scope_resolver.resolve_tools(
+                    definition,
+                    ToolResolutionContext(),
+                ),
+                skills=skill_registry.list_skill_descriptors(definition),
+            )
+        )
+    return resolved

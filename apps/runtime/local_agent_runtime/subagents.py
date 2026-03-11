@@ -40,6 +40,42 @@ class SubagentAssetBundle:
     system_prompt_text: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class SkillDescriptor:
+    skill_id: str
+    name: str
+    prompt_path: Path
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedModelRoute:
+    provider: str
+    model: str
+    profile_name: str
+    source: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedToolBinding:
+    tool_id: str
+    capability_aliases: tuple[str, ...]
+    requires_policy: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ToolResolutionContext:
+    allowed_capabilities: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class ResolvedSubagentConfiguration:
+    asset_bundle: SubagentAssetBundle
+    model_route: ResolvedModelRoute
+    tool_bindings: tuple[ResolvedToolBinding, ...]
+    skills: tuple[SkillDescriptor, ...]
+
+
 class SubagentRegistry(Protocol):
     def list_roles(self) -> list[str]: ...
 
@@ -48,3 +84,13 @@ class SubagentRegistry(Protocol):
     def get_asset_bundle(self, role_id: str) -> SubagentAssetBundle: ...
 
     def list_asset_bundles(self) -> list[SubagentAssetBundle]: ...
+
+
+class ModelResolver(Protocol):
+    def resolve_primary(self) -> ResolvedModelRoute: ...
+
+    def resolve_subagent(self, role_id: str, model_profile: str | None) -> ResolvedModelRoute: ...
+
+
+class SkillRegistry(Protocol):
+    def list_skill_descriptors(self, definition: SubagentDefinition) -> tuple[SkillDescriptor, ...]: ...

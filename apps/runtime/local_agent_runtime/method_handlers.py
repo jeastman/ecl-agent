@@ -210,6 +210,21 @@ class MethodHandlers:
 
     def config_get(self) -> ConfigGetResult:
         redactions: list[ConfigRedaction] = []
+        resolved_subagents = {
+            resolved.asset_bundle.definition.role_id: {
+                "role_id": resolved.asset_bundle.definition.role_id,
+                "model_profile": resolved.asset_bundle.definition.model_profile,
+                "resolved_model": {
+                    "provider": resolved.model_route.provider,
+                    "model": resolved.model_route.model,
+                    "profile_name": resolved.model_route.profile_name,
+                    "source": resolved.model_route.source,
+                },
+                "tool_bindings": [binding.tool_id for binding in resolved.tool_bindings],
+                "skills": [skill.skill_id for skill in resolved.skills],
+            }
+            for resolved in self.task_runner.resolved_subagents
+        }
         effective_config = _redact_config(
             {
                 "runtime": {
@@ -227,6 +242,18 @@ class MethodHandlers:
                         role: {"provider": model.provider, "model": model.model}
                         for role, model in self.config.subagent_model_overrides.items()
                     },
+                    "resolved": {
+                        "primary": {
+                            "provider": self.config.default_model.provider,
+                            "model": self.config.default_model.model,
+                            "profile_name": "default",
+                            "source": "default_model",
+                        },
+                        "subagents": {
+                            role: definition["resolved_model"]
+                            for role, definition in resolved_subagents.items()
+                        },
+                    },
                 },
                 "persistence": {
                     "root_path": self.config.persistence.root_path,
@@ -234,6 +261,7 @@ class MethodHandlers:
                     "event_backend": self.config.persistence.event_backend,
                     "diagnostic_backend": self.config.persistence.diagnostic_backend,
                 },
+                "subagents": resolved_subagents,
                 "policy": dict(self.config.policy),
             },
             redactions,

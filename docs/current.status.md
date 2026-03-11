@@ -440,19 +440,25 @@ Assessment:
 What exists:
 
 - a runtime-owned `SubagentDefinition` / `SubagentAssetBundle` contract
+- runtime-owned `ResolvedModelRoute`, `ResolvedToolBinding`, `ResolvedSubagentConfiguration`, and `SkillDescriptor` contracts
 - a `SubagentRegistry` port and filesystem-backed registry implementation
+- a runtime-owned `RuntimeModelResolver`
+- a runtime-owned `RoleToolScopeResolver`
+- a filesystem-backed role-local skill registry
 - baseline role directories under `agents/subagents/` for planner, researcher, coder, verifier, and librarian
 - manifest validation for role IDs, tool scopes, memory scopes, filesystem scopes, and optional assets
+- runtime bootstrap composes and exposes resolved subagent inspection state
+- `models.subagents.*` overrides are now consumed by runtime model resolution
 - `subagent.started` events are emitted
 - the adapter synthesizes a single role `"primary"` with name `"repo-summarizer"`
 - `TaskSnapshot.active_subagent` can store the current role
-- config can parse `models.subagents.*`
 
 What does not exist:
 
-- runtime use of registry-loaded roles during execution
-- role-specific tool scopes wired into live tool binding
+- adapter-side compilation of registry-loaded roles into live Deep Agent subagents
 - role-specific prompt assembly inside the adapter
+- runtime use of resolved role-local skills during execution
+- role-specific tool scopes wired into live adapter binding
 - subagent completion events
 - planner/researcher/coder/verifier/librarian execution flow
 
@@ -460,13 +466,15 @@ Evidence:
 
 - [subagents.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/subagents.py)
 - [filesystem_subagent_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_registry/local_agent_subagent_registry/filesystem_subagent_registry.py)
+- [tool_scope.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/tool_scope.py)
+- [skill_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/skill_registry.py)
 - [deepagent_harness.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/deepagent_harness.py)
 - [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py)
 - [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml)
 
 Assessment:
 
-- The codebase now has the Phase 1 asset and registry foundation, but execution still behaves as a single-agent system.
+- The codebase now has the Phase 1 registry foundation plus the Phase 2 runtime-owned routing, tool governance, and skill discovery layer. Execution still behaves as a single-agent system until adapter compilation lands.
 
 ## 11. Model Routing
 
@@ -478,24 +486,25 @@ Implemented:
 
 - config model supports `default_model`
 - config model supports `subagent_model_overrides`
-- runtime bootstrap uses `config.default_model.provider` and `config.default_model.model`
+- runtime-owned `RuntimeModelResolver` resolves primary and subagent routes
+- `subagent_model_overrides` are consumed with deterministic precedence
+- runtime bootstrap exposes resolved per-role model inspection data
 
 Not implemented:
 
-- any model resolver abstraction
-- runtime use of `subagent_model_overrides`
-- per-role model routing
-- inspection or exposure of resolved routing
+- a separate `models.primary_agent` config path
+- adapter use of per-role routes during live subagent execution
 
 Evidence:
 
 - [packages/config/local_agent_config/models.py](/Users/jeastman/Projects/e/ecl-agent/packages/config/local_agent_config/models.py)
 - [packages/config/local_agent_config/loader.py](/Users/jeastman/Projects/e/ecl-agent/packages/config/local_agent_config/loader.py)
 - [bootstrap.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/bootstrap.py)
+- [model_routing.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/model_routing.py)
 
 Assessment:
 
-- The config shape anticipates model routing, but the runtime currently behaves as a single-model system.
+- Runtime-owned routing now exists and is inspectable, but execution still uses a single primary model until the adapter consumes those routes.
 
 ## 12. Skills
 
@@ -507,12 +516,18 @@ Verified:
 
 - there is no `skills/` directory under `agents/primary-agent`
 - there are reserved `skills/` directories under `agents/subagents/*`
-- there is no skill loader or skill registry in runtime or services code
+- runtime-owned role-local skill discovery exists for `agents/subagents/<role>/skills/`
+- discovered skill descriptors are exposed in resolved subagent inspection state
 
 Evidence:
 
 - repository file listing under `agents/`
-- absence of skill-related runtime code
+- [skill_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/skill_registry.py)
+- [bootstrap.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/bootstrap.py)
+
+Assessment:
+
+- Skill support now exists as a minimal runtime-owned discovery layer for subagents only. Primary-agent skills and adapter-side skill use remain unfinished.
 
 ## 13. Observability and Eventing
 
@@ -717,7 +732,7 @@ Conclusion:
 | LangChain DeepAgent is isolated behind project-owned ports/adapters | Implemented | confined to `services/deepagent_runtime` |
 | Memory taxonomy exists as explicit concepts in the codebase | Implemented | run-state, scratch, project, and identity memory concepts exist with durable storage and inspection |
 | Sandbox/filesystem access is mediated by a dedicated abstraction | Implemented | `ExecutionSandbox`/`LocalExecutionSandbox` |
-| Model routing supports separate profiles for primary and sub-agents | Partial | config parses subagent overrides, runtime does not use them |
+| Model routing supports separate profiles for primary and sub-agents | Partial | runtime-owned routing now exists, but adapter execution still uses the single primary model |
 | `IDENTITY.md` ingestion exists as a runtime concern | Implemented | loaded at runtime startup and injected into prompts |
 | Event streaming exists for task lifecycle visibility | Implemented | `task.logs.stream` plus runtime event envelopes |
 | Codebase structure clearly supports future clients | Partial | shared contracts and runtime/client split support this, but no SDK or web client packages exist |
@@ -731,8 +746,8 @@ These are the main verified gaps between the current implementation and the broa
 3. No retrieval precedence or richer policy-governed memory behavior beyond current promotion/storage support.
 4. CLI approval/config/memory inspection exists, but no richer web/operator inspection client exists.
 5. No multi-role orchestration or adapter compilation of registry-loaded subagents.
-6. No actual use of `subagent_model_overrides` for model routing.
-7. No skill discovery or loading subsystem.
+6. No adapter-side use of resolved per-role model routes during execution.
+7. No adapter-side use of discovered skills during execution.
 8. No web client or client SDK packages.
 
 ## 19. Bottom Line

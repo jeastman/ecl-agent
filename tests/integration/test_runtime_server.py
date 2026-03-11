@@ -483,6 +483,19 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             payload = response.to_dict()["result"]
             self.assertEqual(payload["effective_config"]["policy"]["api_token"], "***REDACTED***")
+            self.assertEqual(
+                payload["effective_config"]["models"]["resolved"]["primary"]["source"],
+                "default_model",
+            )
+            self.assertEqual(
+                payload["effective_config"]["models"]["resolved"]["subagents"]["researcher"]["source"],
+                "subagent_override",
+            )
+            self.assertEqual(
+                payload["effective_config"]["subagents"]["planner"]["tool_bindings"],
+                ["read_files", "memory_lookup", "plan_update"],
+            )
+            self.assertEqual(payload["effective_config"]["subagents"]["planner"]["skills"], [])
             self.assertEqual(payload["redactions"][0]["path"], "policy.api_token")
             self.assertIn(CONFIG_PATH, payload["config_sources"])
 

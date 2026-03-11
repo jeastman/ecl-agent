@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
+from apps.runtime.local_agent_runtime.subagents import ResolvedSubagentConfiguration
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
@@ -134,6 +135,7 @@ class TaskRunner:
         sandbox_factory: LocalExecutionSandboxFactory,
         agent_harness: AgentHarness,
         durable_services: DurableRuntimeServices | None = None,
+        resolved_subagents: list[ResolvedSubagentConfiguration] | None = None,
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
@@ -141,12 +143,17 @@ class TaskRunner:
         self._sandbox_factory = sandbox_factory
         self._agent_harness = agent_harness
         self._durable_services = durable_services
+        self._resolved_subagents = list(resolved_subagents or [])
         self._source = EventSource(kind=EventSourceKind.RUNTIME, component="task-runner")
         self._checkpoint_adapter = (
             LangGraphCheckpointAdapter(durable_services.checkpoint_store)
             if durable_services is not None
             else None
         )
+
+    @property
+    def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
+        return list(self._resolved_subagents)
 
     def start_run(
         self,
