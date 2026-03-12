@@ -49,6 +49,22 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         artifact_browser_selected_id=message.get(
             "artifact_browser_selected_id", state.artifact_browser_selected_id
         ),
+        selected_memory_group_id=message.get(
+            "selected_memory_group_id", state.selected_memory_group_id
+        ),
+        selected_memory_entry_id=message.get(
+            "selected_memory_entry_id", state.selected_memory_entry_id
+        ),
+        memory_request_context_key=message.get(
+            "memory_request_context_key", state.memory_request_context_key
+        ),
+        memory_request_status=str(
+            message.get("memory_request_status", state.memory_request_status)
+        ),
+        memory_request_error=_normalize_error(
+            message.get("memory_request_error", state.memory_request_error)
+        ),
+        memory_origin_screen=str(message.get("memory_origin_screen", state.memory_origin_screen)),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -168,6 +184,21 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             artifact_preview_cache=preview_cache,
             artifact_preview_status_by_artifact=preview_status,
             artifact_preview_error_by_artifact=preview_errors,
+        )
+
+    if name == "memory.inspect":
+        result = dict(payload.get("result", {}))
+        context_key = _memory_context_key_from_payload(payload)
+        memory_entries_by_context = dict(state.memory_entries_by_context)
+        memory_entries_by_context[context_key] = [
+            dict(entry) for entry in list(result.get("entries", [])) if isinstance(entry, dict)
+        ]
+        return replace(
+            state,
+            memory_entries_by_context=memory_entries_by_context,
+            memory_request_context_key=context_key,
+            memory_request_status="loaded",
+            memory_request_error=None,
         )
 
     if name == "task.logs.stream":
@@ -522,3 +553,16 @@ def _normalize_error(value: Any) -> str | None:
         return None
     text = str(value).strip()
     return text or None
+
+
+def _memory_context_key_from_payload(payload: dict[str, Any]) -> str:
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        return "global"
+    task_id = context.get("task_id")
+    run_id = context.get("run_id")
+    if isinstance(task_id, str) and task_id.strip():
+        if isinstance(run_id, str) and run_id.strip():
+            return f"{task_id}:{run_id}"
+        return task_id
+    return "global"

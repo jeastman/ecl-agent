@@ -16,7 +16,8 @@ Screen {
 #task-detail-root,
 #approvals-screen-root,
 #artifacts-screen-root,
-#markdown-viewer-root {
+#markdown-viewer-root,
+#memory-screen-root {
     layout: vertical;
     height: 1fr;
     padding: 1;
@@ -38,6 +39,11 @@ Screen {
 }
 
 #artifacts-screen-main {
+    layout: horizontal;
+    height: 1fr;
+}
+
+#memory-screen-main {
     layout: horizontal;
     height: 1fr;
 }
@@ -68,6 +74,10 @@ Screen {
 #approvals-screen-detail,
 #artifacts-screen-table,
 #artifacts-screen-preview,
+#memory-screen-groups,
+#memory-screen-group-summary,
+#memory-screen-entries,
+#memory-screen-detail,
 #markdown-viewer-body,
 #task-detail-header,
 #task-detail-timeline,
@@ -126,6 +136,30 @@ Screen {
     width: 52%;
 }
 
+#memory-screen-groups {
+    width: 34%;
+    margin-right: 1;
+}
+
+#memory-screen-side {
+    width: 66%;
+    height: 1fr;
+}
+
+#memory-screen-group-summary {
+    height: auto;
+    margin-bottom: 1;
+}
+
+#memory-screen-entries {
+    height: 18;
+    margin-bottom: 1;
+}
+
+#memory-screen-detail {
+    height: 1fr;
+}
+
 #markdown-viewer-body {
     height: 1fr;
 }
@@ -149,7 +183,8 @@ Screen {
 #task-detail-footer,
 #approvals-screen-footer,
 #artifacts-screen-footer,
-#markdown-viewer-footer {
+#markdown-viewer-footer,
+#memory-screen-footer {
     height: 3;
     border: solid rgb(55, 65, 76);
     padding: 1 2;

@@ -7,6 +7,7 @@ from typing import Any
 
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
+    METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
@@ -16,6 +17,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_LIST,
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
+    MemoryInspectParams,
     TaskApprovalsListParams,
     TaskArtifactGetParams,
     TaskApproveParams,
@@ -71,6 +73,24 @@ class ProtocolClient:
 
     async def runtime_health(self) -> dict[str, Any]:
         return await self._request(METHOD_RUNTIME_HEALTH, {})
+
+    async def memory_inspect(
+        self,
+        *,
+        task_id: str | None = None,
+        run_id: str | None = None,
+        scope: str | None = None,
+        namespace: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_MEMORY_INSPECT,
+            MemoryInspectParams(
+                task_id=task_id,
+                run_id=run_id,
+                scope=scope,
+                namespace=namespace,
+            ).to_dict(),
+        )
 
     async def task_get(self, task_id: str, run_id: str | None = None) -> dict[str, Any]:
         return await self._request(

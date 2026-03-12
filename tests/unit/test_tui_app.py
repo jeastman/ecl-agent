@@ -105,6 +105,7 @@ class _FakeProtocolClient:
         self.approve_calls: list[tuple[str | None, str | None, str, str]] = []
         self.approvals_list_calls: list[tuple[str, str | None]] = []
         self.artifact_get_calls: list[tuple[str, str | None, str]] = []
+        self.memory_inspect_calls: list[tuple[str | None, str | None, str | None, str | None]] = []
         self._tasks: dict[str, dict[str, Any]] = {
             "task_1": {
                 "task_id": "task_1",
@@ -160,6 +161,43 @@ class _FakeProtocolClient:
                     "created_at": "2026-03-11T00:00:01Z",
                 }
             ],
+        }
+        self._memory_entries: dict[str, list[dict[str, Any]]] = {
+            "task_1": [
+                {
+                    "memory_id": "scratch_1",
+                    "scope": "scratch",
+                    "namespace": "task.notes",
+                    "summary": "Scratch note",
+                    "content": '{"note":"Summary body"}',
+                    "provenance": {"task_id": "task_1", "run_id": "run_1"},
+                    "created_at": "2026-03-12T00:00:03Z",
+                    "updated_at": "2026-03-12T00:00:04Z",
+                    "source_run": "run_1",
+                    "confidence": 0.9,
+                },
+                {
+                    "memory_id": "runstate_1",
+                    "scope": "run_state",
+                    "namespace": "task.plan",
+                    "summary": "Current plan",
+                    "content": '{"step":"Inspect repo"}',
+                    "provenance": {"task_id": "task_1", "checkpoint": "cp-1"},
+                    "created_at": "2026-03-12T00:00:05Z",
+                    "updated_at": "2026-03-12T00:00:06Z",
+                    "source_run": "run_1",
+                },
+                {
+                    "memory_id": "project_1",
+                    "scope": "project",
+                    "namespace": "repo",
+                    "summary": "Repository context",
+                    "content": "Inspect repo",
+                    "provenance": {},
+                    "created_at": "2026-03-12T00:00:07Z",
+                    "updated_at": "2026-03-12T00:00:08Z",
+                },
+            ]
         }
 
     async def connect(self) -> None:
@@ -271,6 +309,18 @@ class _FakeProtocolClient:
                 "task": self._tasks[task_id],
             }
         }
+
+    async def memory_inspect(
+        self,
+        *,
+        task_id: str | None = None,
+        run_id: str | None = None,
+        scope: str | None = None,
+        namespace: str | None = None,
+    ) -> dict:
+        self.memory_inspect_calls.append((task_id, run_id, scope, namespace))
+        entries = list(self._memory_entries.get(task_id or "", [])) if task_id is not None else []
+        return {"result": {"entries": entries, "scope": scope or "default", "count": len(entries)}}
 
 
 async def _fake_consume_task_stream(*args, **kwargs) -> None:
@@ -686,3 +736,130 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._store.snapshot().task_snapshots["task_2"]["status"], "executing"
                 )  # type: ignore[attr-defined]
                 self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
+
+    async def test_memory_screen_opens_renders_and_returns_to_origin(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.store.selectors import (
+            memory_scope_groups,
+            selected_memory_detail,
+        )
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("m")
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "MemoryScreen")
+                self.assertEqual(
+                    app._client.memory_inspect_calls[-1],  # type: ignore[attr-defined]
+                    ("task_1", "run_1", None, None),
+                )
+                self.assertTrue(
+                    any(group.count > 0 for group in memory_scope_groups(app._store.snapshot()))
+                )  # type: ignore[attr-defined]
+                self.assertIn(
+                    "Scratch note",
+                    selected_memory_detail(app._store.snapshot()).summary,  # type: ignore[attr-defined]
+                )
+                app._store.dispatch({"kind": "ui", "focused_pane": "memory_entries"})  # type: ignore[attr-defined]
+                app.handle_memory_group_selected("working_context")  # type: ignore[attr-defined]
+                app.handle_memory_entry_selected("runstate_1")  # type: ignore[attr-defined]
+                app._render_state()  # type: ignore[attr-defined]
+                self.assertIn(
+                    "Current plan",
+                    selected_memory_detail(app._store.snapshot()).summary,  # type: ignore[attr-defined]
+                )
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
+
+    async def test_memory_screen_opens_from_task_detail_without_interrupting_stream(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                stream_key = app._stream_key  # type: ignore[attr-defined]
+                await pilot.press("enter")
+                await pilot.pause()
+                detail_stream_key = app._stream_key  # type: ignore[attr-defined]
+                await pilot.press("m")
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "MemoryScreen")
+                self.assertEqual(app._stream_key, detail_stream_key)  # type: ignore[attr-defined]
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
+                self.assertEqual(app._stream_key, detail_stream_key)  # type: ignore[attr-defined]
+
+    async def test_memory_screen_refresh_does_not_lose_origin_screen(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            app._store.dispatch(  # type: ignore[attr-defined]
+                {
+                    "kind": "rpc",
+                    "name": "task.get",
+                    "payload": {"result": {"task": app._client._tasks["task_1"]}},  # type: ignore[attr-defined]
+                }
+            )
+            app._store.dispatch(  # type: ignore[attr-defined]
+                {
+                    "kind": "ui",
+                    "selected_task_id": "task_1",
+                    "active_screen": "memory",
+                    "memory_origin_screen": "task_detail",
+                }
+            )
+            scheduled: list[object] = []
+            switched: list[object] = []
+            app._render_state = lambda: None  # type: ignore[method-assign]
+
+            def _switch_screen(name: object) -> Any:
+                switched.append(name)
+                return None
+
+            app.switch_screen = _switch_screen  # type: ignore[assignment,method-assign]
+
+            def _run_worker(coro: object, **_: object) -> None:
+                scheduled.append(coro)
+                close = getattr(coro, "close", None)
+                if callable(close):
+                    close()
+
+            app.run_worker = _run_worker  # type: ignore[assignment,method-assign]
+
+            app._open_memory_inspector()  # type: ignore[attr-defined]
+
+            state = app._store.snapshot()  # type: ignore[attr-defined]
+            self.assertEqual(state.memory_origin_screen, "task_detail")
+            self.assertEqual(state.active_screen, "memory")
+            self.assertEqual(switched, [])
+            self.assertEqual(len(scheduled), 1)

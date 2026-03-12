@@ -37,6 +37,12 @@ class UiMessage(TypedDict, total=False):
     artifact_preview_status: str
     artifact_preview_error: str | None
     approval_feedback: str | None
+    selected_memory_group_id: str | None
+    selected_memory_entry_id: str | None
+    memory_request_context_key: str | None
+    memory_request_status: str
+    memory_request_error: str | None
+    memory_origin_screen: str
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -78,6 +84,13 @@ class AppState:
     artifact_preview_error_by_artifact: dict[str, str | None] = field(default_factory=dict)
     artifact_preview_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
     markdown_viewer_artifact_id: str | None = None
+    memory_entries_by_context: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
+    selected_memory_group_id: str | None = None
+    selected_memory_entry_id: str | None = None
+    memory_request_context_key: str | None = None
+    memory_request_status: str = "idle"
+    memory_request_error: str | None = None
+    memory_origin_screen: str = "dashboard"
 
 
 class AppStateStore:

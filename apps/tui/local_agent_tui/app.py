@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .actions.approve_request import build_approval_request_action
+from .actions.inspect_memory import build_inspect_memory_action
 from .actions.open_artifact import build_open_artifact_action
 from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
@@ -12,14 +13,18 @@ from .screens.approvals import ApprovalsScreen
 from .screens.artifacts import ArtifactsScreen
 from .screens.dashboard import DashboardScreen
 from .screens.markdown_viewer import MarkdownViewerScreen
+from .screens.memory import MemoryScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
     artifact_browser_rows,
+    memory_entry_items,
+    memory_scope_groups,
     pending_approvals,
     selected_artifact_browser_item,
     selected_approval_detail,
     selected_artifact_preview,
+    selected_memory_detail,
     recent_task_ids,
     task_artifact_panel,
     task_action_bar,
@@ -72,6 +77,7 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
+        Binding("m", "open_memory", "Memory", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
         Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
         Binding("t", "group_artifacts_task", "Task Group", show=False, priority=True),
@@ -93,6 +99,7 @@ class AgentTUI(App):  # type: ignore[misc]
         self.install_screen(ApprovalsScreen(), name="approvals")
         self.install_screen(ArtifactsScreen(), name="artifacts")
         self.install_screen(MarkdownViewerScreen(), name="markdown_viewer")
+        self.install_screen(MemoryScreen(), name="memory")
 
     def compose(self) -> ComposeResult:
         yield self._status_bar
@@ -265,6 +272,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _move_focused_selection(self, delta: int) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "memory":
+            self._move_memory_selection(delta)
+            return
         if state.active_screen == "artifacts":
             self._move_artifact_browser_selection(delta)
             return
@@ -297,6 +307,8 @@ class AgentTUI(App):  # type: ignore[misc]
     def _cycle_focus(self, delta: int) -> None:
         panes = ["tasks", "approvals", "artifacts"]
         state = self._store.snapshot()
+        if state.active_screen == "memory":
+            panes = ["memory_groups", "memory_entries"]
         current_index = panes.index(state.focused_pane) if state.focused_pane in panes else 0
         next_index = (current_index + delta) % len(panes)
         self._store.dispatch({"kind": "ui", "focused_pane": panes[next_index]})
@@ -330,6 +342,9 @@ class AgentTUI(App):  # type: ignore[misc]
             group="approvals-refresh",
             exclusive=True,
         )
+
+    def action_open_memory(self) -> None:
+        self._open_memory_inspector()
 
     def action_resume_task(self) -> None:
         state = self._store.snapshot()
@@ -402,6 +417,9 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if state.active_screen == "markdown_viewer":
             self._set_active_screen("artifacts")
+            return
+        if state.active_screen == "memory":
+            self._set_active_screen(state.memory_origin_screen or "dashboard")
             return
         self._set_active_screen("dashboard")
 
@@ -517,6 +535,46 @@ class AgentTUI(App):  # type: ignore[misc]
         next_row = rows[(current_index + delta) % len(rows)]
         self.handle_artifact_browser_selected(next_row.artifact_id)
 
+    def _move_memory_selection(self, delta: int) -> None:
+        state = self._store.snapshot()
+        if state.focused_pane == "memory_entries":
+            entries = memory_entry_items(state)
+            if not entries:
+                return
+            current_index = next(
+                (index for index, item in enumerate(entries) if item.is_selected), -1
+            )
+            next_item = entries[(current_index + delta) % len(entries)]
+            self.handle_memory_entry_selected(next_item.memory_id)
+            return
+        groups = memory_scope_groups(state)
+        if not groups:
+            return
+        current_index = next((index for index, item in enumerate(groups) if item.is_selected), -1)
+        next_group = groups[(current_index + delta) % len(groups)]
+        self.handle_memory_group_selected(next_group.group_id)
+
+    def handle_memory_group_selected(self, group_id: str) -> None:
+        groups = memory_scope_groups(self._store.snapshot())
+        if not any(group.group_id == group_id for group in groups):
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "selected_memory_group_id": group_id,
+                "selected_memory_entry_id": None,
+            }
+        )
+        self._ensure_memory_selection()
+        self._render_state()
+
+    def handle_memory_entry_selected(self, memory_id: str) -> None:
+        entries = memory_entry_items(self._store.snapshot())
+        if not any(entry.memory_id == memory_id for entry in entries):
+            return
+        self._store.dispatch({"kind": "ui", "selected_memory_entry_id": memory_id})
+        self._render_state()
+
     def _ensure_artifact_browser_selection(self) -> None:
         state = self._store.snapshot()
         if state.artifact_browser_selected_id is not None:
@@ -616,3 +674,86 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         self._store.dispatch({"kind": "ui", "artifact_group_by": group_by})
         self._render_state()
+
+    def _open_memory_inspector(self) -> None:
+        state = self._store.snapshot()
+        task = state.task_snapshots.get(state.selected_task_id) if state.selected_task_id else None
+        origin_screen = (
+            state.memory_origin_screen if state.active_screen == "memory" else state.active_screen
+        )
+        action = build_inspect_memory_action(
+            task_id=state.selected_task_id,
+            run_id=str(task.get("run_id", "")) or None if task is not None else None,
+            origin_screen=origin_screen,
+        )
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "active_screen": "memory",
+                "focused_pane": "memory_groups",
+                "memory_origin_screen": action.origin_screen,
+            }
+        )
+        if state.active_screen != "memory":
+            self.switch_screen("memory")
+        self._render_state()
+        self.run_worker(
+            self._refresh_memory_inspection(task_id=action.task_id, run_id=action.run_id),
+            group="memory-refresh",
+            exclusive=True,
+        )
+
+    async def _refresh_memory_inspection(
+        self,
+        *,
+        task_id: str | None,
+        run_id: str | None,
+    ) -> None:
+        context_key = f"{task_id}:{run_id}" if task_id and run_id else (task_id or "global")
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "memory_request_context_key": context_key,
+                "memory_request_status": "loading",
+                "memory_request_error": None,
+            }
+        )
+        self._render_state()
+        try:
+            payload = await self._client.memory_inspect(task_id=task_id, run_id=run_id)
+            payload = {
+                **payload,
+                "context": {
+                    "task_id": task_id,
+                    "run_id": run_id,
+                },
+            }
+            self._store.dispatch({"kind": "rpc", "name": "memory.inspect", "payload": payload})
+            self._ensure_memory_selection()
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "memory_request_context_key": context_key,
+                    "memory_request_status": "error",
+                    "memory_request_error": str(exc),
+                }
+            )
+        self._render_state()
+
+    def _ensure_memory_selection(self) -> None:
+        state = self._store.snapshot()
+        groups = memory_scope_groups(state)
+        selected_group = next(
+            (group for group in groups if group.is_selected), groups[0] if groups else None
+        )
+        message: UiMessage = {"kind": "ui"}
+        if selected_group is not None:
+            message["selected_memory_group_id"] = selected_group.group_id
+        detail = selected_memory_detail(state)
+        if detail.status == "loaded":
+            entries = memory_entry_items(self._store.snapshot())
+            if entries:
+                selected_entry = next((entry for entry in entries if entry.is_selected), entries[0])
+                message["selected_memory_entry_id"] = selected_entry.memory_id
+        self._store.dispatch(message)

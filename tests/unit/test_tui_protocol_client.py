@@ -46,6 +46,17 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["result"]["tasks"], [])
         request_mock.assert_awaited_once_with("task.list", {"limit": 5})
 
+    async def test_memory_inspect_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"entries": []}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.memory_inspect(task_id="task_1", run_id="run_1")
+        self.assertEqual(payload["result"]["entries"], [])
+        request_mock.assert_awaited_once_with(
+            "memory.inspect",
+            {"task_id": "task_1", "run_id": "run_1"},
+        )
+
     async def test_task_resume_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         request_mock = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})

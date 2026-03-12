@@ -9,9 +9,13 @@ from apps.tui.local_agent_tui.store.selectors import (
     selected_artifact_preview,
     selected_markdown_artifact,
     artifact_count,
+    memory_entry_items,
+    memory_group_summary,
+    memory_scope_groups,
     pending_approvals,
     recent_artifacts,
     selected_approval_detail,
+    selected_memory_detail,
     selected_task_header,
     selected_task_summary,
     task_action_bar,
@@ -644,6 +648,169 @@ class TuiStoreTests(unittest.TestCase):
         failed_model = selected_markdown_artifact(store.snapshot())
         self.assertEqual(failed_model.status, "failed")  # type: ignore[union-attr]
         self.assertEqual(failed_model.error, "preview exploded")  # type: ignore[union-attr]
+
+    def test_memory_inspect_groups_runtime_scopes_into_operator_views(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "executing",
+                            "objective": "Inspect repo",
+                        }
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "memory.inspect",
+                "payload": {
+                    "context": {"task_id": "task_1", "run_id": "run_1"},
+                    "result": {
+                        "entries": [
+                            {
+                                "memory_id": "scratch_1",
+                                "scope": "scratch",
+                                "namespace": "task.notes",
+                                "summary": "Scratch note",
+                                "content": '{"note":"hi"}',
+                                "provenance": {"task_id": "task_1", "run_id": "run_1"},
+                                "created_at": "2026-03-12T00:00:01Z",
+                                "updated_at": "2026-03-12T00:00:02Z",
+                                "source_run": "run_1",
+                                "confidence": 0.8,
+                            },
+                            {
+                                "memory_id": "run_1",
+                                "scope": "run_state",
+                                "namespace": "task.plan",
+                                "summary": "Current plan",
+                                "content": '{"step":"inspect"}',
+                                "provenance": {"task_id": "task_1", "checkpoint": "cp-1"},
+                                "created_at": "2026-03-12T00:00:03Z",
+                                "updated_at": "2026-03-12T00:00:04Z",
+                                "source_run": "run_1",
+                            },
+                            {
+                                "memory_id": "proj_1",
+                                "scope": "project",
+                                "namespace": "repo",
+                                "summary": "Project context",
+                                "content": "Repository summary",
+                                "provenance": {},
+                                "created_at": "2026-03-12T00:00:05Z",
+                                "updated_at": "2026-03-12T00:00:06Z",
+                            },
+                        ]
+                    },
+                },
+            }
+        )
+        state = store.snapshot()
+        groups = memory_scope_groups(state)
+        counts = {group.group_id: group.count for group in groups}
+        self.assertEqual(counts["short_term"], 1)
+        self.assertEqual(counts["working_context"], 1)
+        self.assertEqual(counts["episodic"], 1)
+        self.assertEqual(counts["checkpoint_metadata"], 2)
+
+        detail = selected_memory_detail(state)
+        self.assertEqual(detail.status, "loaded")
+        self.assertIn('"note": "hi"', detail.content)
+        self.assertIn('"run_id": "run_1"', detail.provenance)
+
+        summary = memory_group_summary(state)
+        self.assertIn("Short-Term Memory", summary)
+        self.assertIn("Read-only inspection", summary)
+
+    def test_memory_selection_falls_back_after_refresh_and_projects_error_states(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {"task": {"task_id": "task_1", "run_id": "run_1", "status": "paused"}}
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "memory.inspect",
+                "payload": {
+                    "context": {"task_id": "task_1", "run_id": "run_1"},
+                    "result": {
+                        "entries": [
+                            {
+                                "memory_id": "mem_1",
+                                "scope": "project",
+                                "namespace": "repo",
+                                "summary": "Repository context",
+                                "content": "alpha",
+                                "provenance": {},
+                                "created_at": "2026-03-12T00:00:01Z",
+                                "updated_at": "2026-03-12T00:00:01Z",
+                            }
+                        ]
+                    },
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "ui",
+                "selected_memory_group_id": "episodic",
+                "selected_memory_entry_id": "mem_1",
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "memory.inspect",
+                "payload": {
+                    "context": {"task_id": "task_1", "run_id": "run_1"},
+                    "result": {
+                        "entries": [
+                            {
+                                "memory_id": "mem_2",
+                                "scope": "scratch",
+                                "namespace": "notes",
+                                "summary": "Scratch note",
+                                "content": "beta",
+                                "provenance": {"task_id": "task_1"},
+                                "created_at": "2026-03-12T00:00:02Z",
+                                "updated_at": "2026-03-12T00:00:02Z",
+                            }
+                        ]
+                    },
+                },
+            }
+        )
+        groups = memory_scope_groups(store.snapshot())
+        self.assertTrue(
+            any(group.group_id == "short_term" and group.count == 1 for group in groups)
+        )
+        entries = memory_entry_items(store.snapshot())
+        self.assertEqual(entries[0].memory_id, "mem_2")
+
+        store.dispatch(
+            {
+                "kind": "ui",
+                "memory_request_status": "error",
+                "memory_request_error": "runtime exploded",
+            }
+        )
+        error_detail = selected_memory_detail(store.snapshot())
+        self.assertEqual(error_detail.status, "error")
+        self.assertIn("runtime exploded", error_detail.content)
 
     @staticmethod
     def _dispatch_created(store: AppStateStore) -> None:

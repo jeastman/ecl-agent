@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from typing import Any, cast
 
 from .app_state import AppState, TaskEventRecord
@@ -189,6 +190,38 @@ class MarkdownArtifactViewModel:
     body: str
     status: str
     error: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryGroupItemViewModel:
+    group_id: str
+    title: str
+    description: str
+    count: int
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryEntryItemViewModel:
+    memory_id: str
+    title: str
+    subtitle: str
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryDetailViewModel:
+    title: str
+    status: str
+    summary: str
+    content: str
+    raw_scope: str
+    namespace: str
+    provenance: str
+    source_run: str
+    confidence: str
+    created_at: str
+    updated_at: str
 
 
 def connection_label(state: AppState) -> str:
@@ -653,6 +686,161 @@ def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemVi
     ]
 
 
+def memory_scope_groups(state: AppState) -> list[MemoryGroupItemViewModel]:
+    grouped_entries = _memory_grouped_entries(state)
+    selected_group_id = _selected_memory_group_id(state, grouped_entries)
+    ordered_groups = [
+        ("short_term", "Short-Term Memory", "Scratch-pad state and near-term notes."),
+        ("working_context", "Working Context", "Run-state context tied to active work."),
+        ("episodic", "Episodic Memory", "Longer-lived project and identity memory."),
+        (
+            "checkpoint_metadata",
+            "Checkpoint Metadata",
+            "Run-linked provenance and recovery context.",
+        ),
+    ]
+    return [
+        MemoryGroupItemViewModel(
+            group_id=group_id,
+            title=title,
+            description=description,
+            count=len(grouped_entries[group_id]),
+            is_selected=group_id == selected_group_id,
+        )
+        for group_id, title, description in ordered_groups
+    ]
+
+
+def memory_entry_items(state: AppState) -> list[MemoryEntryItemViewModel]:
+    grouped_entries = _memory_grouped_entries(state)
+    selected_group_id = _selected_memory_group_id(state, grouped_entries)
+    selected_entry_id = _selected_memory_entry_id(state, selected_group_id, grouped_entries)
+    entries = grouped_entries.get(selected_group_id, [])
+    items: list[MemoryEntryItemViewModel] = []
+    for entry in entries:
+        items.append(
+            MemoryEntryItemViewModel(
+                memory_id=str(entry.get("memory_id", "")),
+                title=str(entry.get("summary") or entry.get("namespace") or entry.get("memory_id")),
+                subtitle=_memory_entry_subtitle(entry),
+                is_selected=str(entry.get("memory_id", "")) == selected_entry_id,
+            )
+        )
+    return items
+
+
+def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
+    if state.memory_request_status == "loading":
+        return MemoryDetailViewModel(
+            title="Memory Inspector",
+            status="loading",
+            summary="Loading memory inspection output...",
+            content="Waiting for runtime memory data.",
+            raw_scope="",
+            namespace="",
+            provenance="",
+            source_run="",
+            confidence="",
+            created_at="",
+            updated_at="",
+        )
+    if state.memory_request_status == "error":
+        return MemoryDetailViewModel(
+            title="Memory Inspector",
+            status="error",
+            summary=state.memory_request_error or "Memory inspection failed.",
+            content=state.memory_request_error or "Memory inspection failed.",
+            raw_scope="",
+            namespace="",
+            provenance="",
+            source_run="",
+            confidence="",
+            created_at="",
+            updated_at="",
+        )
+
+    grouped_entries = _memory_grouped_entries(state)
+    selected_group_id = _selected_memory_group_id(state, grouped_entries)
+    if not any(grouped_entries.values()):
+        return MemoryDetailViewModel(
+            title="Memory Inspector",
+            status="empty",
+            summary="No memory entries available for the current context.",
+            content="The runtime returned no memory data for this view.",
+            raw_scope="",
+            namespace="",
+            provenance="",
+            source_run="",
+            confidence="",
+            created_at="",
+            updated_at="",
+        )
+    entries = grouped_entries.get(selected_group_id, [])
+    if not entries:
+        group_title = _memory_group_title(selected_group_id)
+        return MemoryDetailViewModel(
+            title=group_title,
+            status="empty",
+            summary=f"No entries in {group_title.lower()}.",
+            content="Select a different memory group to inspect available entries.",
+            raw_scope="",
+            namespace="",
+            provenance="",
+            source_run="",
+            confidence="",
+            created_at="",
+            updated_at="",
+        )
+
+    selected_entry_id = _selected_memory_entry_id(state, selected_group_id, grouped_entries)
+    entry = next(
+        (
+            candidate
+            for candidate in entries
+            if str(candidate.get("memory_id", "")) == selected_entry_id
+        ),
+        entries[0],
+    )
+    return MemoryDetailViewModel(
+        title=str(
+            entry.get("summary")
+            or entry.get("namespace")
+            or entry.get("memory_id")
+            or "Memory Entry"
+        ),
+        status="loaded",
+        summary=str(entry.get("summary") or "No summary provided."),
+        content=_format_memory_content(entry.get("content")),
+        raw_scope=str(entry.get("scope", "")),
+        namespace=str(entry.get("namespace", "")),
+        provenance=_format_memory_provenance(entry.get("provenance")),
+        source_run=str(entry.get("source_run") or "n/a"),
+        confidence=_format_memory_confidence(entry.get("confidence")),
+        created_at=str(entry.get("created_at", "")),
+        updated_at=str(entry.get("updated_at", "")),
+    )
+
+
+def memory_group_summary(state: AppState) -> str:
+    grouped_entries = _memory_grouped_entries(state)
+    selected_group_id = _selected_memory_group_id(state, grouped_entries)
+    entries = grouped_entries.get(selected_group_id, [])
+    group = next(
+        (item for item in memory_scope_groups(state) if item.group_id == selected_group_id), None
+    )
+    title = group.title if group is not None else _memory_group_title(selected_group_id)
+    description = group.description if group is not None else ""
+    context = state.memory_request_context_key or _memory_context_key(state)
+    lines = [
+        title,
+        description,
+        f"Entries: {len(entries)}",
+        f"Context: {context}",
+        "Read-only inspection",
+    ]
+    return "\n".join(line for line in lines if line)
+
+
 def footer_hints(state: AppState) -> list[str]:
     if state.active_screen == "approvals":
         return [
@@ -679,6 +867,14 @@ def footer_hints(state: AppState) -> list[str]:
         ]
     if state.active_screen == "markdown_viewer":
         return ["[Esc] Back", "[Q] Quit"]
+    if state.active_screen == "memory":
+        return [
+            "[Up/Down] Move",
+            "[Tab] Focus",
+            "[M] Refresh",
+            "[Esc] Back",
+            "[Q] Quit",
+        ]
     if state.focused_pane == "approvals":
         return [
             "[Up/Down] Move Approval",
@@ -798,6 +994,158 @@ def _artifact_by_id(state: AppState, artifact_id: str) -> dict[str, Any] | None:
         if str(artifact.get("artifact_id", "")) == artifact_id:
             return artifact
     return None
+
+
+def _memory_entries_for_current_context(state: AppState) -> list[dict[str, Any]]:
+    return list(state.memory_entries_by_context.get(_memory_context_key(state), []))
+
+
+def _memory_context_key(state: AppState) -> str:
+    task = _selected_task(state)
+    if task is None:
+        return "global"
+    task_id = str(task.get("task_id") or "")
+    run_id = str(task.get("run_id") or "")
+    if task_id and run_id:
+        return f"{task_id}:{run_id}"
+    if task_id:
+        return task_id
+    return "global"
+
+
+def _memory_grouped_entries(state: AppState) -> dict[str, list[dict[str, Any]]]:
+    grouped: dict[str, list[dict[str, Any]]] = {
+        "short_term": [],
+        "working_context": [],
+        "episodic": [],
+        "checkpoint_metadata": [],
+    }
+    for entry in _memory_entries_for_current_context(state):
+        scope = str(entry.get("scope", ""))
+        if scope == "scratch":
+            grouped["short_term"].append(entry)
+        elif scope == "run_state":
+            grouped["working_context"].append(entry)
+        elif scope in {"project", "identity"}:
+            grouped["episodic"].append(entry)
+        else:
+            grouped["episodic"].append(entry)
+
+        if _is_checkpoint_candidate(entry):
+            grouped["checkpoint_metadata"].append(_checkpoint_projection(entry))
+    return grouped
+
+
+def _selected_memory_group_id(
+    state: AppState, grouped_entries: dict[str, list[dict[str, Any]]]
+) -> str:
+    if (
+        state.selected_memory_group_id in grouped_entries
+        and grouped_entries[cast(str, state.selected_memory_group_id)]
+    ):
+        return cast(str, state.selected_memory_group_id)
+    for group_id, entries in grouped_entries.items():
+        if entries:
+            return group_id
+    return "short_term"
+
+
+def _selected_memory_entry_id(
+    state: AppState,
+    selected_group_id: str,
+    grouped_entries: dict[str, list[dict[str, Any]]],
+) -> str | None:
+    entries = grouped_entries.get(selected_group_id, [])
+    entry_ids = [str(entry.get("memory_id", "")) for entry in entries if entry.get("memory_id")]
+    if state.selected_memory_entry_id in entry_ids:
+        return state.selected_memory_entry_id
+    return entry_ids[0] if entry_ids else None
+
+
+def _memory_group_title(group_id: str) -> str:
+    titles = {
+        "short_term": "Short-Term Memory",
+        "working_context": "Working Context",
+        "episodic": "Episodic Memory",
+        "checkpoint_metadata": "Checkpoint Metadata",
+    }
+    return titles.get(group_id, "Memory")
+
+
+def _memory_entry_subtitle(entry: dict[str, Any]) -> str:
+    bits = [
+        str(entry.get("scope", "")),
+        str(entry.get("namespace", "")),
+        str(entry.get("updated_at", "")),
+    ]
+    return " | ".join(bit for bit in bits if bit)
+
+
+def _is_checkpoint_candidate(entry: dict[str, Any]) -> bool:
+    scope = str(entry.get("scope", ""))
+    if scope not in {"run_state", "scratch"}:
+        return False
+    provenance = entry.get("provenance")
+    return bool(entry.get("source_run")) or (isinstance(provenance, dict) and bool(provenance))
+
+
+def _checkpoint_projection(entry: dict[str, Any]) -> dict[str, Any]:
+    provenance = (
+        dict(entry.get("provenance", {})) if isinstance(entry.get("provenance"), dict) else {}
+    )
+    checkpoint_summary = str(entry.get("summary") or entry.get("memory_id") or "checkpoint")
+    checkpoint_content = {
+        "memory_id": entry.get("memory_id"),
+        "raw_scope": entry.get("scope"),
+        "namespace": entry.get("namespace"),
+        "source_run": entry.get("source_run"),
+        "provenance": provenance,
+    }
+    return {
+        "memory_id": f"checkpoint::{entry.get('memory_id', '')}",
+        "scope": entry.get("scope", ""),
+        "namespace": entry.get("namespace", ""),
+        "summary": f"Checkpoint: {checkpoint_summary}",
+        "content": json.dumps(checkpoint_content, indent=2, sort_keys=True),
+        "provenance": provenance,
+        "source_run": entry.get("source_run"),
+        "confidence": entry.get("confidence"),
+        "created_at": entry.get("created_at", ""),
+        "updated_at": entry.get("updated_at", ""),
+    }
+
+
+def _format_memory_content(value: Any) -> str:
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return "No content available."
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return value
+        return json.dumps(parsed, indent=2, sort_keys=True)
+    if isinstance(value, dict):
+        return json.dumps(value, indent=2, sort_keys=True)
+    return str(value or "No content available.")
+
+
+def _format_memory_provenance(value: Any) -> str:
+    if isinstance(value, dict):
+        if not value:
+            return "n/a"
+        return json.dumps(value, indent=2, sort_keys=True)
+    if value is None:
+        return "n/a"
+    return str(value)
+
+
+def _format_memory_confidence(value: Any) -> str:
+    if isinstance(value, float):
+        return f"{value:.2f}"
+    if value is None:
+        return "n/a"
+    return str(value)
 
 
 def _selected_artifact_browser_id(state: AppState) -> str | None:
