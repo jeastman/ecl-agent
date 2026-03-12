@@ -38,6 +38,7 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         focused_pane=str(message.get("focused_pane", state.focused_pane)),
         selected_task_id=message.get("selected_task_id", state.selected_task_id),
         selected_approval_id=message.get("selected_approval_id", state.selected_approval_id),
+        approval_feedback=message.get("approval_feedback", state.approval_feedback),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if not isinstance(selected_artifact_id, str):
@@ -60,7 +61,7 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             last_error=None,
         )
 
-    if name in {"task.get", "task.resume"}:
+    if name in {"task.get", "task.resume", "task.approve"}:
         task = _merge_task_snapshot(
             state.task_snapshots.get(str(payload["result"]["task"]["task_id"])),
             dict(payload["result"]["task"]),
@@ -98,9 +99,10 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             approvals_by_task[(task_id, run_id)] = _dedupe_entries(
                 approvals, key_name="approval_id"
             )
-        selected_approval_id = state.selected_approval_id
-        if selected_approval_id is None and approvals:
-            selected_approval_id = approvals[0].get("approval_id")
+        selected_approval_id = _resolved_selected_approval_id(
+            approvals_by_task,
+            current_id=state.selected_approval_id,
+        )
         return replace(
             state,
             approvals_by_task=approvals_by_task,
@@ -437,6 +439,28 @@ def _default_selected_artifact_id(
     if current_id in artifact_ids:
         return current_id
     return artifact_ids[0] if artifact_ids else None
+
+
+def _resolved_selected_approval_id(
+    approvals_by_task: dict[tuple[str, str], list[dict[str, Any]]],
+    *,
+    current_id: str | None,
+) -> str | None:
+    pending_entries: list[dict[str, Any]] = []
+    for entries in approvals_by_task.values():
+        for approval in entries:
+            status = str(approval.get("status", "pending"))
+            if status in {"pending", "waiting"}:
+                pending_entries.append(approval)
+    pending_entries.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    pending_ids = [
+        str(item["approval_id"])
+        for item in pending_entries
+        if isinstance(item.get("approval_id"), str)
+    ]
+    if current_id in pending_ids:
+        return current_id
+    return pending_ids[0] if pending_ids else None
 
 
 def _selected_task_key(state: AppState) -> tuple[str, str] | None:

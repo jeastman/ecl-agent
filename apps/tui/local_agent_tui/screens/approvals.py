@@ -3,7 +3,8 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.app_state import AppState
-from ..store.selectors import footer_hints, pending_approvals
+from ..store.selectors import footer_hints, pending_approvals, selected_approval_detail
+from ..widgets.approval_detail import ApprovalDetailWidget
 from ..widgets.approval_queue import ApprovalQueueWidget
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -32,7 +33,11 @@ else:  # pragma: no cover
 class ApprovalsScreen(Screen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
-            ApprovalQueueWidget(id="approvals-screen-queue"),
+            Container(
+                ApprovalQueueWidget(id="approvals-screen-queue"),
+                ApprovalDetailWidget(id="approvals-screen-detail"),
+                id="approvals-screen-main",
+            ),
             Static(id="approvals-screen-footer"),
             id="approvals-screen-root",
         )
@@ -43,5 +48,10 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals(state),
             focused=True,
+            inbox_mode=True,
         )
-        self.query_one("#approvals-screen-footer", Static).update("   ".join(footer_hints(state)))
+        self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
+        footer = "   ".join(footer_hints(state))
+        if state.approval_feedback:
+            footer = f"{footer}\n{state.approval_feedback}"
+        self.query_one("#approvals-screen-footer", Static).update(footer)

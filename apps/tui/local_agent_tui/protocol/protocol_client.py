@@ -8,6 +8,7 @@ from typing import Any
 from packages.protocol.local_agent_protocol.models import (
     JsonRpcRequest,
     METHOD_RUNTIME_HEALTH,
+    METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_GET,
@@ -15,11 +16,13 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
     TaskApprovalsListParams,
+    TaskApproveParams,
     TaskArtifactsListParams,
     TaskGetParams,
     TaskListParams,
     TaskLogsStreamParams,
     TaskResumeParams,
+    ApprovalDecisionPayload,
 )
 
 
@@ -83,6 +86,25 @@ class ProtocolClient:
         return await self._request(
             METHOD_TASK_APPROVALS_LIST,
             TaskApprovalsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        )
+
+    async def task_approve(
+        self,
+        task_id: str | None,
+        run_id: str | None,
+        approval_id: str,
+        decision: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_APPROVE,
+            TaskApproveParams(
+                task_id=task_id,
+                run_id=run_id,
+                approval=ApprovalDecisionPayload(
+                    approval_id=approval_id,
+                    decision=decision,
+                ),
+            ).to_dict(),
         )
 
     async def task_artifacts_list(self, task_id: str, run_id: str | None = None) -> dict[str, Any]:

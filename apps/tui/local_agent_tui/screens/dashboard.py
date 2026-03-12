@@ -65,6 +65,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals(state, limit=5),
             focused=state.focused_pane == "approvals",
+            inbox_mode=False,
         )
         task_summary = self.query_one("#task-summary", Static)
         task_summary.border_title = "Selected Task"

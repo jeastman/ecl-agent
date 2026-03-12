@@ -29,6 +29,7 @@ class UiMessage(TypedDict, total=False):
     selected_task_id: str | None
     selected_approval_id: str | None
     selected_artifact_id: str | None
+    approval_feedback: str | None
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -62,6 +63,7 @@ class AppState:
     selected_approval_id: str | None = None
     active_screen: str = "dashboard"
     focused_pane: str = "tasks"
+    approval_feedback: str | None = None
 
 
 class AppStateStore:

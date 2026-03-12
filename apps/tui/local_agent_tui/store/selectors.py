@@ -37,10 +37,27 @@ class ApprovalQueueItemViewModel:
     task_id: str
     run_id: str
     status: str
+    request_type: str
+    policy_context: str
+    requested_action: str
     description: str
     scope_summary: str
     created_at: str
     is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ApprovalDetailViewModel:
+    approval_id: str
+    task_id: str
+    run_id: str
+    request_type: str
+    policy_context: str
+    requested_action: str
+    description: str
+    scope_summary: str
+    status: str
+    created_at: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -238,6 +255,9 @@ def pending_approvals(
                     task_id=str(approval.get("task_id", "")),
                     run_id=str(approval.get("run_id", "")),
                     status=status,
+                    request_type=_approval_request_type(approval),
+                    policy_context=_approval_policy_context(approval),
+                    requested_action=_approval_requested_action(approval),
                     description=str(
                         approval.get("description") or approval.get("type") or "Approval"
                     ),
@@ -250,6 +270,24 @@ def pending_approvals(
     if limit is not None:
         approvals = approvals[:limit]
     return approvals
+
+
+def selected_approval_detail(state: AppState) -> ApprovalDetailViewModel | None:
+    approval = _selected_approval(state)
+    if approval is None:
+        return None
+    return ApprovalDetailViewModel(
+        approval_id=str(approval.get("approval_id", "")),
+        task_id=str(approval.get("task_id", "")),
+        run_id=str(approval.get("run_id", "")),
+        request_type=_approval_request_type(approval),
+        policy_context=_approval_policy_context(approval),
+        requested_action=_approval_requested_action(approval),
+        description=str(approval.get("description") or approval.get("type") or "Approval"),
+        scope_summary=str(approval.get("scope_summary") or "Pending review"),
+        status=str(approval.get("status", "pending")),
+        created_at=str(approval.get("created_at", "")),
+    )
 
 
 def recent_artifacts(state: AppState, *, limit: int = 5) -> list[ArtifactItemViewModel]:
@@ -435,7 +473,13 @@ def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemVi
 
 def footer_hints(state: AppState) -> list[str]:
     if state.active_screen == "approvals":
-        return ["[Esc] Dashboard", "[Enter] Open Task", "[Q] Quit"]
+        return [
+            "[A] Approve",
+            "[R] Reject",
+            "[Enter] Open Task",
+            "[Esc] Dashboard",
+            "[Q] Quit",
+        ]
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
         hints = ["[Esc] Dashboard", "[A] Approvals", "[O] Artifact", "[Q] Quit"]
@@ -471,6 +515,17 @@ def _selected_task(state: AppState) -> dict[str, Any] | None:
     if state.selected_task_id is None:
         return None
     return state.task_snapshots.get(state.selected_task_id)
+
+
+def _selected_approval(state: AppState) -> dict[str, Any] | None:
+    approval_id = state.selected_approval_id
+    if approval_id is None:
+        return None
+    for entries in state.approvals_by_task.values():
+        for approval in entries:
+            if str(approval.get("approval_id", "")) == approval_id:
+                return approval
+    return None
 
 
 def _selected_task_key(state: AppState) -> tuple[str, str] | None:
@@ -523,6 +578,40 @@ def _artifact_item_view_model(artifact: dict[str, Any]) -> ArtifactItemViewModel
         content_type=str(artifact.get("content_type", "unknown")),
         created_at=str(artifact.get("created_at", "")),
     )
+
+
+def _approval_request_type(approval: dict[str, Any]) -> str:
+    value = approval.get("type")
+    if isinstance(value, str) and value.strip():
+        return value
+    return "approval"
+
+
+def _approval_policy_context(approval: dict[str, Any]) -> str:
+    scope = approval.get("scope")
+    if not isinstance(scope, dict) or not scope:
+        return "unspecified"
+    boundary_key = scope.get("boundary_key")
+    if isinstance(boundary_key, str) and boundary_key.strip():
+        return boundary_key
+    kind = scope.get("kind")
+    if isinstance(kind, str) and kind.strip():
+        return kind
+    first_key = next(iter(sorted(scope)))
+    return str(first_key)
+
+
+def _approval_requested_action(approval: dict[str, Any]) -> str:
+    scope = approval.get("scope")
+    if isinstance(scope, dict):
+        for key in ("path_scope", "target_scope", "source_path", "memory_scope"):
+            value = scope.get(key)
+            if isinstance(value, str) and value.strip():
+                return value
+    scope_summary = approval.get("scope_summary")
+    if isinstance(scope_summary, str) and scope_summary.strip():
+        return scope_summary
+    return _approval_request_type(approval)
 
 
 def _sorted_task_snapshots(state: AppState) -> list[dict[str, Any]]:

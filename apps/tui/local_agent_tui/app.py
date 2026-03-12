@@ -4,14 +4,16 @@ import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
+from .actions.approve_request import build_approval_request_action
 from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
 from .screens.dashboard import DashboardScreen
 from .screens.task_detail import TaskDetailScreen
-from .store.app_state import AppStateStore
+from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
     pending_approvals,
+    selected_approval_detail,
     recent_task_ids,
     task_artifact_panel,
     task_action_bar,
@@ -128,6 +130,19 @@ class AgentTUI(App):  # type: ignore[misc]
             run_id = str(task.get("run_id", "")) or None
             await self._load_task_related(task_id=task_id, run_id=run_id)
 
+    async def _refresh_known_approvals(self) -> None:
+        state = self._store.snapshot()
+        for task_id in recent_task_ids(state):
+            task = state.task_snapshots.get(task_id)
+            if task is None:
+                continue
+            run_id = str(task.get("run_id", "")) or None
+            approvals = await self._client.task_approvals_list(task_id, run_id)
+            self._store.dispatch(
+                {"kind": "rpc", "name": "task.approvals.list", "payload": approvals}
+            )
+        self._render_state()
+
     async def _load_task_related(self, *, task_id: str, run_id: str | None) -> None:
         approvals = await self._client.task_approvals_list(task_id, run_id)
         self._store.dispatch({"kind": "rpc", "name": "task.approvals.list", "payload": approvals})
@@ -200,7 +215,10 @@ class AgentTUI(App):  # type: ignore[misc]
         self.run_worker(self._sync_selected_task(), group="selection-sync", exclusive=True)
 
     def _set_active_screen(self, screen_name: str) -> None:
-        self._store.dispatch({"kind": "ui", "active_screen": screen_name})
+        message: UiMessage = {"kind": "ui", "active_screen": screen_name}
+        if screen_name != "approvals":
+            message["approval_feedback"] = None
+        self._store.dispatch(message)
         self.switch_screen(screen_name)
         self._render_state()
 
@@ -212,6 +230,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _move_focused_selection(self, delta: int) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "approvals":
+            self._move_approval_selection(delta)
+            return
         if state.active_screen == "dashboard" and state.focused_pane == "approvals":
             self._move_approval_selection(delta)
             return
@@ -256,10 +277,22 @@ class AgentTUI(App):  # type: ignore[misc]
         self._set_active_screen("task_detail")
 
     def action_open_approvals(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen == "approvals":
+            self.action_approve_selected_request()
+            return
         self._set_active_screen("approvals")
+        self.run_worker(
+            self._refresh_known_approvals(),
+            group="approvals-refresh",
+            exclusive=True,
+        )
 
     def action_resume_task(self) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "approvals":
+            self.action_reject_selected_request()
+            return
         if state.active_screen != "task_detail" or state.selected_task_id is None:
             return
         actions = task_action_bar(state)
@@ -307,26 +340,19 @@ class AgentTUI(App):  # type: ignore[misc]
         self.exit()
 
     def action_open_selected_approval_task(self) -> None:
-        state = self._store.snapshot()
-        approvals = pending_approvals(state)
-        if not approvals:
+        selected = selected_approval_detail(self._store.snapshot())
+        if selected is None:
             return
-        selected = next(
-            (
-                approval
-                for approval in approvals
-                if approval.approval_id == state.selected_approval_id
-            ),
-            approvals[0],
-        )
         self._store.dispatch(
             {
                 "kind": "ui",
                 "selected_task_id": selected.task_id,
                 "focused_pane": "tasks",
+                "approval_feedback": None,
             }
         )
         self._set_active_screen("task_detail")
+        self.run_worker(self._sync_selected_task(), group="selection-sync", exclusive=True)
 
     def _move_approval_selection(self, delta: int) -> None:
         state = self._store.snapshot()
@@ -343,3 +369,62 @@ class AgentTUI(App):  # type: ignore[misc]
             next_id = approval_ids[next_index]
         self._store.dispatch({"kind": "ui", "selected_approval_id": next_id})
         self._render_state()
+
+    def action_approve_selected_request(self) -> None:
+        self._submit_selected_approval("approve")
+
+    def action_reject_selected_request(self) -> None:
+        self._submit_selected_approval("reject")
+
+    def _submit_selected_approval(self, decision: str) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "approvals":
+            return
+        selected = selected_approval_detail(state)
+        if selected is None:
+            return
+        action = build_approval_request_action(
+            task_id=selected.task_id,
+            run_id=selected.run_id,
+            approval_id=selected.approval_id,
+            decision=decision,  # type: ignore[arg-type]
+        )
+        self.run_worker(
+            self._decide_selected_approval(
+                action.task_id,
+                action.run_id,
+                action.approval_id,
+                action.decision,
+            ),
+            group="approval-decision",
+            exclusive=True,
+        )
+
+    async def _decide_selected_approval(
+        self,
+        task_id: str,
+        run_id: str,
+        approval_id: str,
+        decision: str,
+    ) -> None:
+        try:
+            response = await self._client.task_approve(
+                task_id,
+                run_id or None,
+                approval_id,
+                decision,
+            )
+            self._store.dispatch({"kind": "rpc", "name": "task.approve", "payload": response})
+            await self._load_task_related(task_id=task_id, run_id=run_id or None)
+            feedback = f"{decision.title()} {approval_id}."
+            self._store.dispatch({"kind": "ui", "approval_feedback": feedback})
+            self._render_state()
+            self._start_selected_task_stream(task_id=task_id, run_id=run_id or None)
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "approval_feedback": f"Approval request failed: {exc}",
+                }
+            )
+            self._render_state()

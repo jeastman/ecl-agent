@@ -19,23 +19,44 @@ else:  # pragma: no cover
 
 
 class ApprovalQueueWidget(Static):  # type: ignore[misc]
-    def update_approvals(self, items: list[ApprovalQueueItemViewModel], *, focused: bool) -> None:
+    def update_approvals(
+        self,
+        items: list[ApprovalQueueItemViewModel],
+        *,
+        focused: bool,
+        inbox_mode: bool = False,
+    ) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        self.border_title = "Approvals Pending"
+        self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
         self.set_class(focused, "-focused-pane")
         if not items:
             self.update("No pending approvals.")
             return
-        self.update(
-            "\n".join(
-                "\n".join(
-                    [
-                        f"{'>' if item.is_selected else ' '} {item.task_id}  {item.status.upper()}",
-                        item.description,
-                        item.scope_summary,
-                    ]
+        rendered_items: list[str] = []
+        for item in items:
+            marker = ">" if item.is_selected else " "
+            if inbox_mode:
+                rendered_items.append(
+                    "\n".join(
+                        [
+                            (
+                                f"{marker} {item.task_id}  {item.request_type}  "
+                                f"{item.policy_context}  {item.status.upper()}"
+                            ),
+                            f"  Action: {item.requested_action}",
+                            f"  {item.description}",
+                        ]
+                    )
                 )
-                for item in items
-            )
-        )
+            else:
+                rendered_items.append(
+                    "\n".join(
+                        [
+                            f"{marker} {item.task_id}  {item.status.upper()}",
+                            item.description,
+                            item.scope_summary,
+                        ]
+                    )
+                )
+        self.update("\n".join(rendered_items))

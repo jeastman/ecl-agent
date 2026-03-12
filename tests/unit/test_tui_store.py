@@ -8,6 +8,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     artifact_count,
     pending_approvals,
     recent_artifacts,
+    selected_approval_detail,
     selected_task_header,
     selected_task_summary,
     task_action_bar,
@@ -169,6 +170,124 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(selected_task_summary(state).task_id, "task_1")  # type: ignore[union-attr]
         self.assertEqual(pending_approvals(state)[0].approval_id, "approval_1")
         self.assertEqual(recent_artifacts(state)[0].artifact_id, "artifact_1")
+
+    def test_selected_approval_detail_projects_metadata(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "pending",
+                                "type": "boundary",
+                                "scope": {
+                                    "boundary_key": "sandbox",
+                                    "path_scope": "/workspace/docs/spec.md",
+                                },
+                                "scope_summary": "filesystem.write",
+                                "description": "Write a generated spec",
+                                "created_at": "2026-03-12T00:00:01Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        state = store.snapshot()
+        detail = selected_approval_detail(state)
+        self.assertIsNotNone(detail)
+        assert detail is not None
+        self.assertEqual(detail.request_type, "boundary")
+        self.assertEqual(detail.policy_context, "sandbox")
+        self.assertEqual(detail.requested_action, "/workspace/docs/spec.md")
+
+    def test_approval_refresh_falls_back_to_next_pending_selection(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "pending",
+                                "created_at": "2026-03-12T00:00:02Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_2",
+                                "task_id": "task_2",
+                                "run_id": "run_2",
+                                "status": "pending",
+                                "created_at": "2026-03-12T00:00:03Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        self.assertEqual(store.snapshot().selected_approval_id, "approval_1")
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approve",
+                "payload": {
+                    "result": {
+                        "approval_id": "approval_1",
+                        "accepted": True,
+                        "status": "approved",
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "executing",
+                            "objective": "Inspect repo",
+                            "updated_at": "2026-03-12T00:00:04Z",
+                        },
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "approved",
+                                "created_at": "2026-03-12T00:00:02Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        self.assertEqual(store.snapshot().selected_approval_id, "approval_2")
 
     def test_selected_task_survives_updates_for_other_tasks(self) -> None:
         store = AppStateStore()
