@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -174,6 +175,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _dispatch_and_render(self, message: dict[str, Any]) -> None:
         self._store.dispatch(message)  # type: ignore[arg-type]
+        if getattr(self, "_thread_id", None) == threading.get_ident():
+            self._render_state()
+            return
         self.call_from_thread(self._render_state)
 
     def _render_state(self) -> None:

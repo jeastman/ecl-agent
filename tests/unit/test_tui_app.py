@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from unittest.mock import patch
 
@@ -146,6 +147,27 @@ async def _fake_consume_task_stream(*args, **kwargs) -> None:
 
 @unittest.skipIf(_TEXTUAL_IMPORT_ERROR is not None, "textual is not installed")
 class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
+    async def test_dispatch_and_render_uses_direct_render_on_app_thread(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            rendered: list[str] = []
+            app._render_state = lambda: rendered.append("rendered")  # type: ignore[method-assign]
+            app.call_from_thread = lambda callback: (_ for _ in ()).throw(  # type: ignore[method-assign]
+                AssertionError("call_from_thread should not be used on the app thread")
+            )
+            app._thread_id = threading.get_ident()  # type: ignore[attr-defined]
+
+            app._dispatch_and_render({"kind": "connection", "status": "connected"})  # type: ignore[arg-type]
+
+            self.assertEqual(rendered, ["rendered"])
+            self.assertEqual(app._store.snapshot().connection_status, "connected")  # type: ignore[attr-defined]
+
     async def test_dashboard_is_default_screen_and_shows_dashboard_content(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import Static
