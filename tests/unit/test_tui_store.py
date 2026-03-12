@@ -6,7 +6,9 @@ from apps.tui.local_agent_tui.store.app_state import AppStateStore
 from apps.tui.local_agent_tui.store.selectors import (
     approval_count,
     artifact_browser_rows,
+    config_section_items,
     selected_artifact_preview,
+    selected_config_detail,
     selected_markdown_artifact,
     artifact_count,
     memory_entry_items,
@@ -811,6 +813,72 @@ class TuiStoreTests(unittest.TestCase):
         error_detail = selected_memory_detail(store.snapshot())
         self.assertEqual(error_detail.status, "error")
         self.assertIn("runtime exploded", error_detail.content)
+
+    def test_config_selectors_project_sections_and_redactions(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "runtime.health",
+                "payload": {
+                    "result": {
+                        "status": "ok",
+                        "runtime_name": "demo-runtime",
+                        "protocol_version": "1.0.0",
+                        "identity": {"path": "/runtime/identity.json", "sha256": "abc123"},
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "config.get",
+                "payload": {
+                    "result": {
+                        "effective_config": {
+                            "runtime": {"name": "demo-runtime", "log_level": "info"},
+                            "transport": {"mode": "stdio-jsonrpc"},
+                            "identity": {"path": "/runtime/identity.json"},
+                            "models": {
+                                "primary": {"provider": "openai", "model": "gpt-5-codex"},
+                            },
+                            "persistence": {"root_path": "/tmp/runtime"},
+                            "cli": {"default_workspace_root": "/workspace"},
+                            "policy": {"sandbox_mode": "workspace-write"},
+                            "subagents": {"reviewer": {"role_id": "reviewer"}},
+                        },
+                        "loaded_profiles": ["default"],
+                        "config_sources": ["docs/architecture/runtime.example.toml"],
+                        "redactions": [{"path": "policy.api_token", "reason": "sensitive-key"}],
+                    }
+                },
+            }
+        )
+        sections = config_section_items(store.snapshot())
+        self.assertEqual(sections[0].section_id, "provider_settings")
+        self.assertTrue(sections[0].is_selected)
+        store.dispatch({"kind": "ui", "selected_config_section_id": "sandbox_policy"})
+        detail = selected_config_detail(store.snapshot())
+        self.assertEqual(detail.title, "Sandbox Policy")
+        self.assertIn("policy.api_token", detail.body)
+        self.assertIn("workspace-write", detail.body)
+
+    def test_config_selector_surfaces_loading_and_error_states(self) -> None:
+        store = AppStateStore()
+        store.dispatch({"kind": "ui", "config_request_status": "loading"})
+        loading = selected_config_detail(store.snapshot())
+        self.assertEqual(loading.status, "loading")
+        store.dispatch(
+            {
+                "kind": "ui",
+                "config_request_status": "error",
+                "config_request_error": "runtime exploded",
+            }
+        )
+        error = selected_config_detail(store.snapshot())
+        self.assertEqual(error.status, "error")
+        self.assertIn("runtime exploded", error.body)
 
     @staticmethod
     def _dispatch_created(store: AppStateStore) -> None:

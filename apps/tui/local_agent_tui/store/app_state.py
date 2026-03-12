@@ -43,6 +43,10 @@ class UiMessage(TypedDict, total=False):
     memory_request_status: str
     memory_request_error: str | None
     memory_origin_screen: str
+    selected_config_section_id: str | None
+    config_request_status: str
+    config_request_error: str | None
+    config_origin_screen: str
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -91,6 +95,14 @@ class AppState:
     memory_request_status: str = "idle"
     memory_request_error: str | None = None
     memory_origin_screen: str = "dashboard"
+    config_snapshot: dict[str, Any] = field(default_factory=dict)
+    config_loaded_profiles: list[str] = field(default_factory=list)
+    config_sources: list[str] = field(default_factory=list)
+    config_redactions: list[dict[str, Any]] = field(default_factory=list)
+    selected_config_section_id: str | None = None
+    config_request_status: str = "idle"
+    config_request_error: str | None = None
+    config_origin_screen: str = "dashboard"
 
 
 class AppStateStore:

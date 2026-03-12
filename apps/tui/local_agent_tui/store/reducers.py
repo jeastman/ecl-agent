@@ -65,6 +65,16 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
             message.get("memory_request_error", state.memory_request_error)
         ),
         memory_origin_screen=str(message.get("memory_origin_screen", state.memory_origin_screen)),
+        selected_config_section_id=message.get(
+            "selected_config_section_id", state.selected_config_section_id
+        ),
+        config_request_status=str(
+            message.get("config_request_status", state.config_request_status)
+        ),
+        config_request_error=_normalize_error(
+            message.get("config_request_error", state.config_request_error)
+        ),
+        config_origin_screen=str(message.get("config_origin_screen", state.config_origin_screen)),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -199,6 +209,24 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             memory_request_context_key=context_key,
             memory_request_status="loaded",
             memory_request_error=None,
+        )
+
+    if name == "config.get":
+        result = dict(payload.get("result", {}))
+        return replace(
+            state,
+            config_snapshot=dict(result.get("effective_config", {})),
+            config_loaded_profiles=[
+                str(profile) for profile in list(result.get("loaded_profiles", []))
+            ],
+            config_sources=[str(source) for source in list(result.get("config_sources", []))],
+            config_redactions=[
+                dict(redaction)
+                for redaction in list(result.get("redactions", []))
+                if isinstance(redaction, dict)
+            ],
+            config_request_status="loaded",
+            config_request_error=None,
         )
 
     if name == "task.logs.stream":

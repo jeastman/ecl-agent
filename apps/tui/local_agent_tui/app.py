@@ -11,6 +11,7 @@ from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
 from .screens.artifacts import ArtifactsScreen
+from .screens.config import ConfigScreen
 from .screens.dashboard import DashboardScreen
 from .screens.markdown_viewer import MarkdownViewerScreen
 from .screens.memory import MemoryScreen
@@ -18,6 +19,7 @@ from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
     artifact_browser_rows,
+    config_section_items,
     memory_entry_items,
     memory_scope_groups,
     pending_approvals,
@@ -77,6 +79,7 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
+        Binding("c", "open_config", "Config", show=False, priority=True),
         Binding("m", "open_memory", "Memory", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
         Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
@@ -100,6 +103,7 @@ class AgentTUI(App):  # type: ignore[misc]
         self.install_screen(ArtifactsScreen(), name="artifacts")
         self.install_screen(MarkdownViewerScreen(), name="markdown_viewer")
         self.install_screen(MemoryScreen(), name="memory")
+        self.install_screen(ConfigScreen(), name="config")
 
     def compose(self) -> ComposeResult:
         yield self._status_bar
@@ -275,6 +279,9 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.active_screen == "memory":
             self._move_memory_selection(delta)
             return
+        if state.active_screen == "config":
+            self._move_config_selection(delta)
+            return
         if state.active_screen == "artifacts":
             self._move_artifact_browser_selection(delta)
             return
@@ -309,6 +316,8 @@ class AgentTUI(App):  # type: ignore[misc]
         state = self._store.snapshot()
         if state.active_screen == "memory":
             panes = ["memory_groups", "memory_entries"]
+        elif state.active_screen == "config":
+            panes = ["config_sections"]
         current_index = panes.index(state.focused_pane) if state.focused_pane in panes else 0
         next_index = (current_index + delta) % len(panes)
         self._store.dispatch({"kind": "ui", "focused_pane": panes[next_index]})
@@ -345,6 +354,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_open_memory(self) -> None:
         self._open_memory_inspector()
+
+    def action_open_config(self) -> None:
+        self._open_config_viewer()
 
     def action_resume_task(self) -> None:
         state = self._store.snapshot()
@@ -420,6 +432,9 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if state.active_screen == "memory":
             self._set_active_screen(state.memory_origin_screen or "dashboard")
+            return
+        if state.active_screen == "config":
+            self._set_active_screen(state.config_origin_screen or "dashboard")
             return
         self._set_active_screen("dashboard")
 
@@ -554,6 +569,14 @@ class AgentTUI(App):  # type: ignore[misc]
         next_group = groups[(current_index + delta) % len(groups)]
         self.handle_memory_group_selected(next_group.group_id)
 
+    def _move_config_selection(self, delta: int) -> None:
+        sections = config_section_items(self._store.snapshot())
+        if not sections:
+            return
+        current_index = next((index for index, item in enumerate(sections) if item.is_selected), -1)
+        next_section = sections[(current_index + delta) % len(sections)]
+        self.handle_config_section_selected(next_section.section_id)
+
     def handle_memory_group_selected(self, group_id: str) -> None:
         groups = memory_scope_groups(self._store.snapshot())
         if not any(group.group_id == group_id for group in groups):
@@ -573,6 +596,13 @@ class AgentTUI(App):  # type: ignore[misc]
         if not any(entry.memory_id == memory_id for entry in entries):
             return
         self._store.dispatch({"kind": "ui", "selected_memory_entry_id": memory_id})
+        self._render_state()
+
+    def handle_config_section_selected(self, section_id: str) -> None:
+        sections = config_section_items(self._store.snapshot())
+        if not any(section.section_id == section_id for section in sections):
+            return
+        self._store.dispatch({"kind": "ui", "selected_config_section_id": section_id})
         self._render_state()
 
     def _ensure_artifact_browser_selection(self) -> None:
@@ -703,6 +733,47 @@ class AgentTUI(App):  # type: ignore[misc]
             exclusive=True,
         )
 
+    def _open_config_viewer(self) -> None:
+        state = self._store.snapshot()
+        origin_screen = (
+            state.config_origin_screen if state.active_screen == "config" else state.active_screen
+        )
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "active_screen": "config",
+                "focused_pane": "config_sections",
+                "config_origin_screen": origin_screen,
+            }
+        )
+        if state.active_screen != "config":
+            self.switch_screen("config")
+        self._render_state()
+        self.run_worker(self._refresh_config(), group="config-refresh", exclusive=True)
+
+    async def _refresh_config(self) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "config_request_status": "loading",
+                "config_request_error": None,
+            }
+        )
+        self._render_state()
+        try:
+            payload = await self._client.get_config()
+            self._store.dispatch({"kind": "rpc", "name": "config.get", "payload": payload})
+            self._ensure_config_selection()
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "config_request_status": "error",
+                    "config_request_error": str(exc),
+                }
+            )
+        self._render_state()
+
     async def _refresh_memory_inspection(
         self,
         *,
@@ -757,3 +828,10 @@ class AgentTUI(App):  # type: ignore[misc]
                 selected_entry = next((entry for entry in entries if entry.is_selected), entries[0])
                 message["selected_memory_entry_id"] = selected_entry.memory_id
         self._store.dispatch(message)
+
+    def _ensure_config_selection(self) -> None:
+        sections = config_section_items(self._store.snapshot())
+        if not sections:
+            return
+        selected = next((section for section in sections if section.is_selected), sections[0])
+        self._store.dispatch({"kind": "ui", "selected_config_section_id": selected.section_id})

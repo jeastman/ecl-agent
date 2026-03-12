@@ -6,6 +6,7 @@ import sys
 from typing import Any
 
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_CONFIG_GET,
     JsonRpcRequest,
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
@@ -91,6 +92,9 @@ class ProtocolClient:
                 namespace=namespace,
             ).to_dict(),
         )
+
+    async def get_config(self) -> dict[str, Any]:
+        return await self._request(METHOD_CONFIG_GET, {})
 
     async def task_get(self, task_id: str, run_id: str | None = None) -> dict[str, Any]:
         return await self._request(

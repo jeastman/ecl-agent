@@ -106,6 +106,7 @@ class _FakeProtocolClient:
         self.approvals_list_calls: list[tuple[str, str | None]] = []
         self.artifact_get_calls: list[tuple[str, str | None, str]] = []
         self.memory_inspect_calls: list[tuple[str | None, str | None, str | None, str | None]] = []
+        self.get_config_calls = 0
         self._tasks: dict[str, dict[str, Any]] = {
             "task_1": {
                 "task_id": "task_1",
@@ -198,6 +199,53 @@ class _FakeProtocolClient:
                     "updated_at": "2026-03-12T00:00:08Z",
                 },
             ]
+        }
+        self._config_payload = {
+            "result": {
+                "effective_config": {
+                    "runtime": {"name": "demo-runtime", "log_level": "info"},
+                    "transport": {"mode": "stdio-jsonrpc"},
+                    "identity": {"path": "/runtime/identity.json"},
+                    "models": {
+                        "default": {"provider": "openai", "model": "gpt-5"},
+                        "primary": {"provider": "openai", "model": "gpt-5-codex"},
+                        "subagents": {"reviewer": {"provider": "openai", "model": "gpt-5-mini"}},
+                        "resolved": {
+                            "default": {
+                                "provider": "openai",
+                                "model": "gpt-5",
+                                "profile_name": "default",
+                                "source": "default_model",
+                            }
+                        },
+                    },
+                    "persistence": {
+                        "root_path": "/tmp/runtime",
+                        "metadata_backend": "sqlite",
+                        "event_backend": "sqlite",
+                        "diagnostic_backend": "sqlite",
+                    },
+                    "cli": {"default_workspace_root": "/workspace"},
+                    "subagents": {
+                        "reviewer": {
+                            "role_id": "reviewer",
+                            "model_profile": "default",
+                            "resolved_model": {
+                                "provider": "openai",
+                                "model": "gpt-5-mini",
+                                "profile_name": "reviewer",
+                                "source": "subagent_override",
+                            },
+                            "tool_bindings": ["shell"],
+                            "skills": ["checks"],
+                        }
+                    },
+                    "policy": {"sandbox_mode": "workspace-write", "network_access": False},
+                },
+                "loaded_profiles": ["default"],
+                "config_sources": ["docs/architecture/runtime.example.toml"],
+                "redactions": [{"path": "policy.api_token", "reason": "sensitive-key"}],
+            }
         }
 
     async def connect(self) -> None:
@@ -321,6 +369,10 @@ class _FakeProtocolClient:
         self.memory_inspect_calls.append((task_id, run_id, scope, namespace))
         entries = list(self._memory_entries.get(task_id or "", [])) if task_id is not None else []
         return {"result": {"entries": entries, "scope": scope or "default", "count": len(entries)}}
+
+    async def get_config(self) -> dict:
+        self.get_config_calls += 1
+        return self._config_payload
 
 
 async def _fake_consume_task_stream(*args, **kwargs) -> None:
@@ -863,3 +915,92 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(state.active_screen, "memory")
             self.assertEqual(switched, [])
             self.assertEqual(len(scheduled), 1)
+
+    async def test_config_screen_opens_renders_and_returns_to_origin(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.store.selectors import selected_config_detail
+        from apps.tui.local_agent_tui.widgets.config_detail import ConfigDetailWidget
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                self.assertEqual(app.screen.__class__.__name__, "ConfigScreen")
+                self.assertEqual(app._client.get_config_calls, 1)  # type: ignore[attr-defined]
+                detail = app.screen.query_one(ConfigDetailWidget)
+                footer = app.screen.query_one("#config-screen-footer", Static)
+                detail_model = selected_config_detail(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertEqual(detail_model.title, "Provider Settings")
+                self.assertIn("provider-adjacent settings", detail_model.summary)
+                self.assertIn('"runtime"', detail_model.body)
+                self.assertIn("Status: loaded", str(detail.visual))
+                self.assertIn("read-only", str(footer.visual))
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertEqual(
+                    app._store.snapshot().selected_config_section_id,  # type: ignore[attr-defined]
+                    "sandbox_policy",
+                )
+                self.assertIn(
+                    "redactions",
+                    selected_config_detail(app._store.snapshot()).body,  # type: ignore[attr-defined]
+                )
+                await pilot.press("down")
+                await pilot.pause()
+                workspace_detail = selected_config_detail(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertEqual(workspace_detail.title, "Workspace Context")
+                self.assertIn("/workspace", workspace_detail.body)
+                await pilot.press("down")
+                await pilot.pause()
+                identity_detail = selected_config_detail(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertEqual(identity_detail.title, "Runtime Identity")
+                self.assertIn("/runtime/identity.json", identity_detail.body)
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
+
+    async def test_config_screen_opens_from_task_detail_and_refreshes_without_interrupting_stream(
+        self,
+    ) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                detail_stream_key = app._stream_key  # type: ignore[attr-defined]
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ConfigScreen")
+                self.assertEqual(app._stream_key, detail_stream_key)  # type: ignore[attr-defined]
+                self.assertEqual(app._client.get_config_calls, 1)  # type: ignore[attr-defined]
+                await pilot.press("c")
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app._client.get_config_calls, 2)  # type: ignore[attr-defined]
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
+                self.assertEqual(app._stream_key, detail_stream_key)  # type: ignore[attr-defined]

@@ -57,6 +57,14 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
             {"task_id": "task_1", "run_id": "run_1"},
         )
 
+    async def test_get_config_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"effective_config": {}}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.get_config()
+        self.assertEqual(payload["result"]["effective_config"], {})
+        request_mock.assert_awaited_once_with("config.get", {})
+
     async def test_task_resume_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         request_mock = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})

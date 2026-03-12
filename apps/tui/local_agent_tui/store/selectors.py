@@ -224,6 +224,22 @@ class MemoryDetailViewModel:
     updated_at: str
 
 
+@dataclass(frozen=True, slots=True)
+class ConfigSectionItemViewModel:
+    section_id: str
+    title: str
+    description: str
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigDetailViewModel:
+    title: str
+    status: str
+    summary: str
+    body: str
+
+
 def connection_label(state: AppState) -> str:
     if state.last_error:
         return f"{state.connection_status} ({state.last_error})"
@@ -841,18 +857,90 @@ def memory_group_summary(state: AppState) -> str:
     return "\n".join(line for line in lines if line)
 
 
+def config_section_items(state: AppState) -> list[ConfigSectionItemViewModel]:
+    selected_section_id = _selected_config_section_id(state)
+    items: list[ConfigSectionItemViewModel] = []
+    for section_id, title, description, _ in _config_sections(state):
+        items.append(
+            ConfigSectionItemViewModel(
+                section_id=section_id,
+                title=title,
+                description=description,
+                is_selected=section_id == selected_section_id,
+            )
+        )
+    return items
+
+
+def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
+    if state.config_request_status == "loading":
+        return ConfigDetailViewModel(
+            title="Config Viewer",
+            status="loading",
+            summary="Loading runtime configuration snapshot...",
+            body="Waiting for runtime configuration data.",
+        )
+    if state.config_request_status == "error":
+        message = state.config_request_error or "Configuration request failed."
+        return ConfigDetailViewModel(
+            title="Config Viewer",
+            status="error",
+            summary=message,
+            body=message,
+        )
+    if not state.config_snapshot:
+        return ConfigDetailViewModel(
+            title="Config Viewer",
+            status="empty",
+            summary="No runtime configuration snapshot available.",
+            body="Open the config viewer to request a runtime snapshot.",
+        )
+
+    selected_section_id = _selected_config_section_id(state)
+    section = next(
+        (
+            (section_id, title, description, content)
+            for section_id, title, description, content in _config_sections(state)
+            if section_id == selected_section_id
+        ),
+        None,
+    )
+    if section is None:
+        return ConfigDetailViewModel(
+            title="Config Viewer",
+            status="empty",
+            summary="No configuration sections are available.",
+            body="The runtime snapshot did not produce any operator-facing sections.",
+        )
+    _, title, description, content = section
+    return ConfigDetailViewModel(
+        title=title,
+        status="loaded",
+        summary=description,
+        body=content,
+    )
+
+
 def footer_hints(state: AppState) -> list[str]:
+    if state.active_screen == "config":
+        return [
+            "[Up/Down] Move",
+            "[C] Refresh",
+            "[Esc] Back",
+            "[Q] Quit",
+        ]
     if state.active_screen == "approvals":
         return [
             "[A] Approve",
             "[R] Reject",
             "[Enter] Open Task",
+            "[C] Config",
             "[Esc] Dashboard",
             "[Q] Quit",
         ]
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
-        hints = ["[Esc] Dashboard", "[A] Approvals", "[O] Artifact", "[Q] Quit"]
+        hints = ["[Esc] Dashboard", "[A] Approvals", "[C] Config", "[O] Artifact", "[Q] Quit"]
         if action_bar.resume_enabled:
             hints.insert(0, "[R] Resume")
         return hints
@@ -860,6 +948,7 @@ def footer_hints(state: AppState) -> list[str]:
         return [
             "[Up/Down] Move",
             "[Enter] Open",
+            "[C] Config",
             "[T] Group Task",
             "[R] Group Run",
             "[Y] Group Type",
@@ -871,6 +960,7 @@ def footer_hints(state: AppState) -> list[str]:
         return [
             "[Up/Down] Move",
             "[Tab] Focus",
+            "[C] Config",
             "[M] Refresh",
             "[Esc] Back",
             "[Q] Quit",
@@ -888,6 +978,7 @@ def footer_hints(state: AppState) -> list[str]:
         "[Tab] Focus",
         "[Enter] Open Task",
         "[A] Approvals",
+        "[C] Config",
         "[Q] Quit",
     ]
 
@@ -1000,6 +1091,76 @@ def _memory_entries_for_current_context(state: AppState) -> list[dict[str, Any]]
     return list(state.memory_entries_by_context.get(_memory_context_key(state), []))
 
 
+def _config_sections(state: AppState) -> list[tuple[str, str, str, str]]:
+    effective_config = state.config_snapshot
+    runtime_payload = {
+        "runtime": effective_config.get("runtime", {}),
+        "transport": effective_config.get("transport", {}),
+        "persistence": effective_config.get("persistence", {}),
+    }
+    sections = [
+        (
+            "provider_settings",
+            "Provider Settings",
+            "Runtime, transport, and provider-adjacent settings from the runtime snapshot.",
+            _format_config_detail(
+                {
+                    "settings": runtime_payload,
+                    "loaded_profiles": state.config_loaded_profiles,
+                }
+            ),
+        ),
+        (
+            "sandbox_policy",
+            "Sandbox Policy",
+            "Runtime policy posture, including any redactions applied to sensitive values.",
+            _format_config_detail(
+                {
+                    "policy": effective_config.get("policy", {}),
+                    "redactions": state.config_redactions,
+                }
+            ),
+        ),
+        (
+            "workspace_context",
+            "Workspace Context",
+            "Workspace and persistence paths currently exposed by the runtime.",
+            _format_config_detail(
+                {
+                    "cli": effective_config.get("cli", {}),
+                    "persistence": effective_config.get("persistence", {}),
+                    "config_sources": state.config_sources,
+                }
+            ),
+        ),
+        (
+            "runtime_identity",
+            "Runtime Identity",
+            "Identity and provenance information for the active runtime.",
+            _format_config_detail(
+                {
+                    "identity_config": effective_config.get("identity", {}),
+                    "runtime_identity": state.runtime_health.get("identity", {}),
+                    "runtime_name": state.runtime_health.get("runtime_name"),
+                    "protocol_version": state.runtime_health.get("protocol_version"),
+                }
+            ),
+        ),
+        (
+            "model_routing",
+            "Model Routing",
+            "Default, primary, and subagent model routing resolved by the runtime.",
+            _format_config_detail(
+                {
+                    "models": effective_config.get("models", {}),
+                    "subagents": effective_config.get("subagents", {}),
+                }
+            ),
+        ),
+    ]
+    return sections
+
+
 def _memory_context_key(state: AppState) -> str:
     task = _selected_task(state)
     if task is None:
@@ -1011,6 +1172,15 @@ def _memory_context_key(state: AppState) -> str:
     if task_id:
         return task_id
     return "global"
+
+
+def _selected_config_section_id(state: AppState) -> str:
+    section_ids = [section_id for section_id, *_ in _config_sections(state)]
+    if state.selected_config_section_id in section_ids:
+        return cast(str, state.selected_config_section_id)
+    if section_ids:
+        return section_ids[0]
+    return "provider_settings"
 
 
 def _memory_grouped_entries(state: AppState) -> dict[str, list[dict[str, Any]]]:
@@ -1146,6 +1316,14 @@ def _format_memory_confidence(value: Any) -> str:
     if value is None:
         return "n/a"
     return str(value)
+
+
+def _format_config_detail(value: Any) -> str:
+    if isinstance(value, str):
+        return value or "n/a"
+    if value in (None, {}, []):
+        return "n/a"
+    return json.dumps(value, indent=2, sort_keys=True)
 
 
 def _selected_artifact_browser_id(state: AppState) -> str | None:
