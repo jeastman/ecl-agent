@@ -13,11 +13,13 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_GET,
     METHOD_TASK_LIST,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_RESUME,
     TaskApprovalsListParams,
     TaskArtifactsListParams,
     TaskGetParams,
     TaskListParams,
     TaskLogsStreamParams,
+    TaskResumeParams,
 )
 
 
@@ -103,6 +105,12 @@ class ProtocolClient:
                 run_id=run_id,
                 include_history=include_history,
             ).to_dict(),
+        )
+
+    async def task_resume(self, task_id: str, run_id: str | None = None) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_RESUME,
+            TaskResumeParams(task_id=task_id, run_id=run_id).to_dict(),
         )
 
     async def next_event(self) -> dict[str, Any]:

@@ -28,9 +28,23 @@ class UiMessage(TypedDict, total=False):
     focused_pane: str
     selected_task_id: str | None
     selected_approval_id: str | None
+    selected_artifact_id: str | None
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
+
+
+@dataclass(frozen=True, slots=True)
+class TaskEventRecord:
+    timestamp: str
+    event_type: str
+    task_id: str
+    run_id: str
+    source_kind: str
+    source_name: str | None
+    summary: str
+    payload: dict[str, Any]
+    severity: str
 
 
 @dataclass(slots=True)
@@ -40,8 +54,10 @@ class AppState:
     runtime_health: dict[str, Any] = field(default_factory=dict)
     task_index: list[str] = field(default_factory=list)
     task_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
+    run_event_buffers: dict[tuple[str, str], list[TaskEventRecord]] = field(default_factory=dict)
     approvals_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     artifacts_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    selected_artifact_id_by_task: dict[tuple[str, str], str | None] = field(default_factory=dict)
     selected_task_id: str | None = None
     selected_approval_id: str | None = None
     active_screen: str = "dashboard"

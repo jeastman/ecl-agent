@@ -4,6 +4,7 @@ import asyncio
 import unittest
 from unittest.mock import AsyncMock
 
+from apps.tui.local_agent_tui.protocol.event_stream import consume_task_stream
 from apps.tui.local_agent_tui.protocol.protocol_client import ProtocolClient, ProtocolClientError
 
 
@@ -42,3 +43,73 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         payload = await client.task_list(limit=5)
         self.assertEqual(payload["result"]["tasks"], [])
         client._request.assert_awaited_once_with("task.list", {"limit": 5})  # type: ignore[attr-defined]
+
+    async def test_task_resume_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        client._request = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})  # type: ignore[method-assign]
+        payload = await client.task_resume("task_1", "run_1")
+        self.assertEqual(payload["result"]["task"]["task_id"], "task_1")
+        client._request.assert_awaited_once_with(
+            "task.resume", {"task_id": "task_1", "run_id": "run_1"}
+        )  # type: ignore[attr-defined]
+
+    async def test_consume_task_stream_filters_other_tasks_and_stops_on_selected_terminal_event(
+        self,
+    ) -> None:
+        class _FakeClient:
+            def __init__(self) -> None:
+                self.events: asyncio.Queue[dict[str, object]] = asyncio.Queue()
+
+            async def task_logs_stream(
+                self, task_id: str, run_id: str | None, *, include_history: bool
+            ) -> dict:
+                return {"result": {"task_id": task_id, "run_id": run_id, "stream_open": True}}
+
+            async def next_event(self) -> dict:
+                return await self.events.get()
+
+        client = _FakeClient()
+        dispatched: list[dict] = []
+
+        await client.events.put(
+            {
+                "event": {
+                    "task_id": "task_2",
+                    "run_id": "run_2",
+                    "event_type": "task.completed",
+                    "payload": {},
+                }
+            }
+        )
+        await client.events.put(
+            {
+                "event": {
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "event_type": "plan.updated",
+                    "payload": {"summary": "step"},
+                }
+            }
+        )
+        await client.events.put(
+            {
+                "event": {
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "event_type": "task.completed",
+                    "payload": {},
+                }
+            }
+        )
+
+        await consume_task_stream(
+            client,  # type: ignore[arg-type]
+            task_id="task_1",
+            run_id="run_1",
+            dispatch=dispatched.append,
+        )
+
+        self.assertEqual(len(dispatched), 3)
+        self.assertEqual(dispatched[0]["name"], "task.logs.stream")
+        self.assertEqual(dispatched[1]["payload"]["event"]["event_type"], "plan.updated")
+        self.assertEqual(dispatched[2]["payload"]["event"]["event_type"], "task.completed")

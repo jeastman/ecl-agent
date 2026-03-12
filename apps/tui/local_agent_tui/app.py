@@ -9,7 +9,12 @@ from .screens.approvals import ApprovalsScreen
 from .screens.dashboard import DashboardScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore
-from .store.selectors import pending_approvals, recent_task_ids
+from .store.selectors import (
+    pending_approvals,
+    recent_task_ids,
+    task_artifact_panel,
+    task_action_bar,
+)
 from .widgets.status_bar import StatusBar
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -58,6 +63,8 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
+        Binding("r", "resume_task", "Resume", show=False, priority=True),
+        Binding("o", "select_next_artifact", "Artifact", show=False, priority=True),
         Binding("escape", "back_dashboard", "Dashboard", show=False, priority=True),
         Binding("q", "quit", "Quit", show=False, priority=True),
     ]
@@ -246,6 +253,48 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_open_approvals(self) -> None:
         self._set_active_screen("approvals")
+
+    def action_resume_task(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "task_detail" or state.selected_task_id is None:
+            return
+        actions = task_action_bar(state)
+        if not actions.resume_enabled:
+            return
+        task = state.task_snapshots.get(state.selected_task_id)
+        if task is None:
+            return
+        run_id = str(task.get("run_id", "")) or None
+        self.run_worker(
+            self._resume_selected_task(task_id=state.selected_task_id, run_id=run_id),
+            group="task-resume",
+            exclusive=True,
+        )
+
+    async def _resume_selected_task(self, *, task_id: str, run_id: str | None) -> None:
+        try:
+            response = await self._client.task_resume(task_id, run_id)
+            self._store.dispatch({"kind": "rpc", "name": "task.resume", "payload": response})
+            self._render_state()
+            self._start_selected_task_stream(task_id=task_id, run_id=run_id)
+        except ProtocolClientError as exc:
+            self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+            self._render_state()
+
+    def action_select_next_artifact(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "task_detail":
+            return
+        artifacts = task_artifact_panel(state)
+        if not artifacts:
+            return
+        current_index = next(
+            (index for index, artifact in enumerate(artifacts) if artifact.is_selected),
+            -1,
+        )
+        next_artifact = artifacts[(current_index + 1) % len(artifacts)]
+        self._store.dispatch({"kind": "ui", "selected_artifact_id": next_artifact.artifact_id})
+        self._render_state()
 
     def action_back_dashboard(self) -> None:
         self._set_active_screen("dashboard")
