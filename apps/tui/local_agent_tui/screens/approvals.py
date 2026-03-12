@@ -6,6 +6,7 @@ from ..store.app_state import AppState
 from ..store.selectors import footer_hints, pending_approvals, selected_approval_detail
 from ..widgets.approval_detail import ApprovalDetailWidget
 from ..widgets.approval_queue import ApprovalQueueWidget
+from ..widgets.status_bar import StatusBar
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -33,6 +34,7 @@ else:  # pragma: no cover
 class ApprovalsScreen(Screen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
+            StatusBar(id="status-bar"),
             Container(
                 ApprovalQueueWidget(id="approvals-screen-queue"),
                 ApprovalDetailWidget(id="approvals-screen-detail"),
@@ -45,6 +47,7 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.query_one(StatusBar).update_from_state(state)
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals(state),
             focused=True,

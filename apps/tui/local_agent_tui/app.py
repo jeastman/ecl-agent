@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import os
+import sys
 import threading
 import time
 from dataclasses import dataclass
@@ -20,6 +22,7 @@ from .screens.dashboard import DashboardScreen
 from .screens.diagnostics import DiagnosticsScreen
 from .screens.markdown_viewer import MarkdownViewerScreen
 from .screens.memory import MemoryScreen
+from .screens.task_timeline_prompt import TaskTimelinePromptScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
@@ -35,10 +38,13 @@ from .store.selectors import (
     selected_artifact_preview,
     selected_memory_detail,
     recent_task_ids,
+    selected_task_pending_approvals,
     task_artifact_panel,
     task_action_bar,
+    timeline_filter_options,
 )
 from .widgets.status_bar import StatusBar
+from .widgets.input_box import InputBoxWidget
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -83,19 +89,26 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("down", "move_down", "Down", show=False, priority=True),
         Binding("j", "move_down", "Down", show=False, priority=True),
         Binding("g", "open_command_palette", "Palette", show=False),
-        Binding("n", "create_task", "New Task", show=False),
+        Binding("n", "create_task", "New Task", show=False, priority=True),
+        Binding("i", "focus_task_input", "Command", show=False, priority=True),
+        Binding("f", "open_timeline_filter_prompt", "Filter", show=False, priority=True),
+        Binding("/", "open_timeline_search_prompt", "Search", show=False),
+        Binding("l", "toggle_task_logs", "Logs", show=False, priority=True),
         Binding("tab", "focus_next_pane", "Next Pane", show=False, priority=True),
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
-        Binding("c", "open_config", "Config", show=False),
+        Binding("c", "open_config", "Config", show=False, priority=True),
+        Binding("d", "open_diagnostics", "Diagnostics", show=False, priority=True),
         Binding("m", "open_memory", "Memory", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
         Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
-        Binding("t", "group_artifacts_task", "Task Group", show=False, priority=True),
-        Binding("y", "group_artifacts_type", "Type Group", show=False, priority=True),
+        Binding("e", "open_artifact_externally", "External Artifact", show=False, priority=True),
+        Binding("t", "group_artifacts_task", "Task Group", show=False),
+        Binding("y", "group_artifacts_type", "Type Group", show=False),
+        Binding("ctrl+r", "reconnect_runtime", "Reconnect", show=False),
         Binding("escape", "back_dashboard", "Dashboard", show=False, priority=True),
-        Binding("q", "quit", "Quit", show=False, priority=True),
+        Binding("q", "quit", "Quit", show=False),
     ]
 
     def __init__(self, *, config_path: str, task_id: str | None, run_id: str | None) -> None:
@@ -104,7 +117,6 @@ class AgentTUI(App):  # type: ignore[misc]
         self._bootstrap = BootstrapConfig(config_path=config_path, task_id=task_id, run_id=run_id)
         self._client = ProtocolClient(config_path)
         self._store = AppStateStore()
-        self._status_bar = StatusBar(id="status-bar")
         self._stream_key: tuple[str, str] | None = None
         self._render_interval = 1 / 30
         self._render_scheduled = False
@@ -119,9 +131,12 @@ class AgentTUI(App):  # type: ignore[misc]
         self.install_screen(DiagnosticsScreen(), name="diagnostics")
         self.install_screen(CommandPaletteScreen(), name="command_palette")
         self.install_screen(CreateTaskScreen(), name="create_task")
+        self.install_screen(TaskTimelinePromptScreen(mode="search"), name="timeline_search_prompt")
+        self.install_screen(TaskTimelinePromptScreen(mode="filter"), name="timeline_filter_prompt")
 
     def compose(self) -> ComposeResult:
-        yield self._status_bar
+        if False:
+            yield
 
     async def on_mount(self) -> None:
         self.push_screen("dashboard")
@@ -133,6 +148,19 @@ class AgentTUI(App):  # type: ignore[misc]
         await self._client.close()
 
     async def _connect_and_refresh(self) -> None:
+        preferred_task_id = self._bootstrap.task_id or self._store.snapshot().selected_task_id
+        preferred_run_id = self._bootstrap.run_id
+        await self._refresh_runtime_snapshot(
+            preferred_task_id=preferred_task_id,
+            preferred_run_id=preferred_run_id,
+        )
+
+    async def _refresh_runtime_snapshot(
+        self,
+        *,
+        preferred_task_id: str | None,
+        preferred_run_id: str | None,
+    ) -> None:
         try:
             await self._client.connect()
             self._store.dispatch({"kind": "connection", "status": "connected"})
@@ -140,16 +168,21 @@ class AgentTUI(App):  # type: ignore[misc]
             self._store.dispatch({"kind": "rpc", "name": "runtime.health", "payload": health})
             task_list = await self._client.task_list(limit=10)
             self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
-            if self._bootstrap.task_id is not None:
+            selected_task_id = preferred_task_id
+            selected_run_id = preferred_run_id
+            if selected_task_id is not None:
+                state = self._store.snapshot()
+                task = state.task_snapshots.get(selected_task_id)
+                if task is not None and not selected_run_id:
+                    selected_run_id = str(task.get("run_id", "")) or None
                 self._store.dispatch(
                     {
                         "kind": "ui",
-                        "selected_task_id": self._bootstrap.task_id,
-                        "active_screen": "dashboard",
+                        "selected_task_id": selected_task_id,
                     }
                 )
-                task = await self._client.task_get(self._bootstrap.task_id, self._bootstrap.run_id)
-                self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task})
+                task_payload = await self._client.task_get(selected_task_id, selected_run_id)
+                self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_payload})
             await self._prefetch_dashboard_data()
             await self._prime_config_snapshot()
             self._render_state()
@@ -265,7 +298,6 @@ class AgentTUI(App):  # type: ignore[misc]
     def _render_state(self) -> None:
         self._last_render_at = time.monotonic()
         state = self._store.snapshot()
-        self._status_bar.update_from_state(state)
         screen = self.screen
         update_from_state = getattr(screen, "update_from_state", None)
         if callable(update_from_state):
@@ -286,6 +318,10 @@ class AgentTUI(App):  # type: ignore[misc]
         message: UiMessage = {"kind": "ui", "active_screen": screen_name}
         if screen_name != "approvals":
             message["approval_feedback"] = None
+        if screen_name != "artifacts":
+            message["artifact_action_feedback"] = None
+        if screen_name != "task_detail":
+            message["task_input_feedback"] = None
         self._store.dispatch(message)
         self.switch_screen(screen_name)
         self._render_state()
@@ -329,6 +365,9 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.active_screen == "approvals":
             self._move_approval_selection(delta)
             return
+        if state.active_screen == "dashboard" and state.focused_pane == "summary":
+            self._scroll_dashboard_summary(delta)
+            return
         if state.active_screen == "dashboard" and state.focused_pane == "approvals":
             self._move_approval_selection(delta)
             return
@@ -353,7 +392,7 @@ class AgentTUI(App):  # type: ignore[misc]
         self._cycle_focus(-1)
 
     def _cycle_focus(self, delta: int) -> None:
-        panes = ["tasks", "approvals", "artifacts"]
+        panes = ["tasks", "summary", "approvals", "artifacts"]
         state = self._store.snapshot()
         if state.active_screen == "memory":
             panes = ["memory_groups", "memory_entries"]
@@ -364,8 +403,19 @@ class AgentTUI(App):  # type: ignore[misc]
         self._store.dispatch({"kind": "ui", "focused_pane": panes[next_index]})
         self._render_state()
 
+    def _scroll_dashboard_summary(self, delta: int) -> None:
+        if self.screen.__class__.__name__ != "DashboardScreen":
+            return
+        summary_pane = self.screen.query_one("#task-summary")
+        if delta > 0:
+            summary_pane.action_scroll_down()
+        else:
+            summary_pane.action_scroll_up()
+
     def action_open_task(self) -> None:
         state = self._store.snapshot()
+        if self.screen.__class__.__name__ in {"CreateTaskScreen", "TaskTimelinePromptScreen"}:
+            return
         if state.command_palette_visible:
             self.action_run_palette_command()
             return
@@ -409,7 +459,10 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_open_command_palette(self) -> None:
         state = self._store.snapshot()
-        if self.screen.__class__.__name__ == "CreateTaskScreen":
+        if self.screen.__class__.__name__ in {
+            "CreateTaskScreen",
+            "TaskTimelinePromptScreen",
+        }:
             return
         if state.active_screen == "markdown_viewer":
             return
@@ -429,6 +482,35 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_create_task(self) -> None:
         self.open_create_task()
+
+    def action_focus_task_input(self) -> None:
+        if self._store.snapshot().active_screen != "task_detail":
+            return
+        focus_input = getattr(self.screen.query_one(InputBoxWidget), "focus_input", None)
+        if callable(focus_input):
+            focus_input()
+
+    def action_toggle_task_logs(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "task_detail":
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "task_detail_show_logs": not state.task_detail_show_logs,
+            }
+        )
+        self._render_state()
+
+    def action_open_timeline_filter_prompt(self) -> None:
+        if self._store.snapshot().active_screen != "task_detail":
+            return
+        self.push_screen("timeline_filter_prompt")
+
+    def action_open_timeline_search_prompt(self) -> None:
+        if self._store.snapshot().active_screen != "task_detail":
+            return
+        self.push_screen("timeline_search_prompt")
 
     def action_run_palette_command(self) -> None:
         self.run_selected_palette_command()
@@ -455,6 +537,85 @@ class AgentTUI(App):  # type: ignore[misc]
             group="task-resume",
             exclusive=True,
         )
+
+    def action_open_artifact_externally(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "artifacts":
+            return
+        self.run_worker(self._open_selected_artifact_externally(), group="artifact-open-external")
+
+    def action_reconnect_runtime(self) -> None:
+        self.run_worker(self._reconnect_runtime(), group="runtime-reconnect", exclusive=True)
+
+    def handle_task_detail_command(self, raw_command: str) -> None:
+        command = raw_command.strip().lower()
+        clear_input = getattr(self.screen.query_one(InputBoxWidget), "clear_input", None)
+        if callable(clear_input):
+            clear_input()
+        if not command:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "task_input_feedback": "Supported commands: resume, approvals, artifacts, diagnostics, memory, config, help.",
+                }
+            )
+            self._render_state()
+            return
+        commands = {
+            "resume": self.action_resume_task,
+            "approvals": self.open_selected_approval_workflow,
+            "artifacts": self.action_open_artifacts,
+            "diagnostics": self.action_open_diagnostics,
+            "memory": self.action_open_memory,
+            "config": self.action_open_config,
+            "help": None,
+        }
+        handler = commands.get(command)
+        if handler is None and command != "help":
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "task_input_feedback": (
+                        f"Unsupported command '{command}'. Use: resume, approvals, artifacts, diagnostics, memory, config, help."
+                    ),
+                }
+            )
+            self._render_state()
+            return
+        self._store.dispatch({"kind": "ui", "task_input_feedback": f"Ran '{command}'."})
+        self._render_state()
+        if handler is not None:
+            handler()
+
+    def submit_task_timeline_search(self, query: str) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "task_timeline_search_query": query.strip(),
+                "task_input_feedback": None,
+            }
+        )
+        self.close_task_timeline_prompt()
+        self._render_state()
+
+    def submit_task_timeline_filter(self, raw_filter: str) -> None:
+        normalized = raw_filter.strip().lower() or "all"
+        valid_filters = {option.filter_id for option in timeline_filter_options()}
+        if normalized not in valid_filters:
+            if isinstance(self.screen, TaskTimelinePromptScreen):
+                self.screen.set_status(
+                    "Invalid filter. Use: all, important, tools, plans, approvals, artifacts, subagents, errors."
+                )
+            return
+        self._store.dispatch({"kind": "ui", "task_timeline_filter": normalized})
+        self.close_task_timeline_prompt()
+        self._render_state()
+
+    def close_task_timeline_prompt(self) -> None:
+        if self.screen.__class__.__name__ != "TaskTimelinePromptScreen":
+            return
+        self.pop_screen()
+        self._render_state()
 
     async def _resume_selected_task(self, *, task_id: str, run_id: str | None) -> None:
         try:
@@ -502,6 +663,12 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.command_palette_visible:
             self.close_command_palette()
             return
+        if self.screen.__class__.__name__ == "TaskTimelinePromptScreen":
+            self.close_task_timeline_prompt()
+            return
+        if self.screen.__class__.__name__ == "CreateTaskScreen":
+            self.close_create_task()
+            return
         if state.active_screen == "artifacts":
             self._set_active_screen(state.artifact_browser_origin_screen or "dashboard")
             return
@@ -539,6 +706,33 @@ class AgentTUI(App):  # type: ignore[misc]
         )
         self._set_active_screen("task_detail")
         self.run_worker(self._sync_selected_task(), group="selection-sync", exclusive=True)
+
+    def open_selected_approval_workflow(self) -> None:
+        state = self._store.snapshot()
+        approvals = pending_approvals(state)
+        if not approvals:
+            return
+        selected = next(
+            (
+                approval
+                for approval in selected_task_pending_approvals(state)
+                if approval.status in {"pending", "waiting"}
+            ),
+            approvals[0],
+        )
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "selected_approval_id": selected.approval_id,
+                "approval_feedback": None,
+            }
+        )
+        self._set_active_screen("approvals")
+        self.run_worker(
+            self._refresh_known_approvals(),
+            group="approvals-refresh",
+            exclusive=True,
+        )
 
     def handle_artifact_browser_selected(self, artifact_id: str) -> None:
         state = self._store.snapshot()
@@ -606,12 +800,18 @@ class AgentTUI(App):  # type: ignore[misc]
         commands = {
             "create_task": self.open_create_task,
             "resume_task": self.action_resume_task,
-            "open_approvals": self.action_open_approvals,
+            "approve_request": self.open_selected_approval_workflow,
             "open_artifacts": self.action_open_artifacts,
             "open_memory": self.action_open_memory,
             "open_config": self.action_open_config,
             "open_diagnostics": self.action_open_diagnostics,
+            "reconnect_runtime": self.action_reconnect_runtime,
         }
+        if selected.command_id.startswith("open_task::"):
+            task_id = selected.command_id.split("::", 1)[1]
+            self.handle_dashboard_task_selected(task_id)
+            self._set_active_screen("task_detail")
+            return
         handler = commands.get(selected.command_id)
         if handler is not None:
             handler()
@@ -844,6 +1044,71 @@ class AgentTUI(App):  # type: ignore[misc]
             )
             self.switch_screen("markdown_viewer")
             self._render_state()
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "artifact_action_feedback": "This artifact does not have an in-TUI viewer. Use [E] to open externally when available.",
+            }
+        )
+        self._render_state()
+
+    async def _open_selected_artifact_externally(self) -> None:
+        state = self._store.snapshot()
+        selected = selected_artifact_browser_item(state)
+        preview = selected_artifact_preview(state)
+        if selected is None or preview.artifact_id is None:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_action_feedback": "Select an artifact first.",
+                }
+            )
+            self._render_state()
+            return
+        if not preview.external_open_supported:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_action_feedback": "External open is not available for the selected artifact.",
+                }
+            )
+            self._render_state()
+            return
+        logical_path = str(selected.get("logical_path", "")).strip()
+        command = _external_open_command(logical_path)
+        if command is None:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_action_feedback": "External open is not supported on this platform.",
+                }
+            )
+            self._render_state()
+            return
+        try:
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            _, stderr = await process.communicate()
+            if process.returncode not in {0, None}:
+                raise RuntimeError(stderr.decode("utf-8").strip() or "open command failed")
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_action_feedback": f"Opened {logical_path}.",
+                }
+            )
+        except Exception as exc:  # pragma: no cover - OS integration
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_action_feedback": f"External open failed: {exc}",
+                }
+            )
+        self._render_state()
 
     def _set_artifact_group(self, group_by: str) -> None:
         state = self._store.snapshot()
@@ -938,7 +1203,44 @@ class AgentTUI(App):  # type: ignore[misc]
     def close_create_task(self) -> None:
         if self.screen.__class__.__name__ != "CreateTaskScreen":
             return
+        self.screen.reset_form()  # type: ignore[attr-defined]
         self.pop_screen()
+        self._render_state()
+
+    async def _reconnect_runtime(self) -> None:
+        state = self._store.snapshot()
+        selected_task_id = state.selected_task_id
+        selected_task = state.task_snapshots.get(selected_task_id) if selected_task_id else None
+        selected_run_id = str(selected_task.get("run_id", "")) or None if selected_task else None
+        active_screen = state.active_screen
+        try:
+            await self._client.close()
+        except Exception:
+            pass
+        self._client = ProtocolClient(self._bootstrap.config_path)
+        self._store.dispatch({"kind": "connection", "status": "connecting", "error": None})
+        self._render_state()
+        await self._refresh_runtime_snapshot(
+            preferred_task_id=selected_task_id,
+            preferred_run_id=selected_run_id,
+        )
+        refreshed_state = self._store.snapshot()
+        if selected_task_id and selected_task_id not in refreshed_state.task_snapshots:
+            self._set_active_screen("dashboard")
+            return
+        if (
+            active_screen
+            in {
+                "task_detail",
+                "artifacts",
+                "approvals",
+                "memory",
+                "config",
+                "diagnostics",
+            }
+            and refreshed_state.selected_task_id is not None
+        ):
+            self._set_active_screen(active_screen)
         self._render_state()
 
     def submit_create_task(self, objective: str) -> None:
@@ -1018,13 +1320,34 @@ class AgentTUI(App):  # type: ignore[misc]
                 objective=objective,
                 workspace_roots=[workspace_root],
             )
-            self._store.dispatch({"kind": "rpc", "name": "task.create", "payload": payload})
             task_id = str(payload.get("result", {}).get("task_id", ""))
             run_id = str(payload.get("result", {}).get("run_id", "")) or None
-            task_payload = await self._client.task_get(task_id, run_id)
-            self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_payload})
-            task_list = await self._client.task_list(limit=10)
-            self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
+            accepted_at = str(payload.get("result", {}).get("accepted_at", "")) or ""
+            optimistic_task = {
+                "task_id": task_id,
+                "run_id": run_id or "",
+                "status": str(payload.get("result", {}).get("status", "accepted")),
+                "objective": objective,
+                "created_at": accepted_at,
+                "updated_at": accepted_at,
+                "accepted_at": accepted_at,
+                "latest_summary": "Task accepted by runtime.",
+                "current_phase": "accepted",
+                "workspace_roots": [workspace_root],
+                "links": {
+                    "artifacts": "task.artifacts.list",
+                    "approve": "task.approve",
+                    "resume": "task.resume",
+                    "events": "task.logs.stream",
+                },
+            }
+            self._store.dispatch(
+                {
+                    "kind": "rpc",
+                    "name": "task.get",
+                    "payload": {"result": {"task": optimistic_task}},
+                }
+            )
             self._store.dispatch(
                 {
                     "kind": "ui",
@@ -1032,15 +1355,24 @@ class AgentTUI(App):  # type: ignore[misc]
                     "active_screen": "task_detail",
                 }
             )
-            await self._load_task_related(task_id=task_id, run_id=run_id)
-            self.switch_screen("task_detail")
             if self.screen.__class__.__name__ == "CreateTaskScreen":
+                self.screen.reset_form()  # type: ignore[attr-defined]
                 self.pop_screen()
+            self.switch_screen("task_detail")
             self._render_state()
             self._start_selected_task_stream(task_id=task_id, run_id=run_id)
+            task_payload = await self._client.task_get(task_id, run_id)
+            self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_payload})
+            task_list = await self._client.task_list(limit=10)
+            self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
+            await self._load_task_related(task_id=task_id, run_id=run_id)
+            self._render_state()
         except ProtocolClientError as exc:
             if self.screen.__class__.__name__ == "CreateTaskScreen":
                 self.screen.set_status(f"Create task failed: {exc}")  # type: ignore[attr-defined]
+            else:
+                self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+                self._render_state()
 
     async def _prime_config_snapshot(self) -> None:
         try:
@@ -1128,3 +1460,15 @@ def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:
     if not isinstance(workspace_root, str) or not workspace_root.strip():
         return None
     return workspace_root
+
+
+def _external_open_command(path: str) -> list[str] | None:
+    if not path:
+        return None
+    if sys.platform == "darwin":
+        return ["open", path]
+    if os.name == "nt":
+        return ["cmd", "/c", "start", "", path]
+    if os.name == "posix":
+        return ["xdg-open", path]
+    return None

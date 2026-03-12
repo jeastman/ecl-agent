@@ -30,35 +30,28 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
+        self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")
         if not items:
             self.update("No pending approvals.")
             return
-        rendered_items: list[str] = []
+        rendered_items: list[str] = [
+            "Task        Type             Policy              Status",
+            "----------- ---------------- ------------------- ----------",
+        ]
         for item in items:
             marker = ">" if item.is_selected else " "
             urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
+            prefix = "[reverse]" if item.is_highlighted else ""
+            suffix = "[/reverse]" if item.is_highlighted else ""
+            rendered_items.append(
+                (
+                    f"{prefix}{marker} {item.task_id:<10} {item.request_type[:16]:<16} "
+                    f"{item.policy_context[:19]:<19} "
+                    f"[{urgency}]{item.status.upper():<10}[/]{suffix}"
+                )
+            )
             if inbox_mode:
-                rendered_items.append(
-                    "\n".join(
-                        [
-                            (
-                                f"{marker} {item.task_id}  {item.request_type}  "
-                                f"{item.policy_context}  [{urgency}]{item.status.upper()}[/]"
-                            ),
-                            f"  Action: {item.requested_action}",
-                            f"  {item.description}",
-                        ]
-                    )
-                )
-            else:
-                rendered_items.append(
-                    "\n".join(
-                        [
-                            f"{marker} {item.task_id}  [{urgency}]{item.status.upper()}[/]",
-                            item.description,
-                            item.scope_summary,
-                        ]
-                    )
-                )
+                rendered_items.append(f"  Action: {item.requested_action}")
+            rendered_items.append(f"  {item.description}")
         self.update("\n".join(rendered_items))

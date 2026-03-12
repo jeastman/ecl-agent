@@ -4,7 +4,7 @@ import asyncio
 import threading
 import unittest
 from typing import Any, cast
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 from apps.tui.local_agent_tui.app import _TEXTUAL_IMPORT_ERROR
 from apps.tui.local_agent_tui.store.selectors import pending_approvals
@@ -101,6 +101,8 @@ Line 60
 class _FakeProtocolClient:
     def __init__(self, config_path: str) -> None:
         self.config_path = config_path
+        self.connect_calls = 0
+        self.close_calls = 0
         self.resume_calls: list[tuple[str, str | None]] = []
         self.approve_calls: list[tuple[str | None, str | None, str, str]] = []
         self.approvals_list_calls: list[tuple[str, str | None]] = []
@@ -265,9 +267,11 @@ class _FakeProtocolClient:
         }
 
     async def connect(self) -> None:
+        self.connect_calls += 1
         return None
 
     async def close(self) -> None:
+        self.close_calls += 1
         return None
 
     async def runtime_health(self) -> dict:
@@ -317,7 +321,16 @@ class _FakeProtocolClient:
                     "display_name": "report.md",
                     "content_type": "text/markdown",
                     "created_at": "2026-03-12T00:00:02Z",
-                }
+                },
+                {
+                    "artifact_id": "artifact_2",
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "logical_path": "/artifacts/report.html",
+                    "display_name": "report.html",
+                    "content_type": "text/html",
+                    "created_at": "2026-03-12T00:00:03Z",
+                },
             ]
         else:
             artifacts = []
@@ -327,6 +340,26 @@ class _FakeProtocolClient:
         self, task_id: str, artifact_id: str, run_id: str | None = None
     ) -> dict:
         self.artifact_get_calls.append((task_id, run_id, artifact_id))
+        if artifact_id == "artifact_2":
+            return {
+                "result": {
+                    "artifact": {
+                        "artifact_id": artifact_id,
+                        "task_id": task_id,
+                        "run_id": run_id,
+                        "logical_path": "/artifacts/report.html",
+                        "display_name": "report.html",
+                        "content_type": "text/html",
+                        "created_at": "2026-03-12T00:00:03Z",
+                    },
+                    "preview": {
+                        "kind": "text",
+                        "text": "<html>summary</html>",
+                        "encoding": "utf-8",
+                    },
+                    "external_open_supported": True,
+                }
+            }
         return {
             "result": {
                 "artifact": {
@@ -420,7 +453,7 @@ class _DelayedArtifactProtocolClient(_FakeProtocolClient):
     async def task_artifact_get(
         self, task_id: str, artifact_id: str, run_id: str | None = None
     ) -> dict:
-        await asyncio.sleep(0.2)
+        await asyncio.sleep(0.5)
         return await super().task_artifact_get(task_id, artifact_id, run_id)
 
 
@@ -451,6 +484,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dashboard_is_default_screen_and_shows_dashboard_content(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.containers import VerticalScroll
         from textual.widgets import Static
 
         with (
@@ -468,10 +502,12 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app._render_state()  # type: ignore[attr-defined]
                 self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
                 self.assertEqual(app._store.snapshot().selected_task_id, "task_1")  # type: ignore[attr-defined]
-                task_summary = app.screen.query_one("#task-summary", Static)
+                task_summary = app.screen.query_one("#task-summary", VerticalScroll)
+                task_summary_content = app.screen.query_one("#task-summary-content", Static)
                 artifacts = app.screen.query_one("#recent-artifacts", Static)
                 approvals = app.screen.query_one("#approval-queue", Static)
-                self.assertIn("Scanning repository", str(task_summary.visual))
+                self.assertEqual(task_summary.border_title, "Selected Task")
+                self.assertIn("Scanning repository", str(task_summary_content.visual))
                 self.assertIn("report.md", str(artifacts.visual))
                 self.assertIn("tool permission", str(approvals.visual))
 
@@ -492,6 +528,9 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("down")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_task_id, "task_2")  # type: ignore[attr-defined]
+                await pilot.press("tab")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().focused_pane, "summary")  # type: ignore[attr-defined]
                 await pilot.press("tab")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().focused_pane, "approvals")  # type: ignore[attr-defined]
@@ -518,6 +557,8 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
                 await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("tab")
                 await pilot.pause()
                 await pilot.press("tab")
                 await pilot.pause()
@@ -693,6 +734,34 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 detail = selected_diagnostics_detail(app._store.snapshot())  # type: ignore[attr-defined]
                 self.assertIn("recoverable failure", detail.summary)
 
+    async def test_command_palette_approve_request_opens_approval_workflow(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("g")
+                await pilot.pause()
+                palette_input = app.screen.query_one(Input)
+                palette_input.value = "approve"
+                app.handle_command_palette_query_changed("approve")  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ApprovalsScreen")
+                self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
+
     async def test_command_palette_opens_from_major_screens(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
 
@@ -731,6 +800,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_new_task_modal_submits_and_opens_task_detail(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import TextArea
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -743,9 +813,12 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
             )
             async with app.run_test() as pilot:
                 await pilot.pause()
-                app.open_create_task()  # type: ignore[attr-defined]
+                await pilot.press("n")
                 await pilot.pause()
-                app.submit_create_task("Write a release note")  # type: ignore[attr-defined]
+                self.assertEqual(app.screen.__class__.__name__, "CreateTaskScreen")
+                create_input = app.screen.query_one(TextArea)
+                create_input.load_text("Write a release note\nInclude customer-facing summary")
+                app.submit_create_task(create_input.text)  # type: ignore[attr-defined]
                 await pilot.pause()
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
@@ -753,8 +826,122 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 client = cast(_FakeProtocolClient, app._client)  # type: ignore[attr-defined]
                 self.assertEqual(  # type: ignore[attr-defined]
                     client.task_create_calls[-1],
-                    ("Write a release note", ["/workspace"]),
+                    ("Write a release note\nInclude customer-facing summary", ["/workspace"]),
                 )
+
+    async def test_new_task_modal_enter_does_not_open_previous_selected_task(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import TextArea
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_1")  # type: ignore[attr-defined]
+                await pilot.press("n")
+                await pilot.pause()
+                create_input = app.screen.query_one(TextArea)
+                create_input.load_text("Create from modal\nWith multiple lines")
+                app.submit_create_task(create_input.text)  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.pause()
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.logs.stream",
+                        "payload": {"result": {"task_id": "task_1", "run_id": "run_1"}},
+                    }
+                )
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_3")  # type: ignore[attr-defined]
+                self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
+
+    async def test_dashboard_selected_task_summary_scrolls_when_focused(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 28)) as pilot:
+                await pilot.pause()
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "status": "executing",
+                                    "objective": "Inspect repo\n"
+                                    + "\n".join(f"Objective line {index}" for index in range(30)),
+                                    "created_at": "2026-03-12T00:00:00Z",
+                                    "updated_at": "2026-03-12T00:00:00Z",
+                                    "latest_summary": "\n".join(
+                                        f"Summary line {index}" for index in range(40)
+                                    ),
+                                }
+                            }
+                        },
+                    }
+                )
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.press("tab")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().focused_pane, "summary")  # type: ignore[attr-defined]
+                summary_pane = app.screen.query_one("#task-summary")
+                self.assertEqual(summary_pane.scroll_y, 0.0)
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertGreater(summary_pane.scroll_y, 0.0)
+                await pilot.press("up")
+                await pilot.pause()
+                self.assertEqual(summary_pane.scroll_y, 0.0)
+
+    async def test_create_task_modal_resets_text_and_status_between_opens(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static, TextArea
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("n")
+                await pilot.pause()
+                create_input = app.screen.query_one(TextArea)
+                status = app.screen.query_one("#create-task-status", Static)
+                create_input.load_text("Stale objective")
+                app.screen.set_status("Objective is required.")  # type: ignore[attr-defined]
+                await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("n")
+                await pilot.pause()
+                create_input = app.screen.query_one(TextArea)
+                status = app.screen.query_one("#create-task-status", Static)
+                self.assertEqual(create_input.text, "")
+                self.assertIn("Ctrl+Enter submits", str(status.visual))
 
     async def test_markdown_viewer_keeps_local_g_binding_instead_of_command_palette(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -853,6 +1040,45 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     ("task_1", "run_1", "artifact_1"),
                 )
 
+    async def test_artifacts_screen_supports_external_open(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
+
+        class _FakeProcess:
+            returncode = 0
+
+            async def communicate(self) -> tuple[bytes, bytes]:
+                return (b"", b"")
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+            patch(
+                "apps.tui.local_agent_tui.app.asyncio.create_subprocess_exec",
+                AsyncMock(return_value=_FakeProcess()),
+            ) as open_mock,
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("o")
+                await pilot.pause()
+                await pilot.pause()
+                app.handle_artifact_browser_selected("artifact_2")  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.pause()
+                await pilot.press("e")
+                await pilot.pause()
+                footer = app.screen.query_one("#artifacts-screen-footer", Static)
+                self.assertIn("Opened /artifacts/report.html.", str(footer.visual))
+                open_mock.assert_awaited()
+
     async def test_markdown_viewer_scroll_and_search_bindings(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from apps.tui.local_agent_tui.screens.markdown_viewer import MarkdownViewerScreen
@@ -921,7 +1147,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 loading_model = selected_markdown_artifact(app._store.snapshot())  # type: ignore[attr-defined]
                 self.assertIsNotNone(loading_model)
                 self.assertEqual(loading_model.status, "loading")  # type: ignore[union-attr]
-                await asyncio.sleep(0.25)
+                await asyncio.sleep(0.6)
                 await pilot.pause()
                 loaded_model = selected_markdown_artifact(app._store.snapshot())  # type: ignore[attr-defined]
                 self.assertEqual(loaded_model.status, "loaded")  # type: ignore[union-attr]
@@ -951,6 +1177,131 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._store.snapshot().task_snapshots["task_2"]["status"], "executing"
                 )  # type: ignore[attr-defined]
                 self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
+
+    async def test_task_detail_command_input_dispatches_commands(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input, Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("i")
+                await pilot.pause()
+                command_input = app.screen.query_one(Input)
+                command_input.value = "resume"
+                await command_input.action_submit()
+                await pilot.pause()
+                status = app.screen.query_one("#task-detail-command-status", Static)
+                self.assertIn("Ran 'resume'.", str(status.visual))
+                self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
+
+    async def test_task_detail_timeline_filter_and_search_prompts_update_state(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input, Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "tool.called",
+                                "timestamp": "2026-03-12T00:00:01Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {"tool": "shell", "path": "/tmp/out.txt"},
+                            }
+                        },
+                    }
+                )
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "approval.requested",
+                                "timestamp": "2026-03-12T00:00:02Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {
+                                    "approval": {
+                                        "approval_id": "approval_1",
+                                        "task_id": "task_1",
+                                        "run_id": "run_1",
+                                        "status": "pending",
+                                    }
+                                },
+                            }
+                        },
+                    }
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("f")
+                await pilot.pause()
+                filter_input = app.screen.query_one(Input)
+                filter_input.value = "tools"
+                await filter_input.action_submit()
+                await pilot.pause()
+                footer = app.screen.query_one("#task-detail-footer", Static)
+                self.assertIn("Timeline filter: tools", str(footer.visual))
+                timeline = app.screen.query_one("#task-detail-timeline", Static)
+                self.assertIn("shell", str(timeline.visual))
+                self.assertNotIn("Approval requested", str(timeline.visual))
+                await pilot.press("/")
+                await pilot.pause()
+                search_input = app.screen.query_one(Input)
+                search_input.value = "shell"
+                await search_input.action_submit()
+                await pilot.pause()
+                footer = app.screen.query_one("#task-detail-footer", Static)
+                self.assertIn("Search: shell", str(footer.visual))
+
+    async def test_reconnect_runtime_restores_context(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                original_client = app._client  # type: ignore[attr-defined]
+                await app._reconnect_runtime()  # type: ignore[attr-defined]
+                self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_1")  # type: ignore[attr-defined]
+                self.assertNotEqual(app._client, original_client)  # type: ignore[attr-defined]
+                self.assertGreater(original_client.close_calls, 0)  # type: ignore[attr-defined]
+                self.assertGreater(app._client.connect_calls, 0)  # type: ignore[attr-defined]
 
     async def test_memory_screen_opens_renders_and_returns_to_origin(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

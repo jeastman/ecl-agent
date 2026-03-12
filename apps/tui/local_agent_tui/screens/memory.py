@@ -12,6 +12,7 @@ from ..store.selectors import (
 )
 from ..widgets.memory_entry_list import MemoryEntryListWidget, MemoryEntryRow
 from ..widgets.memory_group_list import MemoryGroupListWidget, MemoryGroupRow
+from ..widgets.status_bar import StatusBar
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -39,8 +40,15 @@ else:  # pragma: no cover
 
 
 class MemoryScreen(Screen):  # type: ignore[misc]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_summary: str | None = None
+        self._last_detail_signature: tuple[str, ...] | None = None
+        self._last_footer: str | None = None
+
     def compose(self) -> ComposeResult:
         yield Container(
+            StatusBar(id="status-bar"),
             Container(
                 MemoryGroupListWidget(id="memory-screen-groups"),
                 Vertical(
@@ -58,6 +66,7 @@ class MemoryScreen(Screen):  # type: ignore[misc]
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.query_one(StatusBar).update_from_state(state)
         self.query_one(MemoryGroupListWidget).update_groups(
             memory_scope_groups(state),
             focused=state.focused_pane == "memory_groups",
@@ -68,35 +77,42 @@ class MemoryScreen(Screen):  # type: ignore[misc]
         )
         summary = self.query_one("#memory-screen-group-summary", Static)
         summary.border_title = "Selected Scope"
-        summary.update(memory_group_summary(state))
+        summary_text = memory_group_summary(state)
+        if self._last_summary != summary_text:
+            summary.update(summary_text)
+            self._last_summary = summary_text
         detail_model = selected_memory_detail(state)
         detail = self.query_one("#memory-screen-detail", Static)
         detail.border_title = detail_model.title
-        detail.update(
-            "\n".join(
-                [
-                    detail_model.summary,
-                    "",
-                    "Content",
-                    detail_model.content,
-                    "",
-                    "Metadata",
-                    f"Scope: {detail_model.raw_scope or 'n/a'}",
-                    f"Namespace: {detail_model.namespace or 'n/a'}",
-                    f"Source Run: {detail_model.source_run}",
-                    f"Confidence: {detail_model.confidence}",
-                    f"Created: {detail_model.created_at or 'n/a'}",
-                    f"Updated: {detail_model.updated_at or 'n/a'}",
-                    "Provenance",
-                    detail_model.provenance,
-                ]
-            ).strip()
+        detail_text = "\n".join(
+            [
+                detail_model.summary,
+                "",
+                "Content",
+                detail_model.content,
+                "",
+                "Metadata",
+                f"Scope: {detail_model.raw_scope or 'n/a'}",
+                f"Namespace: {detail_model.namespace or 'n/a'}",
+                f"Source Run: {detail_model.source_run}",
+                f"Confidence: {detail_model.confidence}",
+                f"Created: {detail_model.created_at or 'n/a'}",
+                f"Updated: {detail_model.updated_at or 'n/a'}",
+                "Provenance",
+                detail_model.provenance,
+            ]
         )
+        detail_signature = (detail_model.title, detail_text)
+        if self._last_detail_signature != detail_signature:
+            detail.update(detail_text.strip())
+            self._last_detail_signature = detail_signature
         footer = "   ".join(footer_hints(state))
         footer = f"{footer}\nMemory inspector is read-only."
         if state.memory_request_error:
             footer = f"{footer}\n{state.memory_request_error}"
-        self.query_one("#memory-screen-footer", Static).update(footer)
+        if self._last_footer != footer:
+            self.query_one("#memory-screen-footer", Static).update(footer)
+            self._last_footer = footer
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id == "memory-screen-groups" and isinstance(

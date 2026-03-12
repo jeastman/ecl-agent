@@ -24,6 +24,10 @@ class EventTimelineWidget(Static):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Event Timeline"
+        subtitle = f"Filter: {model.filter_label}"
+        if model.search_query:
+            subtitle = f"{subtitle} | Search: {model.search_query}"
+        self.border_subtitle = subtitle
         if not model.events:
             self.update("No events yet.")
             return
@@ -31,9 +35,13 @@ class EventTimelineWidget(Static):  # type: ignore[misc]
             "\n".join(
                 _render_event_line(
                     timestamp=event.timestamp,
+                    event_type=event.event_type,
                     severity=event.severity,
                     summary=event.summary,
                     repeat_count=event.repeat_count,
+                    source_name=event.source_name,
+                    highlight=event.highlight,
+                    highlight_label=event.highlight_label,
                 )
                 for event in model.events
             )
@@ -43,14 +51,22 @@ class EventTimelineWidget(Static):  # type: ignore[misc]
 def _render_event_line(
     *,
     timestamp: str,
+    event_type: str,
     severity: str,
     summary: str,
     repeat_count: int,
+    source_name: str | None,
+    highlight: bool,
+    highlight_label: str | None,
 ) -> str:
     marker, color = {
         "error": ("ERR", DANGER),
         "attention": ("ATTN", WARNING),
         "success": ("OK", SUCCESS),
     }.get(severity, ("INFO", ACCENT))
-    suffix = f" x{repeat_count}" if repeat_count > 1 else ""
-    return f"[{color}]{timestamp} [{marker}][/] {summary}{suffix}"
+    source = f" {source_name}" if source_name else ""
+    collapsed = (
+        f"{event_type}{source} (x{repeat_count})" if repeat_count > 1 else f"{event_type}{source}"
+    )
+    prefix = f"[reverse]{highlight_label}[/reverse] " if highlight and highlight_label else ""
+    return f"{prefix}[{color}]{timestamp} [{marker}][/] {collapsed}  {summary}"

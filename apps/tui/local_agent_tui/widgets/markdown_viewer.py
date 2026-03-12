@@ -85,6 +85,7 @@ class MarkdownViewerWidget(VerticalScroll):  # type: ignore[misc]
         self._search_query = normalized
         self._match_lines = self._match_line_numbers(normalized)
         self._match_index = 0 if self._match_lines else -1
+        self._render_document()
         self._scroll_to_current_match()
         return self.search_state
 
@@ -92,6 +93,7 @@ class MarkdownViewerWidget(VerticalScroll):  # type: ignore[misc]
         if not self._match_lines:
             return self.search_state
         self._match_index = (self._match_index + 1) % len(self._match_lines)
+        self._render_document()
         self._scroll_to_current_match()
         return self.search_state
 
@@ -109,6 +111,7 @@ class MarkdownViewerWidget(VerticalScroll):  # type: ignore[misc]
         self._search_query = ""
         self._match_lines = []
         self._match_index = -1
+        self._render_document()
 
     def _match_line_numbers(self, query: str) -> list[int]:
         if not query:
@@ -124,6 +127,12 @@ class MarkdownViewerWidget(VerticalScroll):  # type: ignore[misc]
         if self._match_index < 0 or self._match_index >= len(self._match_lines):
             return
         self.scroll_to(y=self._match_lines[self._match_index], animate=False, immediate=True)
+
+    def _render_document(self) -> None:
+        if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
+            raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        document = self.query_one("#markdown-viewer-document", Markdown)
+        document.update(_highlight_search_matches(self._source_text, self._search_query))
 
     def on_key(self, event: Any) -> None:
         screen = getattr(self, "screen", None)
@@ -152,3 +161,19 @@ class MarkdownViewerWidget(VerticalScroll):  # type: ignore[misc]
             if callable(action):
                 action()
                 event.stop()
+
+
+def _highlight_search_matches(source: str, query: str) -> str:
+    if not query:
+        return source
+    rendered_lines: list[str] = []
+    lowered_query = query.casefold()
+    for line in source.splitlines():
+        lowered_line = line.casefold()
+        start = lowered_line.find(lowered_query)
+        if start == -1:
+            rendered_lines.append(line)
+            continue
+        end = start + len(query)
+        rendered_lines.append(f"{line[:start]}**{line[start:end]}**{line[end:]}")
+    return "\n".join(rendered_lines)

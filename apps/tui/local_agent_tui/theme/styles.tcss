@@ -19,10 +19,13 @@ Screen {
 
 #status-bar {
     dock: top;
-    height: 1;
+    height: 2;
+    min-height: 2;
     background: $la-status;
     color: $la-text;
     padding: 0 1;
+    content-align: left middle;
+    border-bottom: solid $la-border;
 }
 
 #dashboard-root,
@@ -85,6 +88,11 @@ Screen {
     border: solid $la-border;
     padding: 1;
     margin-right: 1;
+    overflow-y: auto;
+}
+
+#task-summary-content {
+    width: 1fr;
 }
 
 #dashboard-side-column {
@@ -116,7 +124,8 @@ Screen {
 #diagnostics-screen-list,
 #diagnostics-screen-detail,
 #command-palette-panel,
-#create-task-panel {
+#create-task-panel,
+#task-timeline-prompt-panel {
     border: solid $la-border;
     background: $la-surface;
     padding: 1;
@@ -128,6 +137,11 @@ Screen {
 }
 
 #task-detail-timeline {
+    width: 58%;
+    margin-right: 1;
+}
+
+#task-detail-logs {
     width: 58%;
     margin-right: 1;
 }
@@ -238,16 +252,20 @@ Screen {
 #memory-screen-footer,
 #config-screen-footer,
 #diagnostics-screen-footer {
-    height: 3;
+    height: auto;
+    min-height: 3;
     border: solid $la-border;
     background: $la-surface;
-    padding: 1 2;
+    padding: 0 2;
     margin-top: 1;
     color: $la-muted;
+    content-align: left middle;
 }
 
 .-focused-pane {
     border: heavy $la-focus;
+    background: #1f3140;
+    tint: $la-focus 8%;
 }
 
 .-hidden {
@@ -255,24 +273,57 @@ Screen {
 }
 
 CommandPaletteScreen,
-CreateTaskScreen {
+CreateTaskScreen,
+TaskTimelinePromptScreen {
     align: center middle;
     background: rgba(10, 14, 18, 0.82);
 }
 
 #command-palette-panel,
-#create-task-panel {
+#create-task-panel,
+#task-timeline-prompt-panel {
     width: 72;
     max-width: 90%;
     height: auto;
 }
 
 #command-palette-input,
-#create-task-input {
+#task-timeline-prompt-input,
+#task-detail-command-input {
     margin-bottom: 1;
 }
 
+#create-task-input {
+    height: 8;
+    min-height: 6;
+    margin-bottom: 1;
+    background: $la-surface;
+    border: none;
+    padding: 0;
+}
+
+#create-task-input .text-area--gutter,
+#create-task-input .text-area--cursor-gutter,
+#create-task-input .text-area--cursor-line {
+    background: $la-surface;
+}
+
+#create-task-input .text-area--gutter,
+#create-task-input .text-area--cursor-gutter {
+    color: $la-surface;
+}
+
+#create-task-input:focus {
+    border: none;
+}
+
 #command-palette-results,
-#create-task-status {
+#create-task-status,
+#task-timeline-prompt-status,
+#task-detail-command-status {
     color: $la-muted;
+}
+
+#task-detail-input {
+    height: auto;
 }

@@ -20,7 +20,7 @@ def build_open_artifact_action(
     content_type: str,
     external_open_supported: bool,
 ) -> OpenArtifactAction:
-    destination = "markdown_viewer" if content_type == "text/markdown" else "artifacts"
+    destination = "markdown_viewer" if content_type == "text/markdown" else "external"
     return OpenArtifactAction(
         artifact_id=artifact_id,
         task_id=task_id,

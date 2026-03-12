@@ -37,10 +37,11 @@ class TaskHeaderWidget(Static):  # type: ignore[misc]
             f"Created: {model.created_at}",
             f"Updated: {model.updated_at}",
             f"Phase: {model.current_phase}",
+            f"Next: {model.actionable_label}",
         ]
         if model.active_subagent:
             lines.append(f"Active Subagent: {model.active_subagent}")
-        lines.extend(["", model.objective or "No objective available."])
+        lines.extend(["", model.objective or "No objective available.", "", model.actionable_hint])
         self.update("\n".join(lines))
 
 

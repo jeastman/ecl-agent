@@ -43,8 +43,18 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         artifact_browser_origin_screen=str(
             message.get("artifact_browser_origin_screen", state.artifact_browser_origin_screen)
         ),
+        artifact_action_feedback=_normalize_error(
+            message.get("artifact_action_feedback", state.artifact_action_feedback)
+        ),
         markdown_viewer_artifact_id=message.get(
             "markdown_viewer_artifact_id", state.markdown_viewer_artifact_id
+        ),
+        task_input_feedback=_normalize_error(
+            message.get("task_input_feedback", state.task_input_feedback)
+        ),
+        task_timeline_filter=str(message.get("task_timeline_filter", state.task_timeline_filter)),
+        task_timeline_search_query=str(
+            message.get("task_timeline_search_query", state.task_timeline_search_query)
         ),
         artifact_browser_selected_id=message.get(
             "artifact_browser_selected_id", state.artifact_browser_selected_id
@@ -94,6 +104,9 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
             message.get("diagnostics_request_error", state.diagnostics_request_error)
         ),
         selected_diagnostic_id=message.get("selected_diagnostic_id", state.selected_diagnostic_id),
+        task_detail_show_logs=bool(
+            message.get("task_detail_show_logs", state.task_detail_show_logs)
+        ),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -271,16 +284,15 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
 
     if name == "task.logs.stream":
         result = dict(payload["result"])
-        selected_task_id = str(result.get("task_id", state.selected_task_id or ""))
         selected_run_id = str(result.get("run_id", ""))
         next_state = replace(
             state,
-            selected_task_id=selected_task_id or state.selected_task_id,
             connection_status="connected",
         )
-        if selected_task_id and selected_run_id:
+        stream_task_id = str(result.get("task_id", ""))
+        if stream_task_id and selected_run_id:
             next_state = _ensure_task_buffers(
-                next_state, task_id=selected_task_id, run_id=selected_run_id
+                next_state, task_id=stream_task_id, run_id=selected_run_id
             )
         return next_state
 

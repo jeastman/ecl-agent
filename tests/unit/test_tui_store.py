@@ -226,12 +226,81 @@ class TuiStoreTests(unittest.TestCase):
         self._dispatch_created(store)
         store.dispatch(
             {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "pending",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
                 "kind": "ui",
-                "command_palette_query": "diag",
+                "command_palette_query": "approve",
             }
         )
         items = command_palette(store.snapshot()).items
-        self.assertEqual([item.command_id for item in items], ["open_diagnostics"])
+        self.assertEqual([item.command_id for item in items], ["approve_request"])
+
+    def test_task_timeline_respects_filter_and_search_state(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.called",
+                        "timestamp": "2026-03-12T00:00:01Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {"tool": "shell", "path": "/tmp/out.txt"},
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "approval.requested",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "approval": {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "pending",
+                            }
+                        },
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "task_timeline_filter": "tools"})
+        timeline = task_timeline(store.snapshot())
+        self.assertEqual([event.event_type for event in timeline.events], ["tool.called"])
+        store.dispatch(
+            {
+                "kind": "ui",
+                "task_timeline_filter": "all",
+                "task_timeline_search_query": "approval",
+            }
+        )
+        searched = task_timeline(store.snapshot())
+        self.assertEqual([event.event_type for event in searched.events], ["approval.requested"])
 
     def test_diagnostics_rpc_and_detail_projection(self) -> None:
         store = AppStateStore()
@@ -289,8 +358,8 @@ class TuiStoreTests(unittest.TestCase):
     def test_footer_hints_include_palette_and_new_task(self) -> None:
         store = AppStateStore()
         hints = footer_hints(store.snapshot())
-        self.assertIn("[G] Command Palette", hints)
-        self.assertIn("[N] New Task", hints)
+        self.assertIn("G Palette", hints)
+        self.assertIn("N New Task", hints)
 
     def test_approval_refresh_falls_back_to_next_pending_selection(self) -> None:
         store = AppStateStore()
@@ -554,6 +623,44 @@ class TuiStoreTests(unittest.TestCase):
         self.assertTrue(actions.resume_enabled)
         self.assertTrue(actions.artifact_open_enabled)
         self.assertEqual(notifications.items[-1].summary, "report.md")
+
+    def test_task_logs_stream_does_not_change_selected_task(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.list",
+                "payload": {
+                    "result": {
+                        "tasks": [
+                            {
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "executing",
+                                "objective": "Inspect repo",
+                                "updated_at": "2026-03-12T00:00:00Z",
+                            },
+                            {
+                                "task_id": "task_2",
+                                "run_id": "run_2",
+                                "status": "paused",
+                                "objective": "Review docs",
+                                "updated_at": "2026-03-11T00:00:00Z",
+                            },
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "selected_task_id": "task_2"})
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.logs.stream",
+                "payload": {"result": {"task_id": "task_1", "run_id": "run_1"}},
+            }
+        )
+        self.assertEqual(store.snapshot().selected_task_id, "task_2")
 
     def test_event_buffers_are_capped_and_deduplicate_artifacts_and_approvals(self) -> None:
         store = AppStateStore()

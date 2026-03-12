@@ -28,9 +28,22 @@ class MemoryGroupRow(ListItem):  # type: ignore[misc]
 
 
 class MemoryGroupListWidget(ListView):  # type: ignore[misc]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_signature: tuple[tuple[tuple[str, int, bool], ...], bool] | None = None
+
     def update_groups(self, items: list[MemoryGroupItemViewModel], *, focused: bool) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        signature = (
+            tuple((item.group_id, item.count, item.is_selected) for item in items),
+            focused,
+        )
+        self.border_title = "Memory Scopes"
+        self.border_subtitle = "Focused" if focused else ""
+        self.set_class(focused, "-focused-pane")
+        if self._last_signature == signature:
+            return
         self.clear()
         selected_index = None
         for index, item in enumerate(items):
@@ -39,5 +52,4 @@ class MemoryGroupListWidget(ListView):  # type: ignore[misc]
                 selected_index = index
         if selected_index is not None:
             self.index = selected_index
-        self.border_title = "Memory Scopes"
-        self.set_class(focused, "-focused-pane")
+        self._last_signature = signature

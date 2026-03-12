@@ -23,13 +23,16 @@ else:  # pragma: no cover
 class ArtifactTableRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: ArtifactBrowserRowViewModel) -> None:
         self.artifact_id = item.artifact_id
-        name = _truncate(item.display_name, 24)
+        name = _truncate(item.display_name, 26)
         content_type = _truncate(item.content_type, 18)
         created = _truncate(item.created_at, 20)
-        origin = _truncate(f"{item.task_id}/{item.run_id}", 24)
-        group = _truncate(item.group_label, 24)
-        logical_path = _truncate(item.logical_path, 66)
-        text = f"{name:<24} {content_type:<18} {created:<20} {origin}\n[{group}] {logical_path}"
+        origin = _truncate(f"{item.task_id}/{item.run_id}", 18)
+        group = _truncate(item.group_label, 18)
+        marker = "*" if item.is_highlighted else " "
+        text = (
+            f"{marker} {name:<26} {content_type:<18} {created:<20} {origin:<18}\n"
+            f"  Group: {group}  Path: {_truncate(item.logical_path, 52)}"
+        )
         super().__init__(Label(text))
 
 
@@ -53,7 +56,7 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
             self.index = selected_index
         self.border_title = f"Artifacts by {group_by}"
         self.border_subtitle = (
-            "Name                     Type               Created              Task/Run"
+            "Name                       Type               Created              Task/Run"
         )
         self.set_class(focused, "-focused-pane")
 

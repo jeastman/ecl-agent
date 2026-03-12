@@ -75,6 +75,21 @@ def _render_results(items: list[CommandPaletteItemViewModel]) -> str:
     lines: list[str] = []
     for item in items:
         marker = ">" if item.is_selected else " "
-        lines.append(f"{marker} {item.label}")
+        lines.append(f"{marker} {_highlight_matches(item.label, item.match_spans)}")
         lines.append(f"  {item.hint}")
     return "\n".join(lines)
+
+
+def _highlight_matches(text: str, spans: list[tuple[int, int]]) -> str:
+    if not spans:
+        return text
+    rendered: list[str] = []
+    cursor = 0
+    for start, end in spans:
+        if start > cursor:
+            rendered.append(text[cursor:start])
+        rendered.append(f"[reverse]{text[start:end]}[/reverse]")
+        cursor = end
+    if cursor < len(text):
+        rendered.append(text[cursor:])
+    return "".join(rendered)

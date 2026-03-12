@@ -17,6 +17,7 @@ class TaskListItemViewModel:
     awaiting_approval: bool
     artifact_count: int
     is_selected: bool
+    is_highlighted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +31,8 @@ class TaskSummaryViewModel:
     updated_at: str
     awaiting_approval: bool
     artifact_count: int
+    actionable_label: str
+    actionable_hint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +48,7 @@ class ApprovalQueueItemViewModel:
     scope_summary: str
     created_at: str
     is_selected: bool
+    is_highlighted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,6 +86,8 @@ class TaskDetailHeaderViewModel:
     objective: str
     current_phase: str
     active_subagent: str | None
+    actionable_label: str
+    actionable_hint: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,11 +98,15 @@ class TimelineEventViewModel:
     severity: str
     repeat_count: int
     source_name: str | None
+    highlight: bool
+    highlight_label: str | None
 
 
 @dataclass(frozen=True, slots=True)
 class TimelineGroupViewModel:
     events: list[TimelineEventViewModel]
+    filter_label: str
+    search_query: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,8 +147,13 @@ class TaskActionBarViewModel:
     resume_enabled: bool
     approvals_enabled: bool
     artifact_open_enabled: bool
+    artifact_external_open_enabled: bool
+    diagnostics_enabled: bool
+    logs_toggle_enabled: bool
+    logs_visible: bool
     back_enabled: bool
-    command_text: str
+    input_placeholder: str
+    status_message: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -170,6 +185,7 @@ class ArtifactBrowserRowViewModel:
     created_at: str
     logical_path: str
     is_selected: bool
+    is_highlighted: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -181,6 +197,7 @@ class ArtifactPreviewViewModel:
     content_type: str | None
     open_label: str
     external_open_supported: bool
+    render_as_markdown: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -246,12 +263,39 @@ class CommandPaletteItemViewModel:
     label: str
     hint: str
     is_selected: bool
+    match_spans: list[tuple[int, int]]
 
 
 @dataclass(frozen=True, slots=True)
 class CommandPaletteViewModel:
     query: str
     items: list[CommandPaletteItemViewModel]
+
+
+@dataclass(frozen=True, slots=True)
+class TimelineFilterOptionViewModel:
+    filter_id: str
+    label: str
+
+
+@dataclass(frozen=True, slots=True)
+class TimelineStateSummaryViewModel:
+    filter_label: str
+    search_query: str
+
+
+@dataclass(frozen=True, slots=True)
+class LogEntryViewModel:
+    timestamp: str
+    level: str
+    source_name: str | None
+    message: str
+    is_highlighted: bool
+
+
+@dataclass(frozen=True, slots=True)
+class LogViewModel:
+    lines: list[LogEntryViewModel]
 
 
 @dataclass(frozen=True, slots=True)
@@ -305,6 +349,7 @@ def recent_task_ids(state: AppState) -> list[str]:
 
 def recent_tasks(state: AppState, *, limit: int = 10) -> list[TaskListItemViewModel]:
     items: list[TaskListItemViewModel] = []
+    highlighted_task_ids = _highlighted_task_ids(state)
     for task in _sorted_task_snapshots(state)[:limit]:
         items.append(
             TaskListItemViewModel(
@@ -316,6 +361,7 @@ def recent_tasks(state: AppState, *, limit: int = 10) -> list[TaskListItemViewMo
                 awaiting_approval=bool(task.get("awaiting_approval", False)),
                 artifact_count=_int_value(task.get("artifact_count", 0)),
                 is_selected=state.selected_task_id == task["task_id"],
+                is_highlighted=str(task["task_id"]) in highlighted_task_ids,
             )
         )
     return items
@@ -341,6 +387,8 @@ def selected_task_summary(state: AppState) -> TaskSummaryViewModel | None:
         updated_at=str(task.get("last_event_at") or task.get("updated_at") or ""),
         awaiting_approval=bool(task.get("awaiting_approval", False)),
         artifact_count=_int_value(task.get("artifact_count", 0)),
+        actionable_label=_actionable_status_label(task),
+        actionable_hint=_actionable_status_hint(task),
     )
 
 
@@ -357,6 +405,8 @@ def selected_task_header(state: AppState) -> TaskDetailHeaderViewModel | None:
         objective=str(task.get("objective", "")),
         current_phase=str(task.get("current_phase") or "unknown"),
         active_subagent=_str_or_none(task.get("active_subagent")),
+        actionable_label=_actionable_status_label(task),
+        actionable_hint=_actionable_status_hint(task),
     )
 
 
@@ -366,6 +416,7 @@ def pending_approvals(
     limit: int | None = None,
 ) -> list[ApprovalQueueItemViewModel]:
     approvals: list[ApprovalQueueItemViewModel] = []
+    highlighted_approval_ids = _highlighted_approval_ids(state)
     for entries in state.approvals_by_task.values():
         for approval in entries:
             status = str(approval.get("status", "pending"))
@@ -387,6 +438,7 @@ def pending_approvals(
                     scope_summary=str(approval.get("scope_summary") or "Pending review"),
                     created_at=str(approval.get("created_at", "")),
                     is_selected=state.selected_approval_id == approval_id,
+                    is_highlighted=approval_id in highlighted_approval_ids,
                 )
             )
     approvals.sort(key=lambda item: item.created_at, reverse=True)
@@ -423,7 +475,7 @@ def recent_artifacts(state: AppState, *, limit: int = 5) -> list[ArtifactItemVie
 
 
 def task_timeline(state: AppState) -> TimelineGroupViewModel:
-    events = _selected_task_events(state)
+    events = _filtered_task_events(state)
     collapsed: list[TimelineEventViewModel] = []
     for event in events:
         current = _timeline_event(event)
@@ -442,10 +494,17 @@ def task_timeline(state: AppState) -> TimelineGroupViewModel:
                 severity=previous.severity,
                 repeat_count=previous.repeat_count + 1,
                 source_name=previous.source_name,
+                highlight=previous.highlight or current.highlight,
+                highlight_label=previous.highlight_label or current.highlight_label,
             )
             continue
         collapsed.append(current)
-    return TimelineGroupViewModel(events=collapsed)
+    summary = timeline_state_summary(state)
+    return TimelineGroupViewModel(
+        events=collapsed,
+        filter_label=summary.filter_label,
+        search_query=summary.search_query,
+    )
 
 
 def task_plan_view(state: AppState) -> PlanViewModel:
@@ -570,19 +629,26 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
     artifacts = task_artifact_panel(state)
     approvals_enabled = bool(selected_task_pending_approvals(state))
     resume_enabled = False
-    command_text = ">"
+    diagnostics_enabled = _selected_task_key(state) is not None
+    artifact_external_open_enabled = selected_artifact_preview(state).external_open_supported
+    status_message = state.task_input_feedback or _actionable_status_hint(task)
+    input_placeholder = "Enter a task command and press Enter"
     if task is not None:
         links = task.get("links", {})
         resume_enabled = bool(task.get("is_resumable")) or (
             isinstance(links, dict) and links.get("resume") == "task.resume"
         )
-        command_text = "> resume" if resume_enabled else "> inspect"
     return TaskActionBarViewModel(
         resume_enabled=resume_enabled,
         approvals_enabled=approvals_enabled,
         artifact_open_enabled=bool(artifacts),
+        artifact_external_open_enabled=artifact_external_open_enabled,
+        diagnostics_enabled=diagnostics_enabled,
+        logs_toggle_enabled=_selected_task_key(state) is not None,
+        logs_visible=state.task_detail_show_logs,
         back_enabled=True,
-        command_text=command_text,
+        input_placeholder=input_placeholder,
+        status_message=status_message,
     )
 
 
@@ -596,6 +662,7 @@ def artifact_browser_toolbar(state: AppState) -> ArtifactBrowserToolbarViewModel
 def artifact_browser_rows(state: AppState) -> list[ArtifactBrowserRowViewModel]:
     rows: list[ArtifactBrowserRowViewModel] = []
     selected_id = _selected_artifact_browser_id(state)
+    highlighted_artifact_ids = _highlighted_artifact_ids(state)
     for artifact in _all_artifacts(state):
         rows.append(
             ArtifactBrowserRowViewModel(
@@ -608,6 +675,7 @@ def artifact_browser_rows(state: AppState) -> list[ArtifactBrowserRowViewModel]:
                 created_at=str(artifact.get("created_at", "")),
                 logical_path=str(artifact.get("logical_path", "")),
                 is_selected=str(artifact.get("artifact_id", "")) == selected_id,
+                is_highlighted=str(artifact.get("artifact_id", "")) in highlighted_artifact_ids,
             )
         )
     return rows
@@ -624,6 +692,7 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
             content_type=None,
             open_label="Unavailable",
             external_open_supported=False,
+            render_as_markdown=False,
         )
     artifact_id = str(artifact.get("artifact_id", ""))
     preview_payload = state.artifact_preview_cache.get(artifact_id)
@@ -638,6 +707,7 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
             content_type=str(artifact.get("content_type", "unknown")),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
+            render_as_markdown=False,
         )
     if preview_error:
         return ArtifactPreviewViewModel(
@@ -648,6 +718,7 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
             content_type=str(artifact.get("content_type", "unknown")),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
+            render_as_markdown=False,
         )
     if not isinstance(preview_payload, dict):
         return ArtifactPreviewViewModel(
@@ -658,6 +729,7 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
             content_type=str(artifact.get("content_type", "unknown")),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
+            render_as_markdown=False,
         )
     preview = dict(preview_payload.get("preview", {}))
     body = str(preview.get("text") or preview.get("message") or "Preview unavailable.")
@@ -669,8 +741,12 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
         status="loaded",
         body=body,
         content_type=str(artifact.get("content_type", "unknown")),
-        open_label=_artifact_open_label(artifact),
+        open_label=_artifact_open_label(
+            artifact,
+            external_open_supported=bool(preview_payload.get("external_open_supported", False)),
+        ),
         external_open_supported=bool(preview_payload.get("external_open_supported", False)),
+        render_as_markdown=str(artifact.get("content_type", "unknown")) == "text/markdown",
     )
 
 
@@ -748,7 +824,12 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
             "Continue paused selected task",
             task_action_bar(state).resume_enabled,
         ),
-        ("open_approvals", "Open approvals", "Review pending requests", True),
+        (
+            "approve_request",
+            "Approve request",
+            "Jump directly into the pending approval workflow",
+            bool(pending_approvals(state)),
+        ),
         ("open_artifacts", "Inspect artifacts", "Browse runtime artifacts", True),
         ("open_memory", "Inspect memory", "Open memory inspector", True),
         ("open_config", "View runtime config", "Inspect effective runtime config", True),
@@ -758,14 +839,37 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
             "Inspect persisted task diagnostics",
             _selected_task_key(state) is not None,
         ),
+        (
+            "reconnect_runtime",
+            "Reconnect runtime",
+            "Reconnect and recover the current TUI context",
+            True,
+        ),
     ]
-    query = state.command_palette_query.strip().lower()
+    raw_query = state.command_palette_query.strip()
+    query = raw_query.lower()
     items: list[CommandPaletteItemViewModel] = []
+    if query.startswith("/"):
+        task_id = raw_query[1:]
+        for task in _sorted_task_snapshots(state):
+            candidate_task_id = str(task.get("task_id", ""))
+            if candidate_task_id.lower() == task_id.lower():
+                items.append(
+                    CommandPaletteItemViewModel(
+                        command_id=f"open_task::{candidate_task_id}",
+                        label=f"Open {candidate_task_id}",
+                        hint="Jump directly to task detail",
+                        is_selected=True,
+                        match_spans=[(5, 5 + len(candidate_task_id))],
+                    )
+                )
+                return CommandPaletteViewModel(query=state.command_palette_query, items=items)
     for command_id, label, hint, available in commands:
         if not available:
             continue
         haystack = f"{label} {hint} {command_id.replace('_', ' ')}".lower()
-        if query and not _matches_command_query(query, haystack):
+        match_spans = _command_match_spans(query, label) if query else []
+        if query and not (_matches_command_query(query, haystack) or match_spans):
             continue
         items.append(
             CommandPaletteItemViewModel(
@@ -773,6 +877,7 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
                 label=label,
                 hint=hint,
                 is_selected=state.command_palette_selected_id == command_id,
+                match_spans=match_spans,
             )
         )
     if items and not any(item.is_selected for item in items):
@@ -782,8 +887,82 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
             label=first.label,
             hint=first.hint,
             is_selected=True,
+            match_spans=first.match_spans,
         )
     return CommandPaletteViewModel(query=state.command_palette_query, items=items)
+
+
+def timeline_filter_options() -> list[TimelineFilterOptionViewModel]:
+    return [
+        TimelineFilterOptionViewModel("all", "all"),
+        TimelineFilterOptionViewModel("important", "important"),
+        TimelineFilterOptionViewModel("tools", "tools"),
+        TimelineFilterOptionViewModel("plans", "plans"),
+        TimelineFilterOptionViewModel("approvals", "approvals"),
+        TimelineFilterOptionViewModel("artifacts", "artifacts"),
+        TimelineFilterOptionViewModel("subagents", "subagents"),
+        TimelineFilterOptionViewModel("errors", "errors"),
+    ]
+
+
+def timeline_state_summary(state: AppState) -> TimelineStateSummaryViewModel:
+    return TimelineStateSummaryViewModel(
+        filter_label=_timeline_filter_label(state.task_timeline_filter),
+        search_query=state.task_timeline_search_query.strip(),
+    )
+
+
+def task_logs(state: AppState) -> LogViewModel:
+    lines: list[LogEntryViewModel] = []
+    for event in _selected_task_events(state)[-40:]:
+        if event.event_type.startswith("task.") or event.event_type.startswith("tool."):
+            lines.append(
+                LogEntryViewModel(
+                    timestamp=event.timestamp,
+                    level=event.severity.upper(),
+                    source_name=event.source_name,
+                    message=event.summary,
+                    is_highlighted=_is_priority_event(event.event_type),
+                )
+            )
+    return LogViewModel(lines=lines)
+
+
+def status_bar_model_name(state: AppState) -> str | None:
+    models = state.config_snapshot.get("models")
+    if not isinstance(models, dict):
+        return None
+    primary = models.get("primary")
+    if isinstance(primary, dict):
+        model_name = primary.get("model")
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name
+    default = models.get("default")
+    if isinstance(default, dict):
+        model_name = default.get("model")
+        if isinstance(model_name, str) and model_name.strip():
+            return model_name
+    return None
+
+
+def status_bar_sandbox_mode(state: AppState) -> str | None:
+    policy = state.config_snapshot.get("policy")
+    if not isinstance(policy, dict):
+        return None
+    sandbox_mode = policy.get("sandbox_mode")
+    if isinstance(sandbox_mode, str) and sandbox_mode.strip():
+        return sandbox_mode
+    return None
+
+
+def status_bar_memory_status(state: AppState) -> str:
+    if state.memory_request_status == "error":
+        return "ERROR"
+    if state.memory_request_status == "loading":
+        return "SYNC"
+    if any(state.memory_entries_by_context.values()):
+        return "OK"
+    return "IDLE"
 
 
 def diagnostics_items(state: AppState) -> list[DiagnosticsItemViewModel]:
@@ -1088,97 +1267,114 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
 def footer_hints(state: AppState) -> list[str]:
     if state.command_palette_visible:
         return [
-            "[Up/Down] Move",
-            "[Enter] Run",
-            "[Esc] Close",
-            "[Q] Quit",
+            "Up/Down Move",
+            "Enter Run",
+            "Esc Close",
+            "Q Quit",
         ]
     if state.active_screen == "diagnostics":
         return [
-            "[G] Command Palette",
-            "[N] New Task",
-            "[Up/Down] Move",
-            "[Esc] Back",
-            "[Q] Quit",
+            "G Palette",
+            "N New Task",
+            "Up/Down Move",
+            "Esc Back",
+            "Q Quit",
         ]
     if state.active_screen == "config":
         return [
-            "[Up/Down] Move",
-            "[G] Command Palette",
-            "[N] New Task",
-            "[C] Refresh",
-            "[Esc] Back",
-            "[Q] Quit",
+            "Up/Down Move",
+            "G Palette",
+            "N New Task",
+            "C Refresh",
+            "Esc Back",
+            "Q Quit",
         ]
     if state.active_screen == "approvals":
         return [
-            "[A] Approve",
-            "[R] Reject",
-            "[Enter] Open Task",
-            "[G] Command Palette",
-            "[N] New Task",
-            "[C] Config",
-            "[Esc] Dashboard",
-            "[Q] Quit",
+            "A Approve",
+            "R Reject",
+            "Enter Open Task",
+            "G Palette",
+            "N New Task",
+            "C Config",
+            "Esc Dashboard",
+            "Q Quit",
         ]
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
         hints = [
-            "[G] Command Palette",
-            "[N] New Task",
-            "[Esc] Dashboard",
-            "[A] Approvals",
-            "[C] Config",
-            "[O] Artifact",
-            "[Q] Quit",
+            "G Palette",
+            "N New Task",
+            "F Filter Events",
+            "/ Search Events",
+            "L Toggle Logs",
+            "Esc Dashboard",
+            "A Approvals",
+            "C Config",
+            "O Artifacts",
+            "D Diagnostics",
+            "Q Quit",
         ]
         if action_bar.resume_enabled:
-            hints.insert(0, "[R] Resume")
+            hints.insert(0, "R Resume")
         return hints
     if state.active_screen == "artifacts":
         return [
-            "[G] Command Palette",
-            "[N] New Task",
-            "[Up/Down] Move",
-            "[Enter] Open",
-            "[C] Config",
-            "[T] Group Task",
-            "[R] Group Run",
-            "[Y] Group Type",
-            "[Esc] Back",
+            "G Palette",
+            "N New Task",
+            "Up/Down Move",
+            "Enter Open",
+            "E External Open",
+            "C Config",
+            "T Group Task",
+            "R Group Run",
+            "Y Group Type",
+            "Esc Back",
         ]
     if state.active_screen == "markdown_viewer":
-        return ["[Esc] Back", "[Q] Quit"]
+        return ["Esc Back", "Q Quit"]
     if state.active_screen == "memory":
         return [
-            "[G] Command Palette",
-            "[N] New Task",
-            "[Up/Down] Move",
-            "[Tab] Focus",
-            "[C] Config",
-            "[M] Refresh",
-            "[Esc] Back",
-            "[Q] Quit",
+            "G Palette",
+            "N New Task",
+            "Up/Down Move",
+            "Tab Focus",
+            "C Config",
+            "M Refresh",
+            "Esc Back",
+            "Q Quit",
         ]
     if state.focused_pane == "approvals":
         return [
-            "[G] Command Palette",
-            "[N] New Task",
-            "[Up/Down] Move Approval",
-            "[Tab] Focus",
-            "[Enter] Open Approvals",
-            "[A] Approvals",
-            "[Q] Quit",
+            "G Palette",
+            "N New Task",
+            "Up/Down Move Approval",
+            "Tab Focus",
+            "Enter Open Approvals",
+            "A Approvals",
+            "Q Quit",
+        ]
+    if state.focused_pane == "summary":
+        return [
+            "G Palette",
+            "N New Task",
+            "Up/Down Scroll Summary",
+            "Tab Focus",
+            "A Approvals",
+            "C Config",
+            "Ctrl+R Reconnect",
+            "Q Quit",
         ]
     return [
-        "[G] Command Palette",
-        "[N] New Task",
-        "[Up/Down] Move",
-        "[Tab] Focus",
-        "[Enter] Open Task",
-        "[A] Approvals",
-        "[C] Config",
-        "[Q] Quit",
+        "G Palette",
+        "N New Task",
+        "Up/Down Move",
+        "Tab Focus",
+        "Enter Open Task",
+        "A Approvals",
+        "C Config",
+        "Ctrl+R Reconnect",
+        "Q Quit",
     ]
 
 
@@ -1235,6 +1431,19 @@ def _selected_task_events(state: AppState) -> list[TaskEventRecord]:
     return list(state.run_event_buffers.get(task_key, []))
 
 
+def _filtered_task_events(state: AppState) -> list[TaskEventRecord]:
+    filter_mode = state.task_timeline_filter.strip().lower() or "all"
+    search_query = state.task_timeline_search_query.strip().casefold()
+    events: list[TaskEventRecord] = []
+    for event in _selected_task_events(state):
+        if not _event_matches_filter(event, filter_mode):
+            continue
+        if search_query and not _event_matches_search(event, search_query):
+            continue
+        events.append(event)
+    return events
+
+
 def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
     return TimelineEventViewModel(
         timestamp=event.timestamp,
@@ -1243,11 +1452,50 @@ def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
         severity=event.severity,
         repeat_count=1,
         source_name=event.source_name,
+        highlight=_is_priority_event(event.event_type),
+        highlight_label=_priority_event_label(event.event_type),
     )
 
 
 def _should_collapse_timeline_event(event_type: str) -> bool:
     return event_type in {"tool.called", "plan.updated", "subagent.started", "subagent.completed"}
+
+
+def _timeline_filter_label(filter_mode: str) -> str:
+    labels = {option.filter_id: option.label for option in timeline_filter_options()}
+    return labels.get(filter_mode, "all")
+
+
+def _event_matches_filter(event: TaskEventRecord, filter_mode: str) -> bool:
+    if filter_mode == "all":
+        return True
+    if filter_mode == "important":
+        return event.severity in {"attention", "error", "success"}
+    if filter_mode == "tools":
+        return event.event_type == "tool.called"
+    if filter_mode == "plans":
+        return event.event_type == "plan.updated"
+    if filter_mode == "approvals":
+        return event.event_type == "approval.requested"
+    if filter_mode == "artifacts":
+        return event.event_type == "artifact.created"
+    if filter_mode == "subagents":
+        return event.event_type.startswith("subagent.")
+    if filter_mode == "errors":
+        return event.severity == "error" or event.event_type == "task.failed"
+    return True
+
+
+def _event_matches_search(event: TaskEventRecord, search_query: str) -> bool:
+    haystack = " ".join(
+        [
+            event.event_type,
+            event.summary,
+            event.source_name or "",
+            json.dumps(event.payload, sort_keys=True),
+        ]
+    ).casefold()
+    return search_query in haystack
 
 
 def _matches_command_query(query: str, haystack: str) -> bool:
@@ -1260,6 +1508,25 @@ def _matches_command_query(query: str, haystack: str) -> bool:
             return False
         index += 1
     return True
+
+
+def _command_match_spans(query: str, label: str) -> list[tuple[int, int]]:
+    if not query:
+        return []
+    lowered_query = query.casefold()
+    lowered_label = label.casefold()
+    if lowered_query in lowered_label:
+        start = lowered_label.index(lowered_query)
+        return [(start, start + len(query))]
+    spans: list[tuple[int, int]] = []
+    index = 0
+    for char in lowered_query:
+        next_index = lowered_label.find(char, index)
+        if next_index == -1:
+            return []
+        spans.append((next_index, next_index + 1))
+        index = next_index + 1
+    return spans
 
 
 def _subagent_id(event: TaskEventRecord) -> str | None:
@@ -1583,10 +1850,14 @@ def _artifact_display_name(artifact: dict[str, Any]) -> str:
     )
 
 
-def _artifact_open_label(artifact: dict[str, Any]) -> str:
+def _artifact_open_label(
+    artifact: dict[str, Any], *, external_open_supported: bool | None = None
+) -> str:
     if str(artifact.get("content_type", "")) == "text/markdown":
-        return "Open Markdown Viewer"
-    return "Preview Only"
+        return "Open Viewer"
+    if external_open_supported is False:
+        return "Unavailable"
+    return "Open Externally"
 
 
 def _approval_request_type(approval: dict[str, Any]) -> str:
@@ -1621,6 +1892,93 @@ def _approval_requested_action(approval: dict[str, Any]) -> str:
     if isinstance(scope_summary, str) and scope_summary.strip():
         return scope_summary
     return _approval_request_type(approval)
+
+
+def _actionable_status_label(task: dict[str, Any] | None) -> str:
+    if task is None:
+        return "Select a task"
+    status = str(task.get("status", "unknown")).lower()
+    if status in {"paused", "awaiting_approval"}:
+        return "Review approval"
+    if status == "completed":
+        return "Open artifacts"
+    if status == "failed":
+        return "View diagnostics"
+    if status in {"executing", "running", "planning", "accepted"}:
+        return "Tail timeline"
+    return "Inspect task"
+
+
+def _actionable_status_hint(task: dict[str, Any] | None) -> str:
+    if task is None:
+        return "Select a task to inspect its timeline, approvals, and artifacts."
+    status = str(task.get("status", "unknown")).lower()
+    if status in {"paused", "awaiting_approval"}:
+        return "Paused. Press A to review approval."
+    if status == "completed":
+        return "Completed. Press O to open artifacts."
+    if status == "failed":
+        return "Failed. Press D to view diagnostics."
+    if status in {"executing", "running", "planning", "accepted"}:
+        return "Running. Press L to toggle logs or / to search the timeline."
+    return "Commands: approvals, artifacts, diagnostics, memory, config, help."
+
+
+def _highlighted_task_ids(state: AppState) -> set[str]:
+    return {
+        event.task_id
+        for event in _selected_task_events(state)[-10:]
+        if _is_priority_event(event.event_type)
+    }
+
+
+def _highlighted_approval_ids(state: AppState) -> set[str]:
+    approval_ids: set[str] = set()
+    for event in _selected_task_events(state)[-10:]:
+        if event.event_type != "approval.requested":
+            continue
+        approval = event.payload.get("approval")
+        if isinstance(approval, dict):
+            approval_id = approval.get("approval_id")
+            if isinstance(approval_id, str) and approval_id:
+                approval_ids.add(approval_id)
+    return approval_ids
+
+
+def _highlighted_artifact_ids(state: AppState) -> set[str]:
+    artifact_ids: set[str] = set()
+    for event in _selected_task_events(state)[-10:]:
+        if event.event_type != "artifact.created":
+            continue
+        artifact = event.payload.get("artifact")
+        if isinstance(artifact, dict):
+            artifact_id = artifact.get("artifact_id")
+            if isinstance(artifact_id, str) and artifact_id:
+                artifact_ids.add(artifact_id)
+    return artifact_ids
+
+
+def _is_priority_event(event_type: str) -> bool:
+    return event_type in {
+        "approval.requested",
+        "artifact.created",
+        "task.failed",
+        "task.completed",
+        "task.started",
+        "task.resumed",
+    }
+
+
+def _priority_event_label(event_type: str) -> str | None:
+    labels = {
+        "approval.requested": "APPROVAL",
+        "artifact.created": "ARTIFACT",
+        "task.failed": "FAILED",
+        "task.completed": "DONE",
+        "task.started": "STARTED",
+        "task.resumed": "RESUMED",
+    }
+    return labels.get(event_type)
 
 
 def _sorted_task_snapshots(state: AppState) -> list[dict[str, Any]]:

@@ -36,7 +36,11 @@ class UiMessage(TypedDict, total=False):
     artifact_preview_artifact_id: str
     artifact_preview_status: str
     artifact_preview_error: str | None
+    artifact_action_feedback: str | None
     approval_feedback: str | None
+    task_input_feedback: str | None
+    task_timeline_filter: str
+    task_timeline_search_query: str
     selected_memory_group_id: str | None
     selected_memory_entry_id: str | None
     memory_request_context_key: str | None
@@ -54,6 +58,7 @@ class UiMessage(TypedDict, total=False):
     diagnostics_request_status: str
     diagnostics_request_error: str | None
     selected_diagnostic_id: str | None
+    task_detail_show_logs: bool
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -94,7 +99,11 @@ class AppState:
     artifact_preview_status_by_artifact: dict[str, str] = field(default_factory=dict)
     artifact_preview_error_by_artifact: dict[str, str | None] = field(default_factory=dict)
     artifact_preview_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    artifact_action_feedback: str | None = None
     markdown_viewer_artifact_id: str | None = None
+    task_input_feedback: str | None = None
+    task_timeline_filter: str = "all"
+    task_timeline_search_query: str = ""
     memory_entries_by_context: dict[str, list[dict[str, Any]]] = field(default_factory=dict)
     selected_memory_group_id: str | None = None
     selected_memory_entry_id: str | None = None
@@ -118,6 +127,7 @@ class AppState:
     diagnostics_request_status: str = "idle"
     diagnostics_request_error: str | None = None
     selected_diagnostic_id: str | None = None
+    task_detail_show_logs: bool = False
 
 
 class AppStateStore:

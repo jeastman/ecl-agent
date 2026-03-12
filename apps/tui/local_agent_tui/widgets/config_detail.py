@@ -19,9 +19,16 @@ else:  # pragma: no cover
 
 
 class ConfigDetailWidget(Static):  # type: ignore[misc]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._last_signature: tuple[str, str, str, str] | None = None
+
     def update_detail(self, model: ConfigDetailViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        signature = (model.title, model.status, model.summary, model.body)
+        if self._last_signature == signature:
+            return
         self.border_title = model.title
         self.update(
             "\n".join(
@@ -34,3 +41,4 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
                 ]
             ).strip()
         )
+        self._last_signature = signature

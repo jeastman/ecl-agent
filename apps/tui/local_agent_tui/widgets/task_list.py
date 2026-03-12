@@ -33,6 +33,8 @@ class TaskListRow(ListItem):  # type: ignore[misc]
         text = f"{item.task_id}  {' | '.join(status_bits)}"
         if item.objective:
             text = f"{text}\n{item.objective}"
+        if item.is_highlighted:
+            text = f"[reverse]{text}[/reverse]"
         super().__init__(Label(text))
 
 
@@ -49,6 +51,7 @@ class TaskListWidget(ListView):  # type: ignore[misc]
         if selected_index is not None:
             self.index = selected_index
         self.border_title = "Tasks"
+        self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")
 
 

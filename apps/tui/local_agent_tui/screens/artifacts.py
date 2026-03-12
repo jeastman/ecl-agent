@@ -11,6 +11,7 @@ from ..store.selectors import (
 )
 from ..widgets.artifact_preview import ArtifactPreviewWidget
 from ..widgets.artifact_table import ArtifactTableRow, ArtifactTableWidget
+from ..widgets.status_bar import StatusBar
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -39,6 +40,7 @@ else:  # pragma: no cover
 class ArtifactsScreen(Screen):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
+            StatusBar(id="status-bar"),
             Container(
                 ArtifactTableWidget(id="artifacts-screen-table"),
                 ArtifactPreviewWidget(id="artifacts-screen-preview"),
@@ -51,6 +53,7 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.query_one(StatusBar).update_from_state(state)
         toolbar = artifact_browser_toolbar(state)
         self.query_one(ArtifactTableWidget).update_artifacts(
             artifact_browser_rows(state),
@@ -60,6 +63,8 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
         self.query_one(ArtifactPreviewWidget).update_preview(selected_artifact_preview(state))
         footer = "   ".join(footer_hints(state))
         footer = f"{footer}\nGrouping: {toolbar.group_by}   Artifacts: {toolbar.total_count}"
+        if state.artifact_action_feedback:
+            footer = f"{footer}\n{state.artifact_action_feedback}"
         self.query_one("#artifacts-screen-footer", Static).update(footer)
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:

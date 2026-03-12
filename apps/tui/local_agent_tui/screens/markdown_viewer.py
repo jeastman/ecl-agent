@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..store.app_state import AppState
 from ..store.selectors import selected_markdown_artifact
+from ..widgets.status_bar import StatusBar
 from ..widgets.markdown_viewer import MarkdownSearchState, MarkdownViewerWidget
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -46,6 +47,7 @@ class MarkdownViewerScreen(Screen):  # type: ignore[misc]
 
     def compose(self) -> ComposeResult:
         yield Container(
+            StatusBar(id="status-bar"),
             Horizontal(
                 Static("Search", id="markdown-viewer-search-label"),
                 Input(
@@ -95,6 +97,7 @@ class MarkdownViewerScreen(Screen):  # type: ignore[misc]
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.query_one(StatusBar).update_from_state(state)
         self.query_one(MarkdownViewerWidget).update_markdown(selected_markdown_artifact(state))
         self._update_footer()
 
