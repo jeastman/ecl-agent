@@ -11,17 +11,20 @@ _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import Binding
     from textual.containers import Container
     from textual.screen import Screen
     from textual.widgets import ListView, Static
 else:  # pragma: no cover
     try:
         from textual.app import ComposeResult
+        from textual.binding import Binding
         from textual.containers import Container
         from textual.screen import Screen
         from textual.widgets import ListView, Static
     except ModuleNotFoundError as exc:
         ComposeResult = cast(Any, object)
+        Binding = cast(Any, object)
         Container = cast(Any, object)
         Screen = cast(Any, object)
         ListView = cast(Any, object)
@@ -32,6 +35,8 @@ else:  # pragma: no cover
 
 
 class ConfigScreen(Screen):  # type: ignore[misc]
+    BINDINGS = [Binding("c", "refresh_config", "Refresh", show=False, priority=True)]
+
     def compose(self) -> ComposeResult:
         yield Container(
             Container(
@@ -63,3 +68,6 @@ class ConfigScreen(Screen):  # type: ignore[misc]
             return
         if isinstance(message.item, ConfigSectionRow):
             self.app.handle_config_section_selected(message.item.section_id)  # type: ignore[attr-defined]
+
+    def action_refresh_config(self) -> None:
+        self.app.action_open_config()  # type: ignore[attr-defined]

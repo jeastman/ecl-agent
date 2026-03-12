@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.selectors import TimelineGroupViewModel
+from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -46,10 +47,10 @@ def _render_event_line(
     summary: str,
     repeat_count: int,
 ) -> str:
-    marker = {
-        "error": "ERR",
-        "attention": "ATTN",
-        "success": "OK",
-    }.get(severity, "INFO")
+    marker, color = {
+        "error": ("ERR", DANGER),
+        "attention": ("ATTN", WARNING),
+        "success": ("OK", SUCCESS),
+    }.get(severity, ("INFO", ACCENT))
     suffix = f" x{repeat_count}" if repeat_count > 1 else ""
-    return f"{timestamp} [{marker}] {summary}{suffix}"
+    return f"[{color}]{timestamp} [{marker}][/] {summary}{suffix}"

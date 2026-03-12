@@ -6,6 +6,8 @@ import sys
 from typing import Any
 
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_TASK_CREATE,
+    METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_CONFIG_GET,
     JsonRpcRequest,
     METHOD_MEMORY_INSPECT,
@@ -28,6 +30,9 @@ from packages.protocol.local_agent_protocol.models import (
     TaskLogsStreamParams,
     TaskResumeParams,
     ApprovalDecisionPayload,
+    TaskCreateParams,
+    TaskCreateRequest,
+    TaskDiagnosticsListParams,
 )
 
 
@@ -75,6 +80,22 @@ class ProtocolClient:
     async def runtime_health(self) -> dict[str, Any]:
         return await self._request(METHOD_RUNTIME_HEALTH, {})
 
+    async def task_create(
+        self,
+        *,
+        objective: str,
+        workspace_roots: list[str],
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_CREATE,
+            TaskCreateParams(
+                task=TaskCreateRequest(
+                    objective=objective,
+                    workspace_roots=workspace_roots,
+                )
+            ).to_dict(),
+        )
+
     async def memory_inspect(
         self,
         *,
@@ -112,6 +133,14 @@ class ProtocolClient:
         return await self._request(
             METHOD_TASK_APPROVALS_LIST,
             TaskApprovalsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        )
+
+    async def task_diagnostics_list(
+        self, task_id: str, run_id: str | None = None
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_DIAGNOSTICS_LIST,
+            TaskDiagnosticsListParams(task_id=task_id, run_id=run_id).to_dict(),
         )
 
     async def task_approve(

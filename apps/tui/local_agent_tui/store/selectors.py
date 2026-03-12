@@ -240,6 +240,37 @@ class ConfigDetailViewModel:
     body: str
 
 
+@dataclass(frozen=True, slots=True)
+class CommandPaletteItemViewModel:
+    command_id: str
+    label: str
+    hint: str
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class CommandPaletteViewModel:
+    query: str
+    items: list[CommandPaletteItemViewModel]
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticsItemViewModel:
+    diagnostic_id: str
+    kind: str
+    created_at: str
+    message: str
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DiagnosticsDetailViewModel:
+    title: str
+    status: str
+    summary: str
+    body: str
+
+
 def connection_label(state: AppState) -> str:
     if state.last_error:
         return f"{state.connection_status} ({state.last_error})"
@@ -262,6 +293,10 @@ def approval_count(state: AppState) -> int:
 
 def artifact_count(state: AppState) -> int:
     return sum(len(artifacts) for artifacts in state.artifacts_by_task.values())
+
+
+def diagnostics_count(state: AppState) -> int:
+    return sum(len(diagnostics) for diagnostics in state.diagnostics_by_task.values())
 
 
 def recent_task_ids(state: AppState) -> list[str]:
@@ -397,9 +432,11 @@ def task_timeline(state: AppState) -> TimelineGroupViewModel:
             previous is not None
             and previous.event_type == current.event_type
             and previous.summary == current.summary
+            and previous.source_name == current.source_name
+            and _should_collapse_timeline_event(current.event_type)
         ):
             collapsed[-1] = TimelineEventViewModel(
-                timestamp=previous.timestamp,
+                timestamp=current.timestamp,
                 event_type=previous.event_type,
                 summary=previous.summary,
                 severity=previous.severity,
@@ -702,6 +739,133 @@ def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemVi
     ]
 
 
+def command_palette(state: AppState) -> CommandPaletteViewModel:
+    commands = [
+        ("create_task", "Create task", "New task from workspace", True),
+        (
+            "resume_task",
+            "Resume task",
+            "Continue paused selected task",
+            task_action_bar(state).resume_enabled,
+        ),
+        ("open_approvals", "Open approvals", "Review pending requests", True),
+        ("open_artifacts", "Inspect artifacts", "Browse runtime artifacts", True),
+        ("open_memory", "Inspect memory", "Open memory inspector", True),
+        ("open_config", "View runtime config", "Inspect effective runtime config", True),
+        (
+            "open_diagnostics",
+            "View diagnostics",
+            "Inspect persisted task diagnostics",
+            _selected_task_key(state) is not None,
+        ),
+    ]
+    query = state.command_palette_query.strip().lower()
+    items: list[CommandPaletteItemViewModel] = []
+    for command_id, label, hint, available in commands:
+        if not available:
+            continue
+        haystack = f"{label} {hint} {command_id.replace('_', ' ')}".lower()
+        if query and not _matches_command_query(query, haystack):
+            continue
+        items.append(
+            CommandPaletteItemViewModel(
+                command_id=command_id,
+                label=label,
+                hint=hint,
+                is_selected=state.command_palette_selected_id == command_id,
+            )
+        )
+    if items and not any(item.is_selected for item in items):
+        first = items[0]
+        items[0] = CommandPaletteItemViewModel(
+            command_id=first.command_id,
+            label=first.label,
+            hint=first.hint,
+            is_selected=True,
+        )
+    return CommandPaletteViewModel(query=state.command_palette_query, items=items)
+
+
+def diagnostics_items(state: AppState) -> list[DiagnosticsItemViewModel]:
+    task_key = _selected_task_key(state)
+    if task_key is None:
+        return []
+    items: list[DiagnosticsItemViewModel] = []
+    for diagnostic in state.diagnostics_by_task.get(task_key, []):
+        diagnostic_id = str(diagnostic.get("diagnostic_id", ""))
+        items.append(
+            DiagnosticsItemViewModel(
+                diagnostic_id=diagnostic_id,
+                kind=str(diagnostic.get("kind", "diagnostic")),
+                created_at=str(diagnostic.get("created_at", "")),
+                message=str(diagnostic.get("message", "")),
+                is_selected=state.selected_diagnostic_id == diagnostic_id,
+            )
+        )
+    items.sort(key=lambda item: item.created_at, reverse=True)
+    if items and not any(item.is_selected for item in items):
+        first = items[0]
+        items[0] = DiagnosticsItemViewModel(
+            diagnostic_id=first.diagnostic_id,
+            kind=first.kind,
+            created_at=first.created_at,
+            message=first.message,
+            is_selected=True,
+        )
+    return items
+
+
+def selected_diagnostics_detail(state: AppState) -> DiagnosticsDetailViewModel:
+    if _selected_task_key(state) is None:
+        return DiagnosticsDetailViewModel(
+            title="Diagnostics",
+            status="empty",
+            summary="No task selected.",
+            body="Select a task to inspect persisted diagnostics.",
+        )
+    if state.diagnostics_request_status == "loading":
+        return DiagnosticsDetailViewModel(
+            title="Diagnostics",
+            status="loading",
+            summary="Loading diagnostics...",
+            body="Waiting for runtime diagnostics.",
+        )
+    if state.diagnostics_request_status == "error":
+        return DiagnosticsDetailViewModel(
+            title="Diagnostics",
+            status="error",
+            summary="Diagnostics request failed.",
+            body=state.diagnostics_request_error or "Unknown diagnostics error.",
+        )
+    selected = _selected_diagnostic(state)
+    if selected is None:
+        return DiagnosticsDetailViewModel(
+            title="Diagnostics",
+            status="empty",
+            summary="No diagnostics available.",
+            body="The selected task has no persisted diagnostics.",
+        )
+    details = selected.get("details")
+    body = (
+        json.dumps(details, indent=2, sort_keys=True)
+        if isinstance(details, dict)
+        else "No details."
+    )
+    return DiagnosticsDetailViewModel(
+        title=str(selected.get("kind", "diagnostic")),
+        status="loaded",
+        summary=str(selected.get("message", "")),
+        body="\n".join(
+            [
+                f"Diagnostic: {selected.get('diagnostic_id', '')}",
+                f"Created: {selected.get('created_at', '')}",
+                "",
+                body,
+            ]
+        ).strip(),
+    )
+
+
 def memory_scope_groups(state: AppState) -> list[MemoryGroupItemViewModel]:
     grouped_entries = _memory_grouped_entries(state)
     selected_group_id = _selected_memory_group_id(state, grouped_entries)
@@ -922,9 +1086,26 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
 
 
 def footer_hints(state: AppState) -> list[str]:
+    if state.command_palette_visible:
+        return [
+            "[Up/Down] Move",
+            "[Enter] Run",
+            "[Esc] Close",
+            "[Q] Quit",
+        ]
+    if state.active_screen == "diagnostics":
+        return [
+            "[G] Command Palette",
+            "[N] New Task",
+            "[Up/Down] Move",
+            "[Esc] Back",
+            "[Q] Quit",
+        ]
     if state.active_screen == "config":
         return [
             "[Up/Down] Move",
+            "[G] Command Palette",
+            "[N] New Task",
             "[C] Refresh",
             "[Esc] Back",
             "[Q] Quit",
@@ -934,18 +1115,30 @@ def footer_hints(state: AppState) -> list[str]:
             "[A] Approve",
             "[R] Reject",
             "[Enter] Open Task",
+            "[G] Command Palette",
+            "[N] New Task",
             "[C] Config",
             "[Esc] Dashboard",
             "[Q] Quit",
         ]
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
-        hints = ["[Esc] Dashboard", "[A] Approvals", "[C] Config", "[O] Artifact", "[Q] Quit"]
+        hints = [
+            "[G] Command Palette",
+            "[N] New Task",
+            "[Esc] Dashboard",
+            "[A] Approvals",
+            "[C] Config",
+            "[O] Artifact",
+            "[Q] Quit",
+        ]
         if action_bar.resume_enabled:
             hints.insert(0, "[R] Resume")
         return hints
     if state.active_screen == "artifacts":
         return [
+            "[G] Command Palette",
+            "[N] New Task",
             "[Up/Down] Move",
             "[Enter] Open",
             "[C] Config",
@@ -958,6 +1151,8 @@ def footer_hints(state: AppState) -> list[str]:
         return ["[Esc] Back", "[Q] Quit"]
     if state.active_screen == "memory":
         return [
+            "[G] Command Palette",
+            "[N] New Task",
             "[Up/Down] Move",
             "[Tab] Focus",
             "[C] Config",
@@ -967,6 +1162,8 @@ def footer_hints(state: AppState) -> list[str]:
         ]
     if state.focused_pane == "approvals":
         return [
+            "[G] Command Palette",
+            "[N] New Task",
             "[Up/Down] Move Approval",
             "[Tab] Focus",
             "[Enter] Open Approvals",
@@ -974,6 +1171,8 @@ def footer_hints(state: AppState) -> list[str]:
             "[Q] Quit",
         ]
     return [
+        "[G] Command Palette",
+        "[N] New Task",
         "[Up/Down] Move",
         "[Tab] Focus",
         "[Enter] Open Task",
@@ -1008,6 +1207,17 @@ def _selected_approval(state: AppState) -> dict[str, Any] | None:
     return None
 
 
+def _selected_diagnostic(state: AppState) -> dict[str, Any] | None:
+    task_key = _selected_task_key(state)
+    diagnostic_id = state.selected_diagnostic_id
+    if task_key is None or diagnostic_id is None:
+        return None
+    for diagnostic in state.diagnostics_by_task.get(task_key, []):
+        if str(diagnostic.get("diagnostic_id", "")) == diagnostic_id:
+            return diagnostic
+    return None
+
+
 def _selected_task_key(state: AppState) -> tuple[str, str] | None:
     task = _selected_task(state)
     if task is None or state.selected_task_id is None:
@@ -1034,6 +1244,22 @@ def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
         repeat_count=1,
         source_name=event.source_name,
     )
+
+
+def _should_collapse_timeline_event(event_type: str) -> bool:
+    return event_type in {"tool.called", "plan.updated", "subagent.started", "subagent.completed"}
+
+
+def _matches_command_query(query: str, haystack: str) -> bool:
+    if query in haystack:
+        return True
+    index = 0
+    for char in query:
+        index = haystack.find(char, index)
+        if index == -1:
+            return False
+        index += 1
+    return True
 
 
 def _subagent_id(event: TaskEventRecord) -> str | None:

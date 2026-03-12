@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.selectors import TaskListItemViewModel
+from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -24,11 +25,11 @@ class TaskListRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: TaskListItemViewModel) -> None:
         self.task_id = item.task_id
         self.run_id = item.run_id
-        status_bits = [item.status.upper()]
+        status_bits = [_status_markup(item.status)]
         if item.awaiting_approval:
-            status_bits.append("APPROVAL")
+            status_bits.append(f"[{WARNING}]APPROVAL[/]")
         if item.artifact_count:
-            status_bits.append(f"ART {item.artifact_count}")
+            status_bits.append(f"[{ACCENT}]ART {item.artifact_count}[/]")
         text = f"{item.task_id}  {' | '.join(status_bits)}"
         if item.objective:
             text = f"{text}\n{item.objective}"
@@ -49,3 +50,16 @@ class TaskListWidget(ListView):  # type: ignore[misc]
             self.index = selected_index
         self.border_title = "Tasks"
         self.set_class(focused, "-focused-pane")
+
+
+def _status_markup(status: str) -> str:
+    color = {
+        "executing": ACCENT,
+        "planning": ACCENT,
+        "completed": SUCCESS,
+        "failed": DANGER,
+        "paused": WARNING,
+        "awaiting_approval": WARNING,
+        "accepted": ACCENT,
+    }.get(status.lower(), ACCENT)
+    return f"[{color}]{status.upper()}[/]"

@@ -7,9 +7,11 @@ from ..store.selectors import (
     approval_count,
     artifact_count,
     connection_label,
+    diagnostics_count,
     runtime_health_label,
     task_count,
 )
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_PRIMARY, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -31,17 +33,25 @@ class StatusBar(Static):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         runtime_name = str(state.runtime_health.get("runtime_name", "runtime"))
         transport = str(state.runtime_health.get("transport", "unknown"))
+        status_color = {
+            "connected": SUCCESS,
+            "connecting": WARNING,
+            "error": DANGER,
+        }.get(state.connection_status, TEXT_PRIMARY)
         self.update(
             " | ".join(
                 [
-                    "LOCAL AGENT HARNESS",
+                    f"[bold {ACCENT}]LOCAL AGENT HARNESS[/]",
                     f"Name: {runtime_name}",
-                    f"Runtime: {connection_label(state)}",
+                    f"Runtime: [{status_color}]{connection_label(state)}[/]",
                     f"Health: {runtime_health_label(state)}",
                     f"Transport: {transport}",
                     f"Tasks: {task_count(state)}",
-                    f"Approvals: {approval_count(state)}",
-                    f"Artifacts: {artifact_count(state)}",
+                    f"Approvals: [{WARNING}]{approval_count(state)}[/]",
+                    f"Artifacts: [{ACCENT}]{artifact_count(state)}[/]",
+                    f"Diagnostics: [{DANGER}]{diagnostics_count(state)}[/]",
+                    "[G] Palette",
+                    "[N] New Task",
                 ]
             )
         )

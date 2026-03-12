@@ -7,6 +7,7 @@ from ..store.selectors import (
     SubagentActivityItemViewModel,
     TaskDetailHeaderViewModel,
 )
+from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -30,8 +31,9 @@ class TaskHeaderWidget(Static):  # type: ignore[misc]
         if model is None:
             self.update("No task selected.")
             return
+        status = _status_markup(model.status)
         lines = [
-            f"{model.task_id}  {model.status.upper()}  {model.run_id}",
+            f"{model.task_id}  {status}  {model.run_id}",
             f"Created: {model.created_at}",
             f"Updated: {model.updated_at}",
             f"Phase: {model.current_phase}",
@@ -51,7 +53,10 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
             self.update("No subagent activity yet.")
             return
         self.update(
-            "\n".join(f"{item.subagent_id}  {item.status}\n{item.latest_summary}" for item in items)
+            "\n".join(
+                f"{item.subagent_id}  {_status_markup(item.status)}\n{item.latest_summary}"
+                for item in items
+            )
         )
 
 
@@ -65,6 +70,29 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
             return
         self.update(
             "\n".join(
-                f"{item.timestamp} [{item.severity.upper()}] {item.summary}" for item in model.items
+                f"{item.timestamp} {_severity_markup(item.severity)} {item.summary}"
+                for item in model.items
             )
         )
+
+
+def _status_markup(status: str) -> str:
+    color = {
+        "executing": ACCENT,
+        "planning": ACCENT,
+        "running": ACCENT,
+        "completed": SUCCESS,
+        "failed": DANGER,
+        "paused": WARNING,
+        "awaiting_approval": WARNING,
+    }.get(status.lower(), ACCENT)
+    return f"[{color}]{status.upper()}[/]"
+
+
+def _severity_markup(severity: str) -> str:
+    color = {
+        "error": DANGER,
+        "attention": WARNING,
+        "success": SUCCESS,
+    }.get(severity.lower(), ACCENT)
+    return f"[{color}][{severity.upper()}][/]"

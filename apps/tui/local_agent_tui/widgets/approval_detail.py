@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.selectors import ApprovalDetailViewModel
+from ..theme.colors import DANGER, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -33,7 +34,7 @@ class ApprovalDetailWidget(Static):  # type: ignore[misc]
             f"Type: {detail.request_type}",
             f"Policy: {detail.policy_context}",
             f"Action: {detail.requested_action}",
-            f"Status: {detail.status}",
+            f"Status: [{DANGER if detail.status in {'pending', 'waiting'} else WARNING}]{detail.status}[/]",
             f"Created: {detail.created_at}",
             "",
             "Description",

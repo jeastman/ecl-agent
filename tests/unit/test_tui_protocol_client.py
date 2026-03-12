@@ -46,6 +46,30 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["result"]["tasks"], [])
         request_mock.assert_awaited_once_with("task.list", {"limit": 5})
 
+    async def test_task_create_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"task_id": "task_1"}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_create(
+                objective="Inspect repo",
+                workspace_roots=["/workspace"],
+            )
+        self.assertEqual(payload["result"]["task_id"], "task_1")
+        request_mock.assert_awaited_once_with(
+            "task.create",
+            {
+                "task": {
+                    "objective": "Inspect repo",
+                    "workspace_roots": ["/workspace"],
+                    "scope": [],
+                    "success_criteria": [],
+                    "constraints": [],
+                    "allowed_capabilities": [],
+                    "metadata": {},
+                }
+            },
+        )
+
     async def test_memory_inspect_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         request_mock = AsyncMock(return_value={"result": {"entries": []}})
@@ -73,6 +97,17 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(payload["result"]["task"]["task_id"], "task_1")
         request_mock.assert_awaited_once_with(
             "task.resume", {"task_id": "task_1", "run_id": "run_1"}
+        )
+
+    async def test_task_diagnostics_list_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"diagnostics": []}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_diagnostics_list("task_1", "run_1")
+        self.assertEqual(payload["result"]["diagnostics"], [])
+        request_mock.assert_awaited_once_with(
+            "task.diagnostics.list",
+            {"task_id": "task_1", "run_id": "run_1"},
         )
 
     async def test_task_artifact_get_uses_protocol_method(self) -> None:

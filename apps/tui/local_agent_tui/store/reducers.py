@@ -7,7 +7,7 @@ from packages.task_model.local_agent_task_model.models import FailureInfo
 
 from .app_state import AppState, RuntimeMessage, TaskEventRecord
 
-_MAX_EVENT_BUFFER = 250
+EVENT_BUFFER_LIMIT = 250
 
 
 def reduce_app_state(state: AppState, message: RuntimeMessage) -> AppState:
@@ -75,6 +75,25 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
             message.get("config_request_error", state.config_request_error)
         ),
         config_origin_screen=str(message.get("config_origin_screen", state.config_origin_screen)),
+        command_palette_visible=bool(
+            message.get("command_palette_visible", state.command_palette_visible)
+        ),
+        command_palette_query=str(
+            message.get("command_palette_query", state.command_palette_query)
+        ),
+        command_palette_selected_id=message.get(
+            "command_palette_selected_id", state.command_palette_selected_id
+        ),
+        diagnostics_origin_screen=str(
+            message.get("diagnostics_origin_screen", state.diagnostics_origin_screen)
+        ),
+        diagnostics_request_status=str(
+            message.get("diagnostics_request_status", state.diagnostics_request_status)
+        ),
+        diagnostics_request_error=_normalize_error(
+            message.get("diagnostics_request_error", state.diagnostics_request_error)
+        ),
+        selected_diagnostic_id=message.get("selected_diagnostic_id", state.selected_diagnostic_id),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -227,6 +246,27 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             ],
             config_request_status="loaded",
             config_request_error=None,
+        )
+
+    if name == "task.diagnostics.list":
+        result = dict(payload.get("result", {}))
+        diagnostics = list(result.get("diagnostics", []))
+        task_id, run_id = _task_context_from_payload(payload, diagnostics)
+        diagnostics_by_task = dict(state.diagnostics_by_task)
+        if task_id is not None and run_id is not None:
+            diagnostics_by_task[(task_id, run_id)] = _dedupe_entries(
+                diagnostics, key_name="diagnostic_id"
+            )
+        selected_diagnostic_id = _resolved_selected_diagnostic_id(
+            diagnostics_by_task,
+            current_id=state.selected_diagnostic_id,
+        )
+        return replace(
+            state,
+            diagnostics_by_task=diagnostics_by_task,
+            diagnostics_request_status="loaded",
+            diagnostics_request_error=None,
+            selected_diagnostic_id=selected_diagnostic_id,
         )
 
     if name == "task.logs.stream":
@@ -413,8 +453,8 @@ def _append_event_record(state: AppState, record: TaskEventRecord) -> AppState:
     events = list(run_event_buffers.get(task_key, []))
     if not _event_record_exists(events, record):
         events.append(record)
-        if len(events) > _MAX_EVENT_BUFFER:
-            events = events[-_MAX_EVENT_BUFFER:]
+        if len(events) > EVENT_BUFFER_LIMIT:
+            events = events[-EVENT_BUFFER_LIMIT:]
     run_event_buffers[task_key] = events
     return replace(state, run_event_buffers=run_event_buffers)
 
@@ -516,6 +556,23 @@ def _extract_task_run_from_entries(entries: list[dict[str, Any]]) -> tuple[str |
     return task_id, run_id
 
 
+def _task_context_from_payload(
+    payload: dict[str, Any],
+    entries: list[dict[str, Any]],
+) -> tuple[str | None, str | None]:
+    task_id, run_id = _extract_task_run_from_entries(entries)
+    if task_id is not None and run_id is not None:
+        return task_id, run_id
+    context = payload.get("context")
+    if not isinstance(context, dict):
+        return None, None
+    task_id = context.get("task_id")
+    run_id = context.get("run_id")
+    if not isinstance(task_id, str) or not isinstance(run_id, str):
+        return None, None
+    return task_id, run_id
+
+
 def _dedupe_entries(entries: list[dict[str, Any]], *, key_name: str) -> list[dict[str, Any]]:
     deduped: dict[str, dict[str, Any]] = {}
     ordered_without_key: list[dict[str, Any]] = []
@@ -562,6 +619,23 @@ def _resolved_selected_approval_id(
     if current_id in pending_ids:
         return current_id
     return pending_ids[0] if pending_ids else None
+
+
+def _resolved_selected_diagnostic_id(
+    diagnostics_by_task: dict[tuple[str, str], list[dict[str, Any]]],
+    *,
+    current_id: str | None,
+) -> str | None:
+    entries: list[dict[str, Any]] = []
+    for diagnostics in diagnostics_by_task.values():
+        entries.extend(diagnostics)
+    entries.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    diagnostic_ids = [
+        str(item["diagnostic_id"]) for item in entries if isinstance(item.get("diagnostic_id"), str)
+    ]
+    if current_id in diagnostic_ids:
+        return current_id
+    return diagnostic_ids[0] if diagnostic_ids else None
 
 
 def _selected_task_key(state: AppState) -> tuple[str, str] | None:

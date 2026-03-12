@@ -47,6 +47,13 @@ class UiMessage(TypedDict, total=False):
     config_request_status: str
     config_request_error: str | None
     config_origin_screen: str
+    command_palette_visible: bool
+    command_palette_query: str
+    command_palette_selected_id: str | None
+    diagnostics_origin_screen: str
+    diagnostics_request_status: str
+    diagnostics_request_error: str | None
+    selected_diagnostic_id: str | None
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -103,6 +110,14 @@ class AppState:
     config_request_status: str = "idle"
     config_request_error: str | None = None
     config_origin_screen: str = "dashboard"
+    command_palette_visible: bool = False
+    command_palette_query: str = ""
+    command_palette_selected_id: str | None = None
+    diagnostics_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
+    diagnostics_origin_screen: str = "dashboard"
+    diagnostics_request_status: str = "idle"
+    diagnostics_request_error: str | None = None
+    selected_diagnostic_id: str | None = None
 
 
 class AppStateStore:

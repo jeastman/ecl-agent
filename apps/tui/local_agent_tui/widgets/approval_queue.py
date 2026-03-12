@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.selectors import ApprovalQueueItemViewModel
+from ..theme.colors import DANGER, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -36,13 +37,14 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
         rendered_items: list[str] = []
         for item in items:
             marker = ">" if item.is_selected else " "
+            urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
             if inbox_mode:
                 rendered_items.append(
                     "\n".join(
                         [
                             (
                                 f"{marker} {item.task_id}  {item.request_type}  "
-                                f"{item.policy_context}  {item.status.upper()}"
+                                f"{item.policy_context}  [{urgency}]{item.status.upper()}[/]"
                             ),
                             f"  Action: {item.requested_action}",
                             f"  {item.description}",
@@ -53,7 +55,7 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
                 rendered_items.append(
                     "\n".join(
                         [
-                            f"{marker} {item.task_id}  {item.status.upper()}",
+                            f"{marker} {item.task_id}  [{urgency}]{item.status.upper()}[/]",
                             item.description,
                             item.scope_summary,
                         ]

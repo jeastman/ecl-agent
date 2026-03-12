@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import threading
+import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -11,15 +13,20 @@ from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
 from .screens.artifacts import ArtifactsScreen
+from .screens.command_palette import CommandPaletteScreen
 from .screens.config import ConfigScreen
+from .screens.create_task import CreateTaskScreen
 from .screens.dashboard import DashboardScreen
+from .screens.diagnostics import DiagnosticsScreen
 from .screens.markdown_viewer import MarkdownViewerScreen
 from .screens.memory import MemoryScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
     artifact_browser_rows,
+    command_palette,
     config_section_items,
+    diagnostics_items,
     memory_entry_items,
     memory_scope_groups,
     pending_approvals,
@@ -75,11 +82,13 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("k", "move_up", "Up", show=False, priority=True),
         Binding("down", "move_down", "Down", show=False, priority=True),
         Binding("j", "move_down", "Down", show=False, priority=True),
+        Binding("g", "open_command_palette", "Palette", show=False),
+        Binding("n", "create_task", "New Task", show=False),
         Binding("tab", "focus_next_pane", "Next Pane", show=False, priority=True),
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
-        Binding("c", "open_config", "Config", show=False, priority=True),
+        Binding("c", "open_config", "Config", show=False),
         Binding("m", "open_memory", "Memory", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
         Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
@@ -97,6 +106,9 @@ class AgentTUI(App):  # type: ignore[misc]
         self._store = AppStateStore()
         self._status_bar = StatusBar(id="status-bar")
         self._stream_key: tuple[str, str] | None = None
+        self._render_interval = 1 / 30
+        self._render_scheduled = False
+        self._last_render_at = 0.0
         self.install_screen(DashboardScreen(), name="dashboard")
         self.install_screen(TaskDetailScreen(), name="task_detail")
         self.install_screen(ApprovalsScreen(), name="approvals")
@@ -104,6 +116,9 @@ class AgentTUI(App):  # type: ignore[misc]
         self.install_screen(MarkdownViewerScreen(), name="markdown_viewer")
         self.install_screen(MemoryScreen(), name="memory")
         self.install_screen(ConfigScreen(), name="config")
+        self.install_screen(DiagnosticsScreen(), name="diagnostics")
+        self.install_screen(CommandPaletteScreen(), name="command_palette")
+        self.install_screen(CreateTaskScreen(), name="create_task")
 
     def compose(self) -> ComposeResult:
         yield self._status_bar
@@ -136,6 +151,7 @@ class AgentTUI(App):  # type: ignore[misc]
                 task = await self._client.task_get(self._bootstrap.task_id, self._bootstrap.run_id)
                 self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task})
             await self._prefetch_dashboard_data()
+            await self._prime_config_snapshot()
             self._render_state()
             await self._sync_selected_task()
         except ProtocolClientError as exc:
@@ -227,11 +243,27 @@ class AgentTUI(App):  # type: ignore[misc]
     def _dispatch_and_render(self, message: dict[str, Any]) -> None:
         self._store.dispatch(message)  # type: ignore[arg-type]
         if getattr(self, "_thread_id", None) == threading.get_ident():
+            self._request_render()
+            return
+        self.call_from_thread(self._request_render)
+
+    def _request_render(self) -> None:
+        now = time.monotonic()
+        if now - self._last_render_at >= self._render_interval and not self._render_scheduled:
             self._render_state()
             return
-        self.call_from_thread(self._render_state)
+        if self._render_scheduled:
+            return
+        self._render_scheduled = True
+        delay = max(0.0, self._render_interval - (now - self._last_render_at))
+        self.set_timer(delay, self._flush_scheduled_render)
+
+    def _flush_scheduled_render(self) -> None:
+        self._render_scheduled = False
+        self._render_state()
 
     def _render_state(self) -> None:
+        self._last_render_at = time.monotonic()
         state = self._store.snapshot()
         self._status_bar.update_from_state(state)
         screen = self.screen
@@ -259,6 +291,9 @@ class AgentTUI(App):  # type: ignore[misc]
         self._render_state()
 
     def action_move_up(self) -> None:
+        if self._store.snapshot().command_palette_visible:
+            self.move_command_palette_selection(-1)
+            return
         if self._store.snapshot().active_screen == "markdown_viewer":
             action = getattr(self.screen, "action_scroll_up", None)
             if callable(action):
@@ -267,6 +302,9 @@ class AgentTUI(App):  # type: ignore[misc]
         self._move_focused_selection(-1)
 
     def action_move_down(self) -> None:
+        if self._store.snapshot().command_palette_visible:
+            self.move_command_palette_selection(1)
+            return
         if self._store.snapshot().active_screen == "markdown_viewer":
             action = getattr(self.screen, "action_scroll_down", None)
             if callable(action):
@@ -284,6 +322,9 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if state.active_screen == "artifacts":
             self._move_artifact_browser_selection(delta)
+            return
+        if state.active_screen == "diagnostics":
+            self._move_diagnostic_selection(delta)
             return
         if state.active_screen == "approvals":
             self._move_approval_selection(delta)
@@ -325,6 +366,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_open_task(self) -> None:
         state = self._store.snapshot()
+        if state.command_palette_visible:
+            self.action_run_palette_command()
+            return
         if state.active_screen == "artifacts":
             self._open_selected_artifact()
             return
@@ -332,6 +376,8 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if state.active_screen == "approvals":
             self.action_open_selected_approval_task()
+            return
+        if state.active_screen == "diagnostics":
             return
         if state.active_screen == "dashboard" and state.focused_pane == "approvals":
             self._set_active_screen("approvals")
@@ -356,7 +402,36 @@ class AgentTUI(App):  # type: ignore[misc]
         self._open_memory_inspector()
 
     def action_open_config(self) -> None:
+        if self.screen.__class__.__name__ == "ConfigScreen":
+            self.run_worker(self._refresh_config(), group="config-refresh", exclusive=True)
+            return
         self._open_config_viewer()
+
+    def action_open_command_palette(self) -> None:
+        state = self._store.snapshot()
+        if self.screen.__class__.__name__ == "CreateTaskScreen":
+            return
+        if state.active_screen == "markdown_viewer":
+            return
+        if state.command_palette_visible:
+            self.close_command_palette()
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "command_palette_visible": True,
+                "command_palette_query": "",
+                "command_palette_selected_id": None,
+            }
+        )
+        self.push_screen("command_palette")
+        self._render_state()
+
+    def action_create_task(self) -> None:
+        self.open_create_task()
+
+    def action_run_palette_command(self) -> None:
+        self.run_selected_palette_command()
 
     def action_resume_task(self) -> None:
         state = self._store.snapshot()
@@ -424,6 +499,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_back_dashboard(self) -> None:
         state = self._store.snapshot()
+        if state.command_palette_visible:
+            self.close_command_palette()
+            return
         if state.active_screen == "artifacts":
             self._set_active_screen(state.artifact_browser_origin_screen or "dashboard")
             return
@@ -435,6 +513,9 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if state.active_screen == "config":
             self._set_active_screen(state.config_origin_screen or "dashboard")
+            return
+        if state.active_screen == "diagnostics":
+            self._set_active_screen(state.diagnostics_origin_screen or "dashboard")
             return
         self._set_active_screen("dashboard")
 
@@ -481,6 +562,72 @@ class AgentTUI(App):  # type: ignore[misc]
             next_index = max(0, min(len(approval_ids) - 1, current_index + delta))
             next_id = approval_ids[next_index]
         self._store.dispatch({"kind": "ui", "selected_approval_id": next_id})
+        self._render_state()
+
+    def _move_diagnostic_selection(self, delta: int) -> None:
+        items = diagnostics_items(self._store.snapshot())
+        if not items:
+            return
+        current_index = next((index for index, item in enumerate(items) if item.is_selected), -1)
+        next_item = items[(current_index + delta) % len(items)]
+        self._store.dispatch({"kind": "ui", "selected_diagnostic_id": next_item.diagnostic_id})
+        self._render_state()
+
+    def move_command_palette_selection(self, delta: int) -> None:
+        items = command_palette(self._store.snapshot()).items
+        if not items:
+            return
+        current_index = next((index for index, item in enumerate(items) if item.is_selected), -1)
+        next_item = items[(current_index + delta) % len(items)]
+        self._store.dispatch({"kind": "ui", "command_palette_selected_id": next_item.command_id})
+        self._render_state()
+
+    def handle_command_palette_query_changed(self, query: str) -> None:
+        selected_id = None
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "command_palette_query": query,
+                "command_palette_selected_id": selected_id,
+            }
+        )
+        items = command_palette(self._store.snapshot()).items
+        if items:
+            self._store.dispatch({"kind": "ui", "command_palette_selected_id": items[0].command_id})
+        self._render_state()
+
+    def run_selected_palette_command(self) -> None:
+        state = self._store.snapshot()
+        items = command_palette(state).items
+        selected = next((item for item in items if item.is_selected), None)
+        if selected is None:
+            return
+        self.close_command_palette()
+        commands = {
+            "create_task": self.open_create_task,
+            "resume_task": self.action_resume_task,
+            "open_approvals": self.action_open_approvals,
+            "open_artifacts": self.action_open_artifacts,
+            "open_memory": self.action_open_memory,
+            "open_config": self.action_open_config,
+            "open_diagnostics": self.action_open_diagnostics,
+        }
+        handler = commands.get(selected.command_id)
+        if handler is not None:
+            handler()
+
+    def close_command_palette(self) -> None:
+        if not self._store.snapshot().command_palette_visible:
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "command_palette_visible": False,
+                "command_palette_query": "",
+                "command_palette_selected_id": None,
+            }
+        )
+        self.pop_screen()
         self._render_state()
 
     def action_approve_selected_request(self) -> None:
@@ -735,9 +882,8 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _open_config_viewer(self) -> None:
         state = self._store.snapshot()
-        origin_screen = (
-            state.config_origin_screen if state.active_screen == "config" else state.active_screen
-        )
+        is_config_screen = self.screen.__class__.__name__ == "ConfigScreen"
+        origin_screen = state.config_origin_screen if is_config_screen else state.active_screen
         self._store.dispatch(
             {
                 "kind": "ui",
@@ -746,10 +892,68 @@ class AgentTUI(App):  # type: ignore[misc]
                 "config_origin_screen": origin_screen,
             }
         )
-        if state.active_screen != "config":
+        if not is_config_screen:
             self.switch_screen("config")
         self._render_state()
-        self.run_worker(self._refresh_config(), group="config-refresh", exclusive=True)
+        if is_config_screen or not state.config_snapshot:
+            self.run_worker(self._refresh_config(), group="config-refresh", exclusive=True)
+
+    def action_open_diagnostics(self) -> None:
+        state = self._store.snapshot()
+        selected_task_id = state.selected_task_id
+        task = state.task_snapshots.get(selected_task_id) if selected_task_id else None
+        if task is None or selected_task_id is None:
+            return
+        origin_screen = (
+            state.diagnostics_origin_screen
+            if state.active_screen == "diagnostics"
+            else state.active_screen
+        )
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "active_screen": "diagnostics",
+                "diagnostics_origin_screen": origin_screen,
+            }
+        )
+        if state.active_screen != "diagnostics":
+            self.switch_screen("diagnostics")
+        self._render_state()
+        self.run_worker(
+            self._refresh_diagnostics(
+                task_id=selected_task_id,
+                run_id=str(task.get("run_id", "")) or None,
+            ),
+            group="diagnostics-refresh",
+            exclusive=True,
+        )
+
+    def open_create_task(self) -> None:
+        if self.screen.__class__.__name__ == "CreateTaskScreen":
+            return
+        if self._store.snapshot().command_palette_visible:
+            self.close_command_palette()
+        self.push_screen("create_task")
+
+    def close_create_task(self) -> None:
+        if self.screen.__class__.__name__ != "CreateTaskScreen":
+            return
+        self.pop_screen()
+        self._render_state()
+
+    def submit_create_task(self, objective: str) -> None:
+        text = objective.strip()
+        if not text:
+            if self.screen.__class__.__name__ == "CreateTaskScreen":
+                self.screen.set_status("Objective is required.")  # type: ignore[attr-defined]
+            return
+        if self.screen.__class__.__name__ == "CreateTaskScreen":
+            self.screen.set_status("Creating task...")  # type: ignore[attr-defined]
+        self.run_worker(
+            self._create_task(objective=text),
+            group="create-task",
+            exclusive=True,
+        )
 
     async def _refresh_config(self) -> None:
         self._store.dispatch(
@@ -773,6 +977,78 @@ class AgentTUI(App):  # type: ignore[misc]
                 }
             )
         self._render_state()
+
+    async def _refresh_diagnostics(self, *, task_id: str, run_id: str | None) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "diagnostics_request_status": "loading",
+                "diagnostics_request_error": None,
+            }
+        )
+        self._render_state()
+        try:
+            payload = await self._client.task_diagnostics_list(task_id, run_id)
+            payload = {
+                **payload,
+                "context": {
+                    "task_id": task_id,
+                    "run_id": run_id,
+                },
+            }
+            self._store.dispatch(
+                {"kind": "rpc", "name": "task.diagnostics.list", "payload": payload}
+            )
+            self._ensure_diagnostic_selection()
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "diagnostics_request_status": "error",
+                    "diagnostics_request_error": str(exc),
+                }
+            )
+        self._render_state()
+
+    async def _create_task(self, *, objective: str) -> None:
+        try:
+            state = self._store.snapshot()
+            workspace_root = _default_workspace_root(state.config_snapshot) or os.getcwd()
+            payload = await self._client.task_create(
+                objective=objective,
+                workspace_roots=[workspace_root],
+            )
+            self._store.dispatch({"kind": "rpc", "name": "task.create", "payload": payload})
+            task_id = str(payload.get("result", {}).get("task_id", ""))
+            run_id = str(payload.get("result", {}).get("run_id", "")) or None
+            task_payload = await self._client.task_get(task_id, run_id)
+            self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_payload})
+            task_list = await self._client.task_list(limit=10)
+            self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "selected_task_id": task_id,
+                    "active_screen": "task_detail",
+                }
+            )
+            await self._load_task_related(task_id=task_id, run_id=run_id)
+            self.switch_screen("task_detail")
+            if self.screen.__class__.__name__ == "CreateTaskScreen":
+                self.pop_screen()
+            self._render_state()
+            self._start_selected_task_stream(task_id=task_id, run_id=run_id)
+        except ProtocolClientError as exc:
+            if self.screen.__class__.__name__ == "CreateTaskScreen":
+                self.screen.set_status(f"Create task failed: {exc}")  # type: ignore[attr-defined]
+
+    async def _prime_config_snapshot(self) -> None:
+        try:
+            payload = await self._client.get_config()
+            self._store.dispatch({"kind": "rpc", "name": "config.get", "payload": payload})
+            self._ensure_config_selection()
+        except ProtocolClientError:
+            return
 
     async def _refresh_memory_inspection(
         self,
@@ -835,3 +1111,20 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         selected = next((section for section in sections if section.is_selected), sections[0])
         self._store.dispatch({"kind": "ui", "selected_config_section_id": selected.section_id})
+
+    def _ensure_diagnostic_selection(self) -> None:
+        items = diagnostics_items(self._store.snapshot())
+        if not items:
+            return
+        selected = next((item for item in items if item.is_selected), items[0])
+        self._store.dispatch({"kind": "ui", "selected_diagnostic_id": selected.diagnostic_id})
+
+
+def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:
+    cli = config_snapshot.get("cli")
+    if not isinstance(cli, dict):
+        return None
+    workspace_root = cli.get("default_workspace_root")
+    if not isinstance(workspace_root, str) or not workspace_root.strip():
+        return None
+    return workspace_root

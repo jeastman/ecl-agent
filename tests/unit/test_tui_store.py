@@ -7,8 +7,12 @@ from apps.tui.local_agent_tui.store.selectors import (
     approval_count,
     artifact_browser_rows,
     config_section_items,
+    diagnostics_count,
+    diagnostics_items,
+    footer_hints,
     selected_artifact_preview,
     selected_config_detail,
+    selected_diagnostics_detail,
     selected_markdown_artifact,
     artifact_count,
     memory_entry_items,
@@ -26,6 +30,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     task_plan_view,
     task_subagent_activity,
     task_timeline,
+    command_palette,
 )
 
 
@@ -215,6 +220,77 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(detail.request_type, "boundary")
         self.assertEqual(detail.policy_context, "sandbox")
         self.assertEqual(detail.requested_action, "/workspace/docs/spec.md")
+
+    def test_command_palette_filters_available_commands(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "ui",
+                "command_palette_query": "diag",
+            }
+        )
+        items = command_palette(store.snapshot()).items
+        self.assertEqual([item.command_id for item in items], ["open_diagnostics"])
+
+    def test_diagnostics_rpc_and_detail_projection(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.diagnostics.list",
+                "payload": {
+                    "context": {"task_id": "task_1", "run_id": "run_1"},
+                    "result": {
+                        "diagnostics": [
+                            {
+                                "diagnostic_id": "diag_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "kind": "runtime_error",
+                                "message": "Task failed to continue.",
+                                "created_at": "2026-03-12T00:00:05Z",
+                                "details": {"code": "boom"},
+                            }
+                        ]
+                    },
+                },
+            }
+        )
+        state = store.snapshot()
+        self.assertEqual(diagnostics_count(state), 1)
+        self.assertEqual(diagnostics_items(state)[0].diagnostic_id, "diag_1")
+        self.assertIn("boom", selected_diagnostics_detail(state).body)
+
+    def test_timeline_collapse_keeps_latest_timestamp_for_repeated_tool_calls(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        for second in ("01", "02"):
+            store.dispatch(
+                {
+                    "kind": "event",
+                    "payload": {
+                        "event": {
+                            "event_type": "tool.called",
+                            "timestamp": f"2026-03-12T00:00:{second}Z",
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "payload": {"tool": "filesystem.read", "path": "/tmp/report.md"},
+                            "source": {"name": "worker"},
+                        }
+                    },
+                }
+            )
+        collapsed = task_timeline(store.snapshot()).events
+        self.assertEqual(collapsed[-1].repeat_count, 2)
+        self.assertEqual(collapsed[-1].timestamp, "2026-03-12T00:00:02Z")
+
+    def test_footer_hints_include_palette_and_new_task(self) -> None:
+        store = AppStateStore()
+        hints = footer_hints(store.snapshot())
+        self.assertIn("[G] Command Palette", hints)
+        self.assertIn("[N] New Task", hints)
 
     def test_approval_refresh_falls_back_to_next_pending_selection(self) -> None:
         store = AppStateStore()

@@ -1,14 +1,27 @@
+$la-background: #101418;
+$la-surface: #182028;
+$la-panel: #202a34;
+$la-status: #27313b;
+$la-border: #3f4b57;
+$la-focus: #67b7dc;
+$la-accent: #8ccf7e;
+$la-success: #5cb85c;
+$la-warning: #f0c36a;
+$la-danger: #d96c6c;
+$la-text: #f1f6f8;
+$la-muted: #b2bcc4;
+
 Screen {
     layout: vertical;
-    background: rgb(16, 20, 24);
-    color: rgb(241, 246, 248);
+    background: $la-background;
+    color: $la-text;
 }
 
 #status-bar {
     dock: top;
     height: 1;
-    background: rgb(34, 39, 46);
-    color: rgb(241, 246, 248);
+    background: $la-status;
+    color: $la-text;
     padding: 0 1;
 }
 
@@ -18,7 +31,8 @@ Screen {
 #artifacts-screen-root,
 #markdown-viewer-root,
 #memory-screen-root,
-#config-screen-root {
+#config-screen-root,
+#diagnostics-screen-root {
     layout: vertical;
     height: 1fr;
     padding: 1;
@@ -54,16 +68,21 @@ Screen {
     height: 1fr;
 }
 
+#diagnostics-screen-main {
+    layout: horizontal;
+    height: 1fr;
+}
+
 #dashboard-task-list {
     width: 30%;
     min-width: 28;
-    border: solid rgb(55, 65, 76);
+    border: solid $la-border;
     margin-right: 1;
 }
 
 #task-summary {
     width: 1fr;
-    border: solid rgb(55, 65, 76);
+    border: solid $la-border;
     padding: 1;
     margin-right: 1;
 }
@@ -93,8 +112,13 @@ Screen {
 #task-detail-subagents,
 #task-detail-artifacts,
 #task-detail-notifications,
-#task-detail-input {
-    border: solid rgb(55, 65, 76);
+#task-detail-input,
+#diagnostics-screen-list,
+#diagnostics-screen-detail,
+#command-palette-panel,
+#create-task-panel {
+    border: solid $la-border;
+    background: $la-surface;
     padding: 1;
 }
 
@@ -178,6 +202,15 @@ Screen {
     height: 1fr;
 }
 
+#diagnostics-screen-list {
+    width: 42%;
+    margin-right: 1;
+}
+
+#diagnostics-screen-detail {
+    width: 58%;
+}
+
 #markdown-viewer-body {
     height: 1fr;
 }
@@ -190,7 +223,7 @@ Screen {
 
 #markdown-viewer-search-label {
     width: 8;
-    color: rgb(190, 201, 209);
+    color: $la-muted;
 }
 
 #markdown-viewer-search-input {
@@ -203,18 +236,43 @@ Screen {
 #artifacts-screen-footer,
 #markdown-viewer-footer,
 #memory-screen-footer,
-#config-screen-footer {
+#config-screen-footer,
+#diagnostics-screen-footer {
     height: 3;
-    border: solid rgb(55, 65, 76);
+    border: solid $la-border;
+    background: $la-surface;
     padding: 1 2;
     margin-top: 1;
-    color: rgb(190, 201, 209);
+    color: $la-muted;
 }
 
 .-focused-pane {
-    border: heavy rgb(116, 185, 255);
+    border: heavy $la-focus;
 }
 
 .-hidden {
     display: none;
+}
+
+CommandPaletteScreen,
+CreateTaskScreen {
+    align: center middle;
+    background: rgba(10, 14, 18, 0.82);
+}
+
+#command-palette-panel,
+#create-task-panel {
+    width: 72;
+    max-width: 90%;
+    height: auto;
+}
+
+#command-palette-input,
+#create-task-input {
+    margin-bottom: 1;
+}
+
+#command-palette-results,
+#create-task-status {
+    color: $la-muted;
 }
