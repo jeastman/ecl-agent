@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from threading import RLock
 from typing import Any
 from typing import Protocol
 
@@ -19,25 +20,29 @@ class InMemoryRunStateStore:
     def __init__(self) -> None:
         self._states: dict[tuple[str, str], RunState] = {}
         self._runs_by_task: dict[str, list[str]] = {}
+        self._lock = RLock()
 
     def create(self, state: RunState) -> None:
-        key = (state.task_id, state.run_id)
-        self._states[key] = state
-        self._runs_by_task.setdefault(state.task_id, []).append(state.run_id)
+        with self._lock:
+            key = (state.task_id, state.run_id)
+            self._states[key] = state
+            self._runs_by_task.setdefault(state.task_id, []).append(state.run_id)
 
     def get(self, task_id: str, run_id: str | None = None) -> RunState:
-        resolved_run_id = run_id or self._latest_run_id(task_id)
-        key = (task_id, resolved_run_id)
-        try:
-            return self._states[key]
-        except KeyError as exc:
-            raise KeyError(f"unknown task/run: {task_id}/{resolved_run_id}") from exc
+        with self._lock:
+            resolved_run_id = run_id or self._latest_run_id(task_id)
+            key = (task_id, resolved_run_id)
+            try:
+                return self._states[key]
+            except KeyError as exc:
+                raise KeyError(f"unknown task/run: {task_id}/{resolved_run_id}") from exc
 
     def update(self, task_id: str, run_id: str, **changes: Any) -> RunState:
-        state = self.get(task_id, run_id)
-        updated = replace(state, **changes)
-        self._states[(task_id, run_id)] = updated
-        return updated
+        with self._lock:
+            state = self.get(task_id, run_id)
+            updated = replace(state, **changes)
+            self._states[(task_id, run_id)] = updated
+            return updated
 
     def _latest_run_id(self, task_id: str) -> str:
         runs = self._runs_by_task.get(task_id)

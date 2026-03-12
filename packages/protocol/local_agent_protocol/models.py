@@ -810,6 +810,7 @@ class RuntimeHealthResult:
     transport: str
     correlation_id: str | None
     identity: dict[str, Any]
+    capabilities: dict[str, bool] | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return _strip_none(asdict(self))

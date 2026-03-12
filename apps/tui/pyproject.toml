@@ -1,0 +1,9 @@
+[project]
+name = "local-agent-tui"
+version = "0.1.0"
+description = "Textual TUI client for the Local Agent Harness"
+requires-python = ">=3.11"
+dependencies = [
+    "rich>=14.3.3",
+    "textual>=0.89.1",
+]

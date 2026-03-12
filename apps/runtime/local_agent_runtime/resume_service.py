@@ -11,9 +11,16 @@ class ResumeService:
     task_runner: TaskRunner
     identity_bundle_text: str
 
-    def resume(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
+    def resume(
+        self,
+        task_id: str,
+        run_id: str | None = None,
+        *,
+        background: bool = False,
+    ) -> TaskSnapshot:
         return self.task_runner.resume_run(
             task_id,
             run_id,
             identity_bundle_text=self.identity_bundle_text,
+            background=background,
         )

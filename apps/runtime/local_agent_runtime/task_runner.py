@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import RLock, Thread
 from typing import Any, Callable, Protocol
 from uuid import uuid4
 
@@ -171,6 +172,8 @@ class TaskRunner:
             if durable_services is not None
             else None
         )
+        self._run_threads: dict[tuple[str, str], Thread] = {}
+        self._thread_lock = RLock()
 
     @property
     def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
@@ -194,6 +197,7 @@ class TaskRunner:
         metadata: dict[str, Any] | None = None,
         constraints: list[str] | None = None,
         success_criteria: list[str] | None = None,
+        background: bool = False,
     ) -> tuple[str, str, str]:
         task_id = new_task_id()
         run_id = new_run_id()
@@ -242,12 +246,13 @@ class TaskRunner:
                 "success_criteria": list(success_criteria or []),
             },
         )
-        self._execute_run(
+        self._launch_run(
             task_id=task_id,
             run_id=run_id,
             correlation_id=correlation_id,
             identity_bundle_text=identity_bundle_text,
             resume=False,
+            background=background,
         )
 
         return task_id, run_id, accepted_at
@@ -258,6 +263,7 @@ class TaskRunner:
         run_id: str | None = None,
         *,
         identity_bundle_text: str,
+        background: bool = False,
     ) -> TaskSnapshot:
         state = self._run_state_store.get(task_id, run_id)
         if state.status == TaskStatus.COMPLETED:
@@ -268,12 +274,13 @@ class TaskRunner:
             raise ValueError("task.resume cannot resume while approval is still pending")
         if not state.is_resumable:
             raise ValueError("task.resume requires a paused or resumable run")
-        self._execute_run(
+        self._launch_run(
             task_id=state.task_id,
             run_id=state.run_id,
             correlation_id=None,
             identity_bundle_text=identity_bundle_text,
             resume=True,
+            background=background,
         )
         return self.get_task_snapshot(state.task_id, state.run_id)
 
@@ -485,6 +492,72 @@ class TaskRunner:
     @property
     def checkpoint_adapter(self) -> LangGraphCheckpointAdapter | None:
         return self._checkpoint_adapter
+
+    def wait_for_all_runs(self) -> None:
+        while True:
+            with self._thread_lock:
+                threads = list(self._run_threads.values())
+            if not threads:
+                return
+            for thread in threads:
+                thread.join()
+
+    def _launch_run(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        identity_bundle_text: str,
+        resume: bool,
+        background: bool,
+    ) -> None:
+        if not background:
+            self._execute_run(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                identity_bundle_text=identity_bundle_text,
+                resume=resume,
+            )
+            return
+
+        key = (task_id, run_id)
+        worker = Thread(
+            target=self._execute_run_in_thread,
+            name=f"task-runner-{task_id}-{run_id}",
+            kwargs={
+                "task_id": task_id,
+                "run_id": run_id,
+                "correlation_id": correlation_id,
+                "identity_bundle_text": identity_bundle_text,
+                "resume": resume,
+            },
+        )
+        with self._thread_lock:
+            self._run_threads[key] = worker
+        worker.start()
+
+    def _execute_run_in_thread(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        identity_bundle_text: str,
+        resume: bool,
+    ) -> None:
+        try:
+            self._execute_run(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                identity_bundle_text=identity_bundle_text,
+                resume=resume,
+            )
+        finally:
+            with self._thread_lock:
+                self._run_threads.pop((task_id, run_id), None)
 
     def _execute_run(
         self,

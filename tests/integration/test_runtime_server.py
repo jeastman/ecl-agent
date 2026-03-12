@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 from typing import Any
@@ -92,6 +94,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
         self.assertEqual(payload["result"]["status"], "ok")
         self.assertEqual(payload["correlation_id"], request.correlation_id)
         self.assertEqual(payload["result"]["protocol_version"], PROTOCOL_VERSION)
+        self.assertTrue(payload["result"]["capabilities"]["event_stream"])
 
     def test_runtime_task_flow_round_trip_with_registered_artifact(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -175,6 +178,63 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 artifact_event.event.payload["artifact"]["persistence_class"],
                 "run",
             )
+
+    def test_runtime_server_streams_live_events_after_ack(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_delayed_stream_harness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            reader = _BlockingLineReader()
+            writer = _CollectingWriter()
+            serve_thread = threading.Thread(target=server.serve, args=(reader, writer))
+            serve_thread.start()
+            try:
+                create_request = JsonRpcRequest(
+                    method=METHOD_TASK_CREATE,
+                    params=TaskCreateParams(
+                        task=TaskCreateRequest(
+                            objective="Inspect the repo",
+                            workspace_roots=[str(workspace_root)],
+                        )
+                    ).to_dict(),
+                    id="1",
+                    correlation_id=new_correlation_id(),
+                )
+                reader.push(json.dumps(create_request.to_dict()))
+                create_payload = writer.wait_for_json(lambda payload: payload.get("id") == "1")
+                task_id = create_payload["result"]["task_id"]
+                run_id = create_payload["result"]["run_id"]
+
+                logs_request = JsonRpcRequest(
+                    method=METHOD_TASK_LOGS_STREAM,
+                    params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                    id="2",
+                    correlation_id=new_correlation_id(),
+                )
+                reader.push(json.dumps(logs_request.to_dict()))
+                stream_open = writer.wait_for_json(lambda payload: payload.get("id") == "2")
+                self.assertTrue(stream_open["result"]["stream_open"])
+                started = writer.wait_for_json(
+                    lambda payload: payload.get("type") == "runtime.event"
+                    and payload["event"]["event_type"] == "task.started"
+                )
+                completed = writer.wait_for_json(
+                    lambda payload: payload.get("type") == "runtime.event"
+                    and payload["event"]["event_type"] == "task.completed"
+                )
+                self.assertEqual(started["event"]["task_id"], task_id)
+                self.assertEqual(completed["event"]["run_id"], run_id)
+            finally:
+                reader.close()
+                serve_thread.join(timeout=5)
+                self.assertFalse(serve_thread.is_alive())
 
     def test_runtime_uses_configured_workspace_root_instead_of_process_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -1508,6 +1568,92 @@ class _FailingCompiledAgent:
                         lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
                     )
         raise AssertionError("expected delegated failure to abort execution")
+
+
+class _DelayedStreamHarness:
+    def execute(self, request, on_event=None) -> Any:
+        time.sleep(0.2)
+        if on_event is not None:
+            on_event(
+                "plan.updated",
+                {
+                    "summary": "Planning underway.",
+                    "current_step": "wait for stream",
+                    "milestones": ["stream events"],
+                },
+            )
+        time.sleep(0.2)
+        return AgentExecutionResult(
+            success=True,
+            summary="Delayed execution complete.",
+            output_artifacts=[],
+        )
+
+
+def _delayed_stream_harness() -> _DelayedStreamHarness:
+    return _DelayedStreamHarness()
+
+
+class _BlockingLineReader:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._lines: list[str] = []
+        self._closed = False
+
+    def push(self, line: str) -> None:
+        with self._condition:
+            self._lines.append(line + "\n")
+            self._condition.notify_all()
+
+    def close(self) -> None:
+        with self._condition:
+            self._closed = True
+            self._condition.notify_all()
+
+    def __iter__(self) -> "_BlockingLineReader":
+        return self
+
+    def __next__(self) -> str:
+        with self._condition:
+            while not self._lines and not self._closed:
+                self._condition.wait(timeout=0.1)
+            if self._lines:
+                return self._lines.pop(0)
+            raise StopIteration
+
+
+class _CollectingWriter:
+    def __init__(self) -> None:
+        self._condition = threading.Condition()
+        self._lines: list[str] = []
+
+    def write(self, data: str) -> int:
+        with self._condition:
+            self._lines.append(data)
+            self._condition.notify_all()
+        return len(data)
+
+    def flush(self) -> None:
+        return None
+
+    def wait_for_json(self, predicate, timeout: float = 5.0) -> dict[str, Any]:
+        deadline = time.time() + timeout
+        index = 0
+        with self._condition:
+            while time.time() < deadline:
+                while index < len(self._lines):
+                    line = self._lines[index].strip()
+                    index += 1
+                    if not line:
+                        continue
+                    payload = json.loads(line)
+                    if predicate(payload):
+                        return payload
+                remaining = deadline - time.time()
+                if remaining <= 0:
+                    break
+                self._condition.wait(timeout=min(0.1, remaining))
+        raise AssertionError("timed out waiting for matching JSON payload")
 
 
 def _create_minimal_agent_tree(root: Path) -> Path:

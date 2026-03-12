@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import mimetypes
 from pathlib import Path
+from threading import RLock
 from typing import Protocol
 
 from packages.protocol.local_agent_protocol.models import ArtifactReference, utc_now_timestamp
@@ -36,6 +37,7 @@ class InMemoryArtifactStore:
     def __init__(self, path_mapper: SandboxPathMapper) -> None:
         self._path_mapper = path_mapper
         self._artifacts: dict[tuple[str, str], list[ArtifactReference]] = {}
+        self._lock = RLock()
 
     def register_artifact(
         self,
@@ -72,13 +74,14 @@ class InMemoryArtifactStore:
             summary=summary,
             hash=_sha256(host_path),
         )
-        records = self._artifacts.setdefault((task_id, run_id), [])
-        for index, existing in enumerate(records):
-            if existing.logical_path == logical_path:
-                records[index] = artifact
-                break
-        else:
-            records.append(artifact)
+        with self._lock:
+            records = self._artifacts.setdefault((task_id, run_id), [])
+            for index, existing in enumerate(records):
+                if existing.logical_path == logical_path:
+                    records[index] = artifact
+                    break
+            else:
+                records.append(artifact)
         return artifact
 
     def list_artifacts(
@@ -88,13 +91,14 @@ class InMemoryArtifactStore:
         persistence_class: str | None = None,
         content_type_prefix: str | None = None,
     ) -> list[ArtifactReference]:
-        records: list[ArtifactReference] = []
-        for (candidate_task_id, candidate_run_id), artifacts in self._artifacts.items():
-            if candidate_task_id != task_id:
-                continue
-            if run_id is not None and candidate_run_id != run_id:
-                continue
-            records.extend(artifacts)
+        with self._lock:
+            records: list[ArtifactReference] = []
+            for (candidate_task_id, candidate_run_id), artifacts in self._artifacts.items():
+                if candidate_task_id != task_id:
+                    continue
+                if run_id is not None and candidate_run_id != run_id:
+                    continue
+                records.extend(artifacts)
         return [
             artifact
             for artifact in records
@@ -105,9 +109,10 @@ class InMemoryArtifactStore:
         ]
 
     def _existing_artifact_id(self, task_id: str, run_id: str, logical_path: str) -> str | None:
-        for artifact in self._artifacts.get((task_id, run_id), []):
-            if artifact.logical_path == logical_path:
-                return artifact.artifact_id
+        with self._lock:
+            for artifact in self._artifacts.get((task_id, run_id), []):
+                if artifact.logical_path == logical_path:
+                    return artifact.artifact_id
         return None
 
 

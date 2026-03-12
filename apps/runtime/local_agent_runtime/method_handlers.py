@@ -76,9 +76,21 @@ class MethodHandlers:
                 "version": self.identity.version,
                 "sha256": self.identity.sha256,
             },
+            capabilities={
+                "task_create": True,
+                "event_stream": True,
+                "artifacts": True,
+                "approvals": True,
+            },
         )
 
-    def task_create(self, params: dict, correlation_id: str | None) -> TaskCreateResult:
+    def task_create(
+        self,
+        params: dict,
+        correlation_id: str | None,
+        *,
+        background: bool = False,
+    ) -> TaskCreateResult:
         request = TaskCreateParams.from_dict(params).task
         task_id, run_id, accepted_at = self.task_runner.start_run(
             correlation_id=correlation_id,
@@ -89,6 +101,7 @@ class MethodHandlers:
             metadata=request.metadata,
             constraints=request.constraints,
             success_criteria=request.success_criteria,
+            background=background,
         )
         return TaskCreateResult(
             task_id=task_id,
@@ -119,9 +132,15 @@ class MethodHandlers:
             task=snapshot,
         )
 
-    def task_resume(self, params: dict) -> TaskResumeResult:
+    def task_resume(self, params: dict, *, background: bool = False) -> TaskResumeResult:
         request = TaskResumeParams.from_dict(params)
-        return TaskResumeResult(task=self.resume_service.resume(request.task_id, request.run_id))
+        return TaskResumeResult(
+            task=self.resume_service.resume(
+                request.task_id,
+                request.run_id,
+                background=background,
+            )
+        )
 
     def task_approvals_list(self, params: dict) -> TaskApprovalsListResult:
         request = TaskApprovalsListParams.from_dict(params)

@@ -20,6 +20,7 @@ from packages.protocol.local_agent_protocol.models import (
     MemoryInspectParams,
     MemoryInspectResult,
     PROTOCOL_VERSION,
+    RuntimeHealthResult,
     RuntimeEvent,
     TaskArtifactsListParams,
     TaskApproveParams,
@@ -216,6 +217,20 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["protocol_version"], PROTOCOL_VERSION)
         self.assertEqual(payload["event"]["source"]["component"], "tests")
         self.assertEqual(EventType.SUBAGENT_COMPLETED.value, "subagent.completed")
+
+    def test_runtime_health_result_serialization_omits_missing_capabilities(self) -> None:
+        result = RuntimeHealthResult(
+            protocol_version=PROTOCOL_VERSION,
+            runtime_name="demo",
+            runtime_version="0.1.0",
+            status="ok",
+            transport="stdio-jsonrpc",
+            correlation_id="corr_1",
+            identity={"path": "IDENTITY.md"},
+            capabilities={"task_create": True, "event_stream": True},
+        )
+        payload = result.to_dict()
+        self.assertTrue(payload["capabilities"]["task_create"])
 
 
 if __name__ == "__main__":

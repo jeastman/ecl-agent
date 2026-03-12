@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import unittest
+from queue import Empty
 
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from packages.protocol.local_agent_protocol.models import (
@@ -46,6 +47,39 @@ class EventBusTests(unittest.TestCase):
         replay = bus.list_events("task_1", "run_1", from_event_id="evt_1")
         self.assertEqual([event.event.event_id for event in events], ["evt_1", "evt_2"])
         self.assertEqual([event.event.event_id for event in replay], ["evt_2"])
+
+    def test_subscribe_receives_future_events_only(self) -> None:
+        bus = InMemoryEventBus()
+        first = RuntimeEvent(
+            event=EventEnvelope(
+                event_id="evt_1",
+                event_type=EventType.TASK_CREATED.value,
+                timestamp=utc_now_timestamp(),
+                correlation_id="corr_1",
+                task_id="task_1",
+                run_id="run_1",
+                source=EventSource(kind=EventSourceKind.RUNTIME, component="tests"),
+                payload={"status": "created"},
+            )
+        )
+        second = RuntimeEvent(
+            event=EventEnvelope(
+                event_id="evt_2",
+                event_type=EventType.TASK_STARTED.value,
+                timestamp=utc_now_timestamp(),
+                correlation_id="corr_1",
+                task_id="task_1",
+                run_id="run_1",
+                source=EventSource(kind=EventSourceKind.RUNTIME, component="tests"),
+                payload={"status": "executing"},
+            )
+        )
+        bus.publish(first)
+        with bus.subscribe("task_1", "run_1") as subscription:
+            bus.publish(second)
+            self.assertEqual(subscription.get(timeout=0.1).event.event_id, "evt_2")
+            with self.assertRaises(Empty):
+                subscription.get_nowait()
 
 
 if __name__ == "__main__":

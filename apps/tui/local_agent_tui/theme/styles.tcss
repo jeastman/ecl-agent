@@ -1,0 +1,24 @@
+Screen {
+    layout: vertical;
+    background: rgb(16, 20, 24);
+    color: rgb(241, 246, 248);
+}
+
+#status-bar {
+    dock: top;
+    height: 1;
+    background: rgb(34, 39, 46);
+    color: rgb(241, 246, 248);
+    padding: 0 1;
+}
+
+#shell {
+    padding: 1 2;
+}
+
+#shell-body {
+    background: rgb(24, 29, 36);
+    color: rgb(241, 246, 248);
+    padding: 1 2;
+    border: solid rgb(34, 39, 46);
+}

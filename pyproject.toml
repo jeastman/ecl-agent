@@ -8,6 +8,7 @@ dependencies = [
     "langchain-openrouter>=0.1.0",
     "langchain[ollama,openai,openrouter]>=1.2.11",
     "rich>=14.3.3",
+    "textual>=0.89.1",
 ]
 
 [tool.uv]
