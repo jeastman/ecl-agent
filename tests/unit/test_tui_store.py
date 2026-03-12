@@ -598,12 +598,52 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(preview.status, "loaded")
         self.assertIn("# Report", preview.body)
         self.assertEqual(markdown.display_name, "report.md")  # type: ignore[union-attr]
+        self.assertEqual(markdown.status, "loaded")  # type: ignore[union-attr]
         store.dispatch({"kind": "ui", "artifact_group_by": "run"})
         run_rows = artifact_browser_rows(store.snapshot())
         self.assertEqual(run_rows[0].group_label, "task_1/run_2")
         store.dispatch({"kind": "ui", "artifact_group_by": "type"})
         type_rows = artifact_browser_rows(store.snapshot())
         self.assertEqual(type_rows[0].group_label, "text/markdown")
+
+    def test_selected_markdown_artifact_projects_loading_and_failure_states(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.artifacts.list",
+                "payload": {
+                    "result": {
+                        "artifacts": [
+                            {
+                                "artifact_id": "artifact_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "display_name": "report.md",
+                                "logical_path": "/artifacts/report.md",
+                                "content_type": "text/markdown",
+                                "created_at": "2026-03-12T00:00:05Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "markdown_viewer_artifact_id": "artifact_1"})
+        loading_model = selected_markdown_artifact(store.snapshot())
+        self.assertEqual(loading_model.status, "loading")  # type: ignore[union-attr]
+        self.assertIn("Loading markdown artifact", loading_model.body)  # type: ignore[union-attr]
+        store.dispatch(
+            {
+                "kind": "ui",
+                "artifact_preview_artifact_id": "artifact_1",
+                "artifact_preview_status": "failed",
+                "artifact_preview_error": "preview exploded",
+            }
+        )
+        failed_model = selected_markdown_artifact(store.snapshot())
+        self.assertEqual(failed_model.status, "failed")  # type: ignore[union-attr]
+        self.assertEqual(failed_model.error, "preview exploded")  # type: ignore[union-attr]
 
     @staticmethod
     def _dispatch_created(store: AppStateStore) -> None:

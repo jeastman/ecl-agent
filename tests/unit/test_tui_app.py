@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import threading
 import unittest
 from typing import Any
@@ -7,6 +8,94 @@ from unittest.mock import patch
 
 from apps.tui.local_agent_tui.app import _TEXTUAL_IMPORT_ERROR
 from apps.tui.local_agent_tui.store.selectors import pending_approvals
+
+
+_MARKDOWN_ARTIFACT_TEXT = """# Report
+
+Summary body
+
+## Findings
+
+> Important context for the operator.
+
+- first finding
+- second finding
+
+| Column | Value |
+| --- | --- |
+| status | ok |
+| owner | agent |
+
+---
+
+```python
+def render_report() -> str:
+    return "Summary body"
+```
+
+## Appendix
+
+Line 1
+Line 2
+Line 3
+Line 4
+Line 5
+Line 6
+Line 7
+Line 8
+Line 9
+Line 10
+Line 11
+Line 12
+Line 13
+Line 14
+Line 15
+Line 16
+Line 17
+Line 18
+Line 19
+Line 20
+Line 21
+Line 22
+Line 23
+Line 24
+Line 25
+Line 26
+Line 27
+Line 28
+Line 29
+Line 30
+Line 31
+Line 32
+Line 33
+Line 34
+Line 35
+Line 36
+Line 37
+Line 38
+Line 39
+Line 40
+Line 41
+Line 42
+Line 43
+Line 44
+Line 45
+Line 46
+Line 47
+Line 48
+Line 49
+Line 50
+Line 51
+Line 52
+Line 53
+Line 54
+Line 55
+Line 56
+Line 57
+Line 58
+Line 59
+Line 60
+"""
 
 
 class _FakeProtocolClient:
@@ -132,7 +221,7 @@ class _FakeProtocolClient:
                 },
                 "preview": {
                     "kind": "markdown",
-                    "text": "# Report\n\nSummary body",
+                    "text": _MARKDOWN_ARTIFACT_TEXT,
                     "encoding": "utf-8",
                 },
                 "external_open_supported": False,
@@ -186,6 +275,14 @@ class _FakeProtocolClient:
 
 async def _fake_consume_task_stream(*args, **kwargs) -> None:
     return None
+
+
+class _DelayedArtifactProtocolClient(_FakeProtocolClient):
+    async def task_artifact_get(
+        self, task_id: str, artifact_id: str, run_id: str | None = None
+    ) -> dict:
+        await asyncio.sleep(0.2)
+        return await super().task_artifact_get(task_id, artifact_id, run_id)
 
 
 @unittest.skipIf(_TEXTUAL_IMPORT_ERROR is not None, "textual is not installed")
@@ -362,7 +459,6 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_opening_approvals_refreshes_known_task_approval_lists(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from textual.widgets import Static
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -428,6 +524,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_opens_artifact_browser_and_markdown_viewer(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.markdown_viewer import MarkdownViewerWidget
         from textual.widgets import Static
 
         with (
@@ -473,6 +570,13 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._store.snapshot().markdown_viewer_artifact_id,  # type: ignore[attr-defined]
                     "artifact_1",
                 )
+                viewer = app.screen.query_one(MarkdownViewerWidget)
+                self.assertIn("Summary body", viewer._source_text)
+                await pilot.press("q")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ArtifactsScreen")
+                await pilot.press("enter")
+                await pilot.pause()
                 await pilot.press("escape")
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "ArtifactsScreen")
@@ -483,6 +587,80 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._client.artifact_get_calls[-1],  # type: ignore[attr-defined]
                     ("task_1", "run_1", "artifact_1"),
                 )
+
+    async def test_markdown_viewer_scroll_and_search_bindings(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.screens.markdown_viewer import MarkdownViewerScreen
+        from apps.tui.local_agent_tui.widgets.markdown_viewer import MarkdownViewerWidget
+        from textual.widgets import Input, Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("o")
+                await pilot.pause()
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                viewer = app.screen.query_one(MarkdownViewerWidget)
+                self.assertEqual(viewer.scroll_y, 0.0)
+                self.assertIsInstance(app.screen, MarkdownViewerScreen)
+                await pilot.press("shift+g")
+                await pilot.pause()
+                self.assertGreater(viewer.scroll_y, 0.0)
+                await pilot.press("g")
+                await pilot.pause()
+                self.assertEqual(viewer.scroll_y, 0.0)
+                await pilot.press("/")
+                await pilot.pause()
+                search_input = app.screen.query_one(Input)
+                search_input.value = "summary body"
+                await search_input.action_submit()
+                await pilot.pause()
+                footer = app.screen.query_one("#markdown-viewer-footer", Static)
+                self.assertIn("summary body", str(footer.visual).lower())
+                self.assertEqual(viewer.search_state.query, "summary body")
+                self.assertGreaterEqual(viewer.search_state.total_matches, 1)
+
+    async def test_markdown_viewer_shows_loading_until_preview_arrives(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.store.selectors import selected_markdown_artifact
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _DelayedArtifactProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                app.action_open_artifacts()  # type: ignore[attr-defined]
+                await pilot.pause()
+                app.action_open_task()  # type: ignore[attr-defined]
+                await pilot.pause()
+                loading_model = selected_markdown_artifact(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertIsNotNone(loading_model)
+                self.assertEqual(loading_model.status, "loading")  # type: ignore[union-attr]
+                await asyncio.sleep(0.25)
+                await pilot.pause()
+                loaded_model = selected_markdown_artifact(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertEqual(loaded_model.status, "loaded")  # type: ignore[union-attr]
+                self.assertIn("Summary body", loaded_model.body)  # type: ignore[union-attr]
 
     async def test_task_detail_resume_action_updates_store(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

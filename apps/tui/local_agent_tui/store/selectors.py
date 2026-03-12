@@ -187,6 +187,8 @@ class MarkdownArtifactViewModel:
     artifact_id: str
     display_name: str
     body: str
+    status: str
+    error: str | None
 
 
 def connection_label(state: AppState) -> str:
@@ -591,14 +593,46 @@ def selected_markdown_artifact(state: AppState) -> MarkdownArtifactViewModel | N
     if artifact_id is None:
         return None
     artifact = _artifact_by_id(state, artifact_id)
+    display_name = _artifact_display_name(artifact) if artifact is not None else artifact_id
     preview_payload = state.artifact_preview_cache.get(artifact_id)
-    if artifact is None or preview_payload is None:
-        return None
+    preview_status = state.artifact_preview_status_by_artifact.get(artifact_id, "idle")
+    preview_error = state.artifact_preview_error_by_artifact.get(artifact_id)
+    if artifact is None:
+        return MarkdownArtifactViewModel(
+            artifact_id=artifact_id,
+            display_name=display_name,
+            body="Markdown artifact unavailable.",
+            status="empty",
+            error=None,
+        )
+    if preview_status == "failed":
+        return MarkdownArtifactViewModel(
+            artifact_id=artifact_id,
+            display_name=display_name,
+            body=preview_error or "Markdown preview unavailable.",
+            status="failed",
+            error=preview_error,
+        )
+    if preview_payload is None:
+        return MarkdownArtifactViewModel(
+            artifact_id=artifact_id,
+            display_name=display_name,
+            body="Loading markdown artifact...",
+            status="loading",
+            error=None,
+        )
     preview = dict(preview_payload.get("preview", {}))
+    body = str(preview.get("text") or "")
+    if preview.get("truncated"):
+        body = f"{body}\n\n[truncated]".strip()
+    if not body:
+        body = "Markdown artifact is empty."
     return MarkdownArtifactViewModel(
         artifact_id=artifact_id,
-        display_name=_artifact_display_name(artifact),
-        body=str(preview.get("text") or "Markdown preview unavailable."),
+        display_name=display_name,
+        body=body,
+        status="loaded",
+        error=None,
     )
 
 

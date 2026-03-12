@@ -130,6 +130,21 @@ Screen {
     height: 1fr;
 }
 
+#markdown-viewer-search-row {
+    height: auto;
+    margin-bottom: 1;
+    align: left middle;
+}
+
+#markdown-viewer-search-label {
+    width: 8;
+    color: rgb(190, 201, 209);
+}
+
+#markdown-viewer-search-input {
+    width: 1fr;
+}
+
 #dashboard-footer,
 #task-detail-footer,
 #approvals-screen-footer,
@@ -144,4 +159,8 @@ Screen {
 
 .-focused-pane {
     border: heavy rgb(116, 185, 255);
+}
+
+.-hidden {
+    display: none;
 }

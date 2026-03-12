@@ -248,9 +248,19 @@ class AgentTUI(App):  # type: ignore[misc]
         self._render_state()
 
     def action_move_up(self) -> None:
+        if self._store.snapshot().active_screen == "markdown_viewer":
+            action = getattr(self.screen, "action_scroll_up", None)
+            if callable(action):
+                action()
+            return
         self._move_focused_selection(-1)
 
     def action_move_down(self) -> None:
+        if self._store.snapshot().active_screen == "markdown_viewer":
+            action = getattr(self.screen, "action_scroll_down", None)
+            if callable(action):
+                action()
+            return
         self._move_focused_selection(1)
 
     def _move_focused_selection(self, delta: int) -> None:
@@ -396,6 +406,9 @@ class AgentTUI(App):  # type: ignore[misc]
         self._set_active_screen("dashboard")
 
     async def action_quit(self) -> None:
+        if self._store.snapshot().active_screen == "markdown_viewer":
+            self.action_back_dashboard()
+            return
         self.exit()
 
     def action_open_selected_approval_task(self) -> None:
@@ -584,6 +597,9 @@ class AgentTUI(App):  # type: ignore[misc]
             external_open_supported=preview_model.external_open_supported,
         )
         if action.destination == "markdown_viewer":
+            preview_status = state.artifact_preview_status_by_artifact.get(artifact_id, "idle")
+            if preview_status == "idle" and artifact_id not in state.artifact_preview_cache:
+                self._queue_selected_artifact_preview_load()
             self._store.dispatch(
                 {
                     "kind": "ui",
