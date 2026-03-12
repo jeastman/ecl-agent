@@ -25,7 +25,9 @@ class EventMessage(TypedDict):
 class UiMessage(TypedDict, total=False):
     kind: Literal["ui"]
     active_screen: str
+    focused_pane: str
     selected_task_id: str | None
+    selected_approval_id: str | None
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -41,7 +43,9 @@ class AppState:
     approvals_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     artifacts_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     selected_task_id: str | None = None
-    active_screen: str = "shell"
+    selected_approval_id: str | None = None
+    active_screen: str = "dashboard"
+    focused_pane: str = "tasks"
 
 
 class AppStateStore:

@@ -5,10 +5,10 @@ from typing import Any
 
 from packages.task_model.local_agent_task_model.models import FailureInfo
 
-from .app_state import AppState
+from .app_state import AppState, RuntimeMessage
 
 
-def reduce_app_state(state: AppState, message: dict[str, Any]) -> AppState:
+def reduce_app_state(state: AppState, message: RuntimeMessage) -> AppState:
     if message["kind"] == "connection":
         return replace(
             state,
@@ -20,7 +20,9 @@ def reduce_app_state(state: AppState, message: dict[str, Any]) -> AppState:
         return replace(
             state,
             active_screen=str(message.get("active_screen", state.active_screen)),
+            focused_pane=str(message.get("focused_pane", state.focused_pane)),
             selected_task_id=message.get("selected_task_id", state.selected_task_id),
+            selected_approval_id=message.get("selected_approval_id", state.selected_approval_id),
         )
 
     if message["kind"] == "rpc":
@@ -46,6 +48,16 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
         task = dict(payload["result"]["task"])
         return _replace_task(state, task)
 
+    if name == "task.list":
+        result = dict(payload.get("result", {}))
+        next_state = state
+        tasks = list(result.get("tasks", []))
+        for task in reversed(tasks):
+            next_state = _replace_task(next_state, dict(task), preserve_selection=True)
+        if state.selected_task_id is None and tasks:
+            next_state = replace(next_state, selected_task_id=str(tasks[0]["task_id"]))
+        return next_state
+
     if name == "task.approvals.list":
         result = dict(payload["result"])
         task_id = str(result["approvals"][0]["task_id"]) if result["approvals"] else None
@@ -53,7 +65,14 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
         approvals_by_task = dict(state.approvals_by_task)
         if task_id is not None and run_id is not None:
             approvals_by_task[(task_id, run_id)] = list(result["approvals"])
-        return replace(state, approvals_by_task=approvals_by_task)
+        selected_approval_id = state.selected_approval_id
+        if selected_approval_id is None and result["approvals"]:
+            selected_approval_id = result["approvals"][0].get("approval_id")
+        return replace(
+            state,
+            approvals_by_task=approvals_by_task,
+            selected_approval_id=selected_approval_id,
+        )
 
     if name == "task.artifacts.list":
         result = dict(payload["result"])
@@ -115,7 +134,9 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         snapshot["status"] = "completed"
     elif event_type == "task.failed":
         snapshot["status"] = "failed"
-        snapshot["failure"] = FailureInfo(message=str(event_payload.get("error", "failed"))).to_dict()
+        snapshot["failure"] = FailureInfo(
+            message=str(event_payload.get("error", "failed"))
+        ).to_dict()
     elif event_type == "approval.requested":
         snapshot["awaiting_approval"] = True
         snapshot["pending_approval_id"] = event_payload.get("approval", {}).get("approval_id")
@@ -123,7 +144,12 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         approvals.append(dict(event_payload["approval"]))
         approvals_by_task = dict(next_state.approvals_by_task)
         approvals_by_task[(task_id, run_id)] = approvals
-        next_state = replace(next_state, approvals_by_task=approvals_by_task)
+        next_state = replace(
+            next_state,
+            approvals_by_task=approvals_by_task,
+            selected_approval_id=next_state.selected_approval_id
+            or approvals[-1].get("approval_id"),
+        )
     elif event_type == "artifact.created":
         artifacts = list(next_state.artifacts_by_task.get((task_id, run_id), []))
         artifacts.append(dict(event_payload["artifact"]))
@@ -132,14 +158,26 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         snapshot["artifact_count"] = len(artifacts)
         next_state = replace(next_state, artifacts_by_task=artifacts_by_task)
 
-    return _replace_task(next_state, snapshot)
+    return _replace_task(next_state, snapshot, preserve_selection=True)
 
 
-def _replace_task(state: AppState, task: dict[str, Any]) -> AppState:
+def _replace_task(
+    state: AppState, task: dict[str, Any], *, preserve_selection: bool = False
+) -> AppState:
     task_id = str(task["task_id"])
     task_snapshots = dict(state.task_snapshots)
     task_snapshots[task_id] = task
-    task_index = [task_id, *[candidate for candidate in state.task_index if candidate != task_id]]
+    if preserve_selection and task_id in state.task_index:
+        task_index = [candidate for candidate in state.task_index if candidate != task_id]
+        insert_at = 0
+        task_index.insert(insert_at, task_id)
+    elif preserve_selection and task_id not in state.task_index:
+        task_index = [task_id, *state.task_index]
+    else:
+        task_index = [
+            task_id,
+            *[candidate for candidate in state.task_index if candidate != task_id],
+        ]
     return replace(
         state,
         task_snapshots=task_snapshots,

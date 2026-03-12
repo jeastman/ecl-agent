@@ -37,6 +37,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskDiagnosticsListResult,
     TaskGetParams,
     TaskGetResult,
+    TaskListParams,
+    TaskListResult,
     TaskResumeParams,
     TaskResumeResult,
     TaskLogsStreamParams,
@@ -62,6 +64,7 @@ class MethodHandlers:
     durable_services: DurableRuntimeServices
     resume_service: ResumeService
     config_sources: list[str] | None = None
+    TASK_LIST_LIMIT: int = 25
 
     def runtime_health(self, correlation_id: str | None) -> RuntimeHealthResult:
         return RuntimeHealthResult(
@@ -115,6 +118,14 @@ class MethodHandlers:
         return TaskGetResult(
             task=self.task_runner.get_task_snapshot(request.task_id, request.run_id)
         )
+
+    def task_list(self, params: dict) -> TaskListResult:
+        request = TaskListParams.from_dict(params)
+        states = self.run_state_store.list_recent(limit=request.limit or self.TASK_LIST_LIMIT)
+        tasks = [
+            self.task_runner.get_task_snapshot(state.task_id, state.run_id) for state in states
+        ]
+        return TaskListResult(tasks=tasks, count=len(tasks))
 
     def task_approve(self, params: dict) -> TaskApproveResult:
         request = TaskApproveParams.from_dict(params)

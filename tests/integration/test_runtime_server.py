@@ -28,6 +28,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
+    METHOD_TASK_LIST,
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
     PROTOCOL_VERSION,
@@ -179,6 +180,45 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 "run",
             )
 
+    def test_runtime_task_list_returns_recent_snapshots(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_fake_langchain_harness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+
+            for request_id, objective in (("1", "First task"), ("2", "Second task")):
+                create_request = JsonRpcRequest(
+                    method=METHOD_TASK_CREATE,
+                    params=TaskCreateParams(
+                        task=TaskCreateRequest(
+                            objective=objective,
+                            workspace_roots=[str(workspace_root)],
+                        )
+                    ).to_dict(),
+                    id=request_id,
+                    correlation_id=new_correlation_id(),
+                )
+                server.handle_line(json.dumps(create_request.to_dict()))
+
+            list_request = JsonRpcRequest(
+                method=METHOD_TASK_LIST,
+                params={"limit": 10},
+                id="3",
+                correlation_id=new_correlation_id(),
+            )
+            list_response, _ = server.handle_line(json.dumps(list_request.to_dict()))
+            payload = list_response.to_dict()["result"]
+            self.assertEqual(payload["count"], 2)
+            self.assertEqual(len(payload["tasks"]), 2)
+            self.assertEqual(payload["tasks"][0]["objective"], "Second task")
+
     def test_runtime_server_streams_live_events_after_ack(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             workspace_root = Path(temp_dir) / "workspace"
@@ -222,12 +262,16 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 stream_open = writer.wait_for_json(lambda payload: payload.get("id") == "2")
                 self.assertTrue(stream_open["result"]["stream_open"])
                 started = writer.wait_for_json(
-                    lambda payload: payload.get("type") == "runtime.event"
-                    and payload["event"]["event_type"] == "task.started"
+                    lambda payload: (
+                        payload.get("type") == "runtime.event"
+                        and payload["event"]["event_type"] == "task.started"
+                    )
                 )
                 completed = writer.wait_for_json(
-                    lambda payload: payload.get("type") == "runtime.event"
-                    and payload["event"]["event_type"] == "task.completed"
+                    lambda payload: (
+                        payload.get("type") == "runtime.event"
+                        and payload["event"]["event_type"] == "task.completed"
+                    )
                 )
                 self.assertEqual(started["event"]["task_id"], task_id)
                 self.assertEqual(completed["event"]["run_id"], run_id)

@@ -57,7 +57,7 @@ def build_parser() -> argparse.ArgumentParser:
         description="Run and inspect Local Agent Harness tasks.",
         epilog=(
             "Examples:\n"
-            "  agent run \"Inspect the repository workspace\"\n"
+            '  agent run "Inspect the repository workspace"\n'
             "  agent status task_123 --run-id run_456\n"
             "  agent logs task_123 --run-id run_456\n"
             "  agent approvals task_123"

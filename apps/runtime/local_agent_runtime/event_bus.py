@@ -79,6 +79,8 @@ class InMemoryEventBus:
                 subscribers = self._subscribers.get(key)
                 if subscribers is None:
                     return
-                self._subscribers[key] = [candidate for candidate in subscribers if candidate is not queue]
+                self._subscribers[key] = [
+                    candidate for candidate in subscribers if candidate is not queue
+                ]
                 if not self._subscribers[key]:
                     self._subscribers.pop(key, None)

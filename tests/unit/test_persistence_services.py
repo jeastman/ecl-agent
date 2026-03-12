@@ -448,12 +448,8 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                 )
             )
 
-            self.assertTrue(
-                store.has_grant("task_1", "run_1", "file.write:/apps/runtime/**")
-            )
-            self.assertFalse(
-                store.has_grant("task_1", "run_2", "file.write:/apps/runtime/**")
-            )
+            self.assertTrue(store.has_grant("task_1", "run_1", "file.write:/apps/runtime/**"))
+            self.assertFalse(store.has_grant("task_1", "run_2", "file.write:/apps/runtime/**"))
 
     def test_runtime_policy_engine_classifies_allow_require_and_deny(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

@@ -11,6 +11,7 @@ PROTOCOL_VERSION = "1.0.0"
 
 METHOD_RUNTIME_HEALTH = "runtime.health"
 METHOD_TASK_CREATE = "task.create"
+METHOD_TASK_LIST = "task.list"
 METHOD_TASK_GET = "task.get"
 METHOD_TASK_APPROVE = "task.approve"
 METHOD_TASK_APPROVALS_LIST = "task.approvals.list"
@@ -266,6 +267,33 @@ class TaskGetParams:
         if run_id is not None and not isinstance(run_id, str):
             raise ValueError("task.get run_id must be a string when provided")
         return cls(task_id=task_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class TaskListParams:
+    limit: int | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskListParams":
+        limit = payload.get("limit")
+        if limit is not None and (not isinstance(limit, int) or limit <= 0):
+            raise ValueError("task.list limit must be a positive integer when provided")
+        return cls(limit=limit)
+
+
+@dataclass(slots=True)
+class TaskListResult:
+    tasks: list[TaskSnapshot]
+    count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "tasks": [task.to_dict() for task in self.tasks],
+            "count": self.count,
+        }
 
 
 @dataclass(slots=True)

@@ -79,15 +79,17 @@ class CliTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(cli, "make_client", return_value=fake_client):
-            with patch.object(cli, "_default_workspace_root", return_value="/tmp/configured-workspace"):
+            with patch.object(
+                cli, "_default_workspace_root", return_value="/tmp/configured-workspace"
+            ):
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     exit_code = cli.handle_run(
                         config_path="docs/architecture/runtime.example.toml",
                         objective="Inspect the repo",
                         workspace_roots=[],
-                    constraints=[],
-                    success_criteria=[],
-                )
+                        constraints=[],
+                        success_criteria=[],
+                    )
         self.assertEqual(exit_code, 0)
         request = fake_client.requests[0]
         self.assertEqual(

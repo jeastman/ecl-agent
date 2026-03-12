@@ -13,6 +13,7 @@ from packages.protocol.local_agent_protocol.models import (
     EventSourceKind,
     METHOD_MEMORY_INSPECT,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_LIST,
     ApprovalDecisionPayload,
     ConfigGetResult,
     ConfigRedaction,
@@ -30,6 +31,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCreateParams,
     TaskCreateRequest,
     TaskGetParams,
+    TaskListParams,
+    TaskListResult,
     TaskLogsStreamParams,
     TaskResumeParams,
     TaskSnapshot,
@@ -76,6 +79,8 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertFalse(payload["is_resumable"])
 
     def test_task_query_params_validate(self) -> None:
+        self.assertIsNone(TaskListParams.from_dict({}).limit)
+        self.assertEqual(TaskListParams.from_dict({"limit": 5}).limit, 5)
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(TaskResumeParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(
@@ -98,6 +103,10 @@ class ProtocolModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
+        with self.assertRaisesRegex(
+            ValueError, "task.list limit must be a positive integer when provided"
+        ):
+            TaskListParams.from_dict({"limit": 0})
         with self.assertRaisesRegex(ValueError, "task.approve requires approval"):
             TaskApproveParams.from_dict({"task_id": "task_1"})
         self.assertIsNone(
@@ -164,6 +173,25 @@ class ProtocolModelTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "task.approvals.list requires task_id"):
             TaskApprovalsListParams.from_dict({})
         self.assertEqual(METHOD_TASK_DIAGNOSTICS_LIST, "task.diagnostics.list")
+        self.assertEqual(METHOD_TASK_LIST, "task.list")
+
+    def test_task_list_result_serialization(self) -> None:
+        result = TaskListResult(
+            tasks=[
+                TaskSnapshot(
+                    task_id="task_1",
+                    run_id="run_1",
+                    status=TaskStatus.EXECUTING,
+                    objective="Inspect repo",
+                    created_at=utc_now_timestamp(),
+                    updated_at=utc_now_timestamp(),
+                )
+            ],
+            count=1,
+        )
+        payload = result.to_dict()
+        self.assertEqual(payload["count"], 1)
+        self.assertEqual(payload["tasks"][0]["task_id"], "task_1")
 
     def test_task_diagnostics_list_params_and_result_validate(self) -> None:
         params = TaskDiagnosticsListParams.from_dict({"task_id": "task_1", "run_id": "run_1"})

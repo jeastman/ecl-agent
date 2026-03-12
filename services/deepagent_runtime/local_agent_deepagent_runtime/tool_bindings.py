@@ -375,7 +375,11 @@ class SandboxToolBindings:
         if not allowed_scopes:
             return
         normalized_path = self.sandbox.normalize_path(sandbox_path)
-        scope = "memory" if normalized_path == "/.memory" or normalized_path.startswith("/.memory/") else "workspace"
+        scope = (
+            "memory"
+            if normalized_path == "/.memory" or normalized_path.startswith("/.memory/")
+            else "workspace"
+        )
         if scope not in allowed_scopes:
             allowed = ", ".join(sorted(allowed_scopes))
             raise FilesystemScopeError(

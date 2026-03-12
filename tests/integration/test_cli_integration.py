@@ -60,7 +60,14 @@ class CliIntegrationTests(unittest.TestCase):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
-                                ["--config", "ignored.toml", "logs", "task_123", "--run-id", "run_456"]
+                                [
+                                    "--config",
+                                    "ignored.toml",
+                                    "logs",
+                                    "task_123",
+                                    "--run-id",
+                                    "run_456",
+                                ]
                             ),
                             0,
                         )

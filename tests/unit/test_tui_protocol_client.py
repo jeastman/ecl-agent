@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import unittest
+from unittest.mock import AsyncMock
 
 from apps.tui.local_agent_tui.protocol.protocol_client import ProtocolClient, ProtocolClientError
 
@@ -34,3 +35,10 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         with self.assertRaises(ProtocolClientError):
             client._parse_payload("{")  # type: ignore[attr-defined]
+
+    async def test_task_list_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        client._request = AsyncMock(return_value={"result": {"tasks": []}})  # type: ignore[method-assign]
+        payload = await client.task_list(limit=5)
+        self.assertEqual(payload["result"]["tasks"], [])
+        client._request.assert_awaited_once_with("task.list", {"limit": 5})  # type: ignore[attr-defined]

@@ -15,7 +15,9 @@ class SandboxPathPolicyTests(unittest.TestCase):
     def test_normalize_valid_paths(self) -> None:
         self.assertEqual(normalize_sandbox_path("/src/app.py").logical_path, "/src/app.py")
         self.assertEqual(normalize_sandbox_path("/tmp").logical_path, "/tmp")
-        self.assertEqual(normalize_sandbox_path("/.memory/notes.md").logical_path, "/.memory/notes.md")
+        self.assertEqual(
+            normalize_sandbox_path("/.memory/notes.md").logical_path, "/.memory/notes.md"
+        )
 
     def test_reject_out_of_bounds_paths(self) -> None:
         with self.assertRaisesRegex(ValueError, "absolute virtual path"):

@@ -15,6 +15,8 @@ class RunStateStore(Protocol):
 
     def update(self, task_id: str, run_id: str, **changes: Any) -> RunState: ...
 
+    def list_recent(self, *, limit: int) -> list[RunState]: ...
+
 
 class InMemoryRunStateStore:
     def __init__(self) -> None:
@@ -43,6 +45,19 @@ class InMemoryRunStateStore:
             updated = replace(state, **changes)
             self._states[(task_id, run_id)] = updated
             return updated
+
+    def list_recent(self, *, limit: int) -> list[RunState]:
+        with self._lock:
+            states = list(reversed(list(self._states.values())))
+        states.sort(
+            key=lambda state: (
+                state.last_event_at or state.updated_at,
+                state.updated_at,
+                state.created_at,
+            ),
+            reverse=True,
+        )
+        return states[:limit]
 
     def _latest_run_id(self, task_id: str) -> str:
         runs = self._runs_by_task.get(task_id)

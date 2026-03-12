@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import Callable
+from typing import Any, Callable
 
-from ..store.app_state import EventMessage, RpcMessage
 from .protocol_client import ProtocolClient
 
 
-Dispatch = Callable[[RpcMessage | EventMessage], object]
+Dispatch = Callable[[dict[str, Any]], object]
 
 
 async def consume_task_stream(
