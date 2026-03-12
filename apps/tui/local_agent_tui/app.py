@@ -5,15 +5,21 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
 from .actions.approve_request import build_approval_request_action
+from .actions.open_artifact import build_open_artifact_action
 from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
+from .screens.artifacts import ArtifactsScreen
 from .screens.dashboard import DashboardScreen
+from .screens.markdown_viewer import MarkdownViewerScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
 from .store.selectors import (
+    artifact_browser_rows,
     pending_approvals,
+    selected_artifact_browser_item,
     selected_approval_detail,
+    selected_artifact_preview,
     recent_task_ids,
     task_artifact_panel,
     task_action_bar,
@@ -67,7 +73,9 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("enter", "open_task", "Open Task", show=False, priority=True),
         Binding("a", "open_approvals", "Approvals", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
-        Binding("o", "select_next_artifact", "Artifact", show=False, priority=True),
+        Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
+        Binding("t", "group_artifacts_task", "Task Group", show=False, priority=True),
+        Binding("y", "group_artifacts_type", "Type Group", show=False, priority=True),
         Binding("escape", "back_dashboard", "Dashboard", show=False, priority=True),
         Binding("q", "quit", "Quit", show=False, priority=True),
     ]
@@ -83,6 +91,8 @@ class AgentTUI(App):  # type: ignore[misc]
         self.install_screen(DashboardScreen(), name="dashboard")
         self.install_screen(TaskDetailScreen(), name="task_detail")
         self.install_screen(ApprovalsScreen(), name="approvals")
+        self.install_screen(ArtifactsScreen(), name="artifacts")
+        self.install_screen(MarkdownViewerScreen(), name="markdown_viewer")
 
     def compose(self) -> ComposeResult:
         yield self._status_bar
@@ -129,6 +139,21 @@ class AgentTUI(App):  # type: ignore[misc]
                 continue
             run_id = str(task.get("run_id", "")) or None
             await self._load_task_related(task_id=task_id, run_id=run_id)
+
+    async def _refresh_known_artifacts(self) -> None:
+        state = self._store.snapshot()
+        for task_id in recent_task_ids(state):
+            task = state.task_snapshots.get(task_id)
+            if task is None:
+                continue
+            run_id = str(task.get("run_id", "")) or None
+            artifacts = await self._client.task_artifacts_list(task_id, run_id)
+            self._store.dispatch(
+                {"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts}
+            )
+        self._ensure_artifact_browser_selection()
+        self._render_state()
+        self._queue_selected_artifact_preview_load()
 
     async def _refresh_known_approvals(self) -> None:
         state = self._store.snapshot()
@@ -230,6 +255,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _move_focused_selection(self, delta: int) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "artifacts":
+            self._move_artifact_browser_selection(delta)
+            return
         if state.active_screen == "approvals":
             self._move_approval_selection(delta)
             return
@@ -266,6 +294,11 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_open_task(self) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "artifacts":
+            self._open_selected_artifact()
+            return
+        if state.active_screen == "markdown_viewer":
+            return
         if state.active_screen == "approvals":
             self.action_open_selected_approval_task()
             return
@@ -290,6 +323,9 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_resume_task(self) -> None:
         state = self._store.snapshot()
+        if state.active_screen == "artifacts":
+            self._set_artifact_group("run")
+            return
         if state.active_screen == "approvals":
             self.action_reject_selected_request()
             return
@@ -318,22 +354,45 @@ class AgentTUI(App):  # type: ignore[misc]
             self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
             self._render_state()
 
-    def action_select_next_artifact(self) -> None:
+    def action_open_artifacts(self) -> None:
         state = self._store.snapshot()
-        if state.active_screen != "task_detail":
+        if state.active_screen == "artifacts":
+            self._open_selected_artifact()
             return
-        artifacts = task_artifact_panel(state)
-        if not artifacts:
-            return
-        current_index = next(
-            (index for index, artifact in enumerate(artifacts) if artifact.is_selected),
-            -1,
-        )
-        next_artifact = artifacts[(current_index + 1) % len(artifacts)]
-        self._store.dispatch({"kind": "ui", "selected_artifact_id": next_artifact.artifact_id})
+        origin_screen = state.active_screen
+        message: UiMessage = {
+            "kind": "ui",
+            "active_screen": "artifacts",
+            "artifact_browser_origin_screen": origin_screen,
+        }
+        if state.active_screen == "task_detail":
+            selected_panel = next(
+                (artifact for artifact in task_artifact_panel(state) if artifact.is_selected),
+                None,
+            )
+            if selected_panel is not None:
+                message["artifact_browser_selected_id"] = selected_panel.artifact_id
+        self._store.dispatch(message)
+        self.switch_screen("artifacts")
+        self._ensure_artifact_browser_selection()
         self._render_state()
+        self.run_worker(self._refresh_known_artifacts(), group="artifacts-refresh", exclusive=True)
+        self._queue_selected_artifact_preview_load()
+
+    def action_group_artifacts_task(self) -> None:
+        self._set_artifact_group("task")
+
+    def action_group_artifacts_type(self) -> None:
+        self._set_artifact_group("type")
 
     def action_back_dashboard(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen == "artifacts":
+            self._set_active_screen(state.artifact_browser_origin_screen or "dashboard")
+            return
+        if state.active_screen == "markdown_viewer":
+            self._set_active_screen("artifacts")
+            return
         self._set_active_screen("dashboard")
 
     async def action_quit(self) -> None:
@@ -353,6 +412,14 @@ class AgentTUI(App):  # type: ignore[misc]
         )
         self._set_active_screen("task_detail")
         self.run_worker(self._sync_selected_task(), group="selection-sync", exclusive=True)
+
+    def handle_artifact_browser_selected(self, artifact_id: str) -> None:
+        state = self._store.snapshot()
+        if state.artifact_browser_selected_id == artifact_id:
+            return
+        self._store.dispatch({"kind": "ui", "artifact_browser_selected_id": artifact_id})
+        self._render_state()
+        self._queue_selected_artifact_preview_load()
 
     def _move_approval_selection(self, delta: int) -> None:
         state = self._store.snapshot()
@@ -428,3 +495,108 @@ class AgentTUI(App):  # type: ignore[misc]
                 }
             )
             self._render_state()
+
+    def _move_artifact_browser_selection(self, delta: int) -> None:
+        rows = artifact_browser_rows(self._store.snapshot())
+        if not rows:
+            return
+        current_index = next((index for index, row in enumerate(rows) if row.is_selected), -1)
+        next_row = rows[(current_index + delta) % len(rows)]
+        self.handle_artifact_browser_selected(next_row.artifact_id)
+
+    def _ensure_artifact_browser_selection(self) -> None:
+        state = self._store.snapshot()
+        if state.artifact_browser_selected_id is not None:
+            return
+        fallback = selected_artifact_browser_item(state)
+        if fallback is None:
+            rows = artifact_browser_rows(state)
+            if not rows:
+                return
+            artifact_id = rows[0].artifact_id
+        else:
+            artifact_id = str(fallback.get("artifact_id", ""))
+        if artifact_id:
+            self._store.dispatch({"kind": "ui", "artifact_browser_selected_id": artifact_id})
+
+    def _queue_selected_artifact_preview_load(self) -> None:
+        selected = selected_artifact_browser_item(self._store.snapshot())
+        if selected is None:
+            return
+        artifact_id = str(selected.get("artifact_id", ""))
+        state = self._store.snapshot()
+        if state.artifact_preview_status_by_artifact.get(artifact_id) == "loading":
+            return
+        if artifact_id in state.artifact_preview_cache:
+            return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "artifact_preview_artifact_id": artifact_id,
+                "artifact_preview_status": "loading",
+                "artifact_preview_error": None,
+            }
+        )
+        self._render_state()
+        self.run_worker(
+            self._load_artifact_preview(
+                task_id=str(selected.get("task_id", "")),
+                run_id=str(selected.get("run_id", "")) or None,
+                artifact_id=artifact_id,
+            ),
+            group=f"artifact-preview-{artifact_id}",
+            exclusive=True,
+        )
+
+    async def _load_artifact_preview(
+        self,
+        *,
+        task_id: str,
+        run_id: str | None,
+        artifact_id: str,
+    ) -> None:
+        try:
+            payload = await self._client.task_artifact_get(task_id, artifact_id, run_id)
+            self._store.dispatch({"kind": "rpc", "name": "task.artifact.get", "payload": payload})
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifact_preview_artifact_id": artifact_id,
+                    "artifact_preview_status": "failed",
+                    "artifact_preview_error": str(exc),
+                }
+            )
+        self._render_state()
+
+    def _open_selected_artifact(self) -> None:
+        state = self._store.snapshot()
+        selected = selected_artifact_browser_item(state)
+        if selected is None:
+            return
+        artifact_id = str(selected.get("artifact_id", ""))
+        preview_model = selected_artifact_preview(state)
+        action = build_open_artifact_action(
+            artifact_id=artifact_id,
+            task_id=str(selected.get("task_id", "")),
+            run_id=str(selected.get("run_id", "")),
+            content_type=str(selected.get("content_type", "unknown")),
+            external_open_supported=preview_model.external_open_supported,
+        )
+        if action.destination == "markdown_viewer":
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "active_screen": "markdown_viewer",
+                    "markdown_viewer_artifact_id": artifact_id,
+                }
+            )
+            self.switch_screen("markdown_viewer")
+            self._render_state()
+
+    def _set_artifact_group(self, group_by: str) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "artifacts":
+            return
+        self._store.dispatch({"kind": "ui", "artifact_group_by": group_by})
+        self._render_state()

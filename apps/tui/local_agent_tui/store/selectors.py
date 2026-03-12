@@ -152,6 +152,43 @@ class NotificationStripViewModel:
     items: list[NotificationStripItemViewModel]
 
 
+@dataclass(frozen=True, slots=True)
+class ArtifactBrowserToolbarViewModel:
+    group_by: str
+    total_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactBrowserRowViewModel:
+    artifact_id: str
+    task_id: str
+    run_id: str
+    group_label: str
+    display_name: str
+    content_type: str
+    created_at: str
+    logical_path: str
+    is_selected: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ArtifactPreviewViewModel:
+    artifact_id: str | None
+    title: str
+    status: str
+    body: str
+    content_type: str | None
+    open_label: str
+    external_open_supported: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MarkdownArtifactViewModel:
+    artifact_id: str
+    display_name: str
+    body: str
+
+
 def connection_label(state: AppState) -> str:
     if state.last_error:
         return f"{state.connection_status} ({state.last_error})"
@@ -461,6 +498,117 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
     )
 
 
+def artifact_browser_toolbar(state: AppState) -> ArtifactBrowserToolbarViewModel:
+    return ArtifactBrowserToolbarViewModel(
+        group_by=state.artifact_group_by,
+        total_count=len(_all_artifacts(state)),
+    )
+
+
+def artifact_browser_rows(state: AppState) -> list[ArtifactBrowserRowViewModel]:
+    rows: list[ArtifactBrowserRowViewModel] = []
+    selected_id = _selected_artifact_browser_id(state)
+    for artifact in _all_artifacts(state):
+        rows.append(
+            ArtifactBrowserRowViewModel(
+                artifact_id=str(artifact.get("artifact_id", "")),
+                task_id=str(artifact.get("task_id", "")),
+                run_id=str(artifact.get("run_id", "")),
+                group_label=_artifact_group_label(artifact, state.artifact_group_by),
+                display_name=_artifact_display_name(artifact),
+                content_type=str(artifact.get("content_type", "unknown")),
+                created_at=str(artifact.get("created_at", "")),
+                logical_path=str(artifact.get("logical_path", "")),
+                is_selected=str(artifact.get("artifact_id", "")) == selected_id,
+            )
+        )
+    return rows
+
+
+def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
+    artifact = selected_artifact_browser_item(state)
+    if artifact is None:
+        return ArtifactPreviewViewModel(
+            artifact_id=None,
+            title="Artifact Preview",
+            status="empty",
+            body="Select an artifact to inspect its preview.",
+            content_type=None,
+            open_label="Unavailable",
+            external_open_supported=False,
+        )
+    artifact_id = str(artifact.get("artifact_id", ""))
+    preview_payload = state.artifact_preview_cache.get(artifact_id)
+    preview_status = state.artifact_preview_status_by_artifact.get(artifact_id, "idle")
+    preview_error = state.artifact_preview_error_by_artifact.get(artifact_id)
+    if preview_status == "loading":
+        return ArtifactPreviewViewModel(
+            artifact_id=artifact_id,
+            title=_artifact_display_name(artifact),
+            status="loading",
+            body="Loading preview...",
+            content_type=str(artifact.get("content_type", "unknown")),
+            open_label=_artifact_open_label(artifact),
+            external_open_supported=False,
+        )
+    if preview_error:
+        return ArtifactPreviewViewModel(
+            artifact_id=artifact_id,
+            title=_artifact_display_name(artifact),
+            status="error",
+            body=preview_error,
+            content_type=str(artifact.get("content_type", "unknown")),
+            open_label=_artifact_open_label(artifact),
+            external_open_supported=False,
+        )
+    if not isinstance(preview_payload, dict):
+        return ArtifactPreviewViewModel(
+            artifact_id=artifact_id,
+            title=_artifact_display_name(artifact),
+            status="idle",
+            body="Preview not loaded yet.",
+            content_type=str(artifact.get("content_type", "unknown")),
+            open_label=_artifact_open_label(artifact),
+            external_open_supported=False,
+        )
+    preview = dict(preview_payload.get("preview", {}))
+    body = str(preview.get("text") or preview.get("message") or "Preview unavailable.")
+    if preview.get("truncated"):
+        body = f"{body}\n\n[truncated]"
+    return ArtifactPreviewViewModel(
+        artifact_id=artifact_id,
+        title=_artifact_display_name(artifact),
+        status="loaded",
+        body=body,
+        content_type=str(artifact.get("content_type", "unknown")),
+        open_label=_artifact_open_label(artifact),
+        external_open_supported=bool(preview_payload.get("external_open_supported", False)),
+    )
+
+
+def selected_markdown_artifact(state: AppState) -> MarkdownArtifactViewModel | None:
+    artifact_id = state.markdown_viewer_artifact_id
+    if artifact_id is None:
+        return None
+    artifact = _artifact_by_id(state, artifact_id)
+    preview_payload = state.artifact_preview_cache.get(artifact_id)
+    if artifact is None or preview_payload is None:
+        return None
+    preview = dict(preview_payload.get("preview", {}))
+    return MarkdownArtifactViewModel(
+        artifact_id=artifact_id,
+        display_name=_artifact_display_name(artifact),
+        body=str(preview.get("text") or "Markdown preview unavailable."),
+    )
+
+
+def selected_artifact_browser_item(state: AppState) -> dict[str, Any] | None:
+    artifact_id = _selected_artifact_browser_id(state)
+    if artifact_id is None:
+        return None
+    return _artifact_by_id(state, artifact_id)
+
+
 def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemViewModel]:
     if state.selected_task_id is None:
         return []
@@ -486,6 +634,17 @@ def footer_hints(state: AppState) -> list[str]:
         if action_bar.resume_enabled:
             hints.insert(0, "[R] Resume")
         return hints
+    if state.active_screen == "artifacts":
+        return [
+            "[Up/Down] Move",
+            "[Enter] Open",
+            "[T] Group Task",
+            "[R] Group Run",
+            "[Y] Group Type",
+            "[Esc] Back",
+        ]
+    if state.active_screen == "markdown_viewer":
+        return ["[Esc] Back", "[Q] Quit"]
     if state.focused_pane == "approvals":
         return [
             "[Up/Down] Move Approval",
@@ -578,6 +737,70 @@ def _artifact_item_view_model(artifact: dict[str, Any]) -> ArtifactItemViewModel
         content_type=str(artifact.get("content_type", "unknown")),
         created_at=str(artifact.get("created_at", "")),
     )
+
+
+def _all_artifacts(state: AppState) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    for entries in state.artifacts_by_task.values():
+        artifacts.extend(entries)
+    artifacts.sort(
+        key=lambda artifact: (
+            _artifact_group_label(artifact, state.artifact_group_by),
+            _artifact_display_name(artifact),
+        ),
+    )
+    artifacts.sort(
+        key=lambda artifact: (
+            _artifact_group_label(artifact, state.artifact_group_by),
+            str(artifact.get("created_at", "")),
+        ),
+        reverse=True,
+    )
+    return artifacts
+
+
+def _artifact_by_id(state: AppState, artifact_id: str) -> dict[str, Any] | None:
+    for artifact in _all_artifacts(state):
+        if str(artifact.get("artifact_id", "")) == artifact_id:
+            return artifact
+    return None
+
+
+def _selected_artifact_browser_id(state: AppState) -> str | None:
+    if state.artifact_browser_selected_id is not None:
+        return state.artifact_browser_selected_id
+    artifact = selected_artifact_browser_fallback(state)
+    if artifact is None:
+        return None
+    return str(artifact.get("artifact_id", ""))
+
+
+def selected_artifact_browser_fallback(state: AppState) -> dict[str, Any] | None:
+    artifacts = _all_artifacts(state)
+    return artifacts[0] if artifacts else None
+
+
+def _artifact_group_label(artifact: dict[str, Any], group_by: str) -> str:
+    if group_by == "run":
+        return f"{artifact.get('task_id', '')}/{artifact.get('run_id', '')}"
+    if group_by == "type":
+        return str(artifact.get("content_type", "unknown"))
+    return str(artifact.get("task_id", ""))
+
+
+def _artifact_display_name(artifact: dict[str, Any]) -> str:
+    return str(
+        artifact.get("display_name")
+        or artifact.get("logical_path")
+        or artifact.get("artifact_id")
+        or "artifact"
+    )
+
+
+def _artifact_open_label(artifact: dict[str, Any]) -> str:
+    if str(artifact.get("content_type", "")) == "text/markdown":
+        return "Open Markdown Viewer"
+    return "Preview Only"
 
 
 def _approval_request_type(approval: dict[str, Any]) -> str:

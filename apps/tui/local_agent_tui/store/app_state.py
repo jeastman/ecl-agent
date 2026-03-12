@@ -29,6 +29,13 @@ class UiMessage(TypedDict, total=False):
     selected_task_id: str | None
     selected_approval_id: str | None
     selected_artifact_id: str | None
+    artifact_browser_selected_id: str | None
+    artifact_group_by: str
+    artifact_browser_origin_screen: str
+    markdown_viewer_artifact_id: str | None
+    artifact_preview_artifact_id: str
+    artifact_preview_status: str
+    artifact_preview_error: str | None
     approval_feedback: str | None
 
 
@@ -64,6 +71,13 @@ class AppState:
     active_screen: str = "dashboard"
     focused_pane: str = "tasks"
     approval_feedback: str | None = None
+    artifact_group_by: str = "task"
+    artifact_browser_selected_id: str | None = None
+    artifact_browser_origin_screen: str = "dashboard"
+    artifact_preview_status_by_artifact: dict[str, str] = field(default_factory=dict)
+    artifact_preview_error_by_artifact: dict[str, str | None] = field(default_factory=dict)
+    artifact_preview_cache: dict[str, dict[str, Any]] = field(default_factory=dict)
+    markdown_viewer_artifact_id: str | None = None
 
 
 class AppStateStore:

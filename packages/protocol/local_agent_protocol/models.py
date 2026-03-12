@@ -19,6 +19,7 @@ METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
+METHOD_TASK_ARTIFACT_GET = "task.artifact.get"
 METHOD_SKILL_INSTALL = "skill.install"
 METHOD_MEMORY_INSPECT = "memory.inspect"
 METHOD_CONFIG_GET = "config.get"
@@ -512,6 +513,18 @@ class ArtifactReference:
 
 
 @dataclass(slots=True)
+class ArtifactPreviewPayload:
+    kind: str
+    text: str | None = None
+    encoding: str | None = None
+    truncated: bool | None = None
+    message: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+
+@dataclass(slots=True)
 class TaskArtifactsListParams:
     task_id: str
     run_id: str | None = None
@@ -550,6 +563,43 @@ class TaskArtifactsListResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"artifacts": [artifact.to_dict() for artifact in self.artifacts]}
+
+
+@dataclass(slots=True)
+class TaskArtifactGetParams:
+    task_id: str
+    artifact_id: str
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskArtifactGetParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        artifact_id = str(payload.get("artifact_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.artifact.get requires task_id")
+        if not artifact_id:
+            raise ValueError("task.artifact.get requires artifact_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.artifact.get run_id must be a string when provided")
+        return cls(task_id=task_id, artifact_id=artifact_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class TaskArtifactGetResult:
+    artifact: ArtifactReference
+    preview: ArtifactPreviewPayload
+    external_open_supported: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "artifact": self.artifact.to_dict(),
+            "preview": self.preview.to_dict(),
+            "external_open_supported": self.external_open_supported,
+        }
 
 
 @dataclass(slots=True)

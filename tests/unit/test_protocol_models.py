@@ -5,6 +5,7 @@ import unittest
 from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_ARTIFACT_GET,
     METHOD_CONFIG_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
     DiagnosticEntry,
@@ -23,6 +24,7 @@ from packages.protocol.local_agent_protocol.models import (
     PROTOCOL_VERSION,
     RuntimeHealthResult,
     RuntimeEvent,
+    TaskArtifactGetParams,
     TaskArtifactsListParams,
     TaskApproveParams,
     TaskApprovalsListParams,
@@ -86,6 +88,12 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(
             TaskArtifactsListParams.from_dict({"task_id": "task_1"}).task_id,
             "task_1",
+        )
+        self.assertEqual(
+            TaskArtifactGetParams.from_dict(
+                {"task_id": "task_1", "artifact_id": "artifact_1"}
+            ).artifact_id,
+            "artifact_1",
         )
         self.assertEqual(
             TaskApproveParams.from_dict(
@@ -174,6 +182,7 @@ class ProtocolModelTests(unittest.TestCase):
             TaskApprovalsListParams.from_dict({})
         self.assertEqual(METHOD_TASK_DIAGNOSTICS_LIST, "task.diagnostics.list")
         self.assertEqual(METHOD_TASK_LIST, "task.list")
+        self.assertEqual(METHOD_TASK_ARTIFACT_GET, "task.artifact.get")
 
     def test_task_list_result_serialization(self) -> None:
         result = TaskListResult(

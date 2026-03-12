@@ -15,6 +15,7 @@ class _FakeProtocolClient:
         self.resume_calls: list[tuple[str, str | None]] = []
         self.approve_calls: list[tuple[str | None, str | None, str, str]] = []
         self.approvals_list_calls: list[tuple[str, str | None]] = []
+        self.artifact_get_calls: list[tuple[str, str | None, str]] = []
         self._tasks: dict[str, dict[str, Any]] = {
             "task_1": {
                 "task_id": "task_1",
@@ -113,6 +114,30 @@ class _FakeProtocolClient:
         else:
             artifacts = []
         return {"result": {"artifacts": artifacts}}
+
+    async def task_artifact_get(
+        self, task_id: str, artifact_id: str, run_id: str | None = None
+    ) -> dict:
+        self.artifact_get_calls.append((task_id, run_id, artifact_id))
+        return {
+            "result": {
+                "artifact": {
+                    "artifact_id": artifact_id,
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "logical_path": "/artifacts/report.md",
+                    "display_name": "report.md",
+                    "content_type": "text/markdown",
+                    "created_at": "2026-03-12T00:00:02Z",
+                },
+                "preview": {
+                    "kind": "markdown",
+                    "text": "# Report\n\nSummary body",
+                    "encoding": "utf-8",
+                },
+                "external_open_supported": False,
+            }
+        }
 
     async def task_resume(self, task_id: str, run_id: str | None = None) -> dict:
         self.resume_calls.append((task_id, run_id))
@@ -401,7 +426,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("No pending approvals.", str(queue.visual))
                 self.assertIn("Select an approval", str(detail.visual))
 
-    async def test_task_detail_renders_phase3_panels_and_artifact_selection(self) -> None:
+    async def test_task_detail_opens_artifact_browser_and_markdown_viewer(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import Static
 
@@ -431,7 +456,33 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("report.md", str(artifacts.visual))
                 await pilot.press("o")
                 await pilot.pause()
-                self.assertIn(">", str(artifacts.visual))
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ArtifactsScreen")
+                await pilot.press("r")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().artifact_group_by, "run")  # type: ignore[attr-defined]
+                self.assertIn(
+                    "Summary body",
+                    app._store.snapshot().artifact_preview_cache["artifact_1"]["preview"]["text"],  # type: ignore[attr-defined]
+                )
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "MarkdownViewerScreen")
+                self.assertEqual(
+                    app._store.snapshot().markdown_viewer_artifact_id,  # type: ignore[attr-defined]
+                    "artifact_1",
+                )
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ArtifactsScreen")
+                await pilot.press("escape")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
+                self.assertEqual(
+                    app._client.artifact_get_calls[-1],  # type: ignore[attr-defined]
+                    ("task_1", "run_1", "artifact_1"),
+                )
 
     async def test_task_detail_resume_action_updates_store(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

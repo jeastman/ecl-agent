@@ -10,12 +10,14 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_RUNTIME_HEALTH,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_ARTIFACT_GET,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_GET,
     METHOD_TASK_LIST,
     METHOD_TASK_LOGS_STREAM,
     METHOD_TASK_RESUME,
     TaskApprovalsListParams,
+    TaskArtifactGetParams,
     TaskApproveParams,
     TaskArtifactsListParams,
     TaskGetParams,
@@ -111,6 +113,21 @@ class ProtocolClient:
         return await self._request(
             METHOD_TASK_ARTIFACTS_LIST,
             TaskArtifactsListParams(task_id=task_id, run_id=run_id).to_dict(),
+        )
+
+    async def task_artifact_get(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_ARTIFACT_GET,
+            TaskArtifactGetParams(
+                task_id=task_id,
+                artifact_id=artifact_id,
+                run_id=run_id,
+            ).to_dict(),
         )
 
     async def task_logs_stream(

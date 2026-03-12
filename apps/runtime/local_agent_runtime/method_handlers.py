@@ -27,6 +27,8 @@ from packages.protocol.local_agent_protocol.models import (
     SkillInstallValidation,
     TaskApprovalsListParams,
     TaskApprovalsListResult,
+    TaskArtifactGetParams,
+    TaskArtifactGetResult,
     TaskArtifactsListParams,
     TaskArtifactsListResult,
     TaskApproveParams,
@@ -208,6 +210,19 @@ class MethodHandlers:
                 persistence_class=request.persistence_class,
                 content_type_prefix=request.content_type_prefix,
             )
+        )
+
+    def task_artifact_get(self, params: dict) -> TaskArtifactGetResult:
+        request = TaskArtifactGetParams.from_dict(params)
+        artifact, preview = self.task_runner.get_artifact_preview(
+            request.task_id,
+            request.artifact_id,
+            request.run_id,
+        )
+        return TaskArtifactGetResult(
+            artifact=artifact,
+            preview=preview,
+            external_open_supported=False,
         )
 
     def task_logs_stream(self, params: dict) -> tuple[TaskLogsStreamResult, list]:

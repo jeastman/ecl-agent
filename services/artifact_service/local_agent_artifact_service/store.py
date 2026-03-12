@@ -6,7 +6,11 @@ from pathlib import Path
 from threading import RLock
 from typing import Protocol
 
-from packages.protocol.local_agent_protocol.models import ArtifactReference, utc_now_timestamp
+from packages.protocol.local_agent_protocol.models import (
+    ArtifactPreviewPayload,
+    ArtifactReference,
+    utc_now_timestamp,
+)
 from packages.task_model.local_agent_task_model.ids import new_artifact_id
 from services.sandbox_service.local_agent_sandbox_service.sandbox import SandboxPathMapper
 
@@ -32,11 +36,28 @@ class ArtifactStore(Protocol):
         content_type_prefix: str | None = None,
     ) -> list[ArtifactReference]: ...
 
+    def get_artifact(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> ArtifactReference: ...
+
+    def get_artifact_preview(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> tuple[ArtifactReference, ArtifactPreviewPayload]: ...
+
 
 class InMemoryArtifactStore:
+    _TEXT_PREVIEW_BYTES = 8192
+
     def __init__(self, path_mapper: SandboxPathMapper) -> None:
         self._path_mapper = path_mapper
         self._artifacts: dict[tuple[str, str], list[ArtifactReference]] = {}
+        self._artifact_paths: dict[tuple[str, str, str], Path] = {}
         self._lock = RLock()
 
     def register_artifact(
@@ -76,6 +97,7 @@ class InMemoryArtifactStore:
         )
         with self._lock:
             records = self._artifacts.setdefault((task_id, run_id), [])
+            self._artifact_paths[(task_id, run_id, artifact.artifact_id)] = host_path
             for index, existing in enumerate(records):
                 if existing.logical_path == logical_path:
                     records[index] = artifact
@@ -108,12 +130,68 @@ class InMemoryArtifactStore:
             )
         ]
 
+    def get_artifact(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> ArtifactReference:
+        with self._lock:
+            for (candidate_task_id, candidate_run_id), artifacts in self._artifacts.items():
+                if candidate_task_id != task_id:
+                    continue
+                if run_id is not None and candidate_run_id != run_id:
+                    continue
+                for artifact in artifacts:
+                    if artifact.artifact_id == artifact_id:
+                        return artifact
+        raise KeyError(f"unknown artifact: {task_id}/{run_id or '*'}:{artifact_id}")
+
+    def get_artifact_preview(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> tuple[ArtifactReference, ArtifactPreviewPayload]:
+        artifact = self.get_artifact(task_id, artifact_id, run_id)
+        host_path = self._artifact_host_path(artifact)
+        if not _is_previewable_text(artifact.content_type):
+            return (
+                artifact,
+                ArtifactPreviewPayload(
+                    kind="unavailable",
+                    message="Preview unavailable for this artifact type.",
+                ),
+            )
+        data = host_path.read_bytes()
+        preview_bytes = data[: self._TEXT_PREVIEW_BYTES]
+        text = preview_bytes.decode("utf-8", errors="replace")
+        return (
+            artifact,
+            ArtifactPreviewPayload(
+                kind="markdown" if artifact.content_type == "text/markdown" else "text",
+                text=text,
+                encoding="utf-8",
+                truncated=len(data) > self._TEXT_PREVIEW_BYTES,
+                message=artifact.summary,
+            ),
+        )
+
     def _existing_artifact_id(self, task_id: str, run_id: str, logical_path: str) -> str | None:
         with self._lock:
             for artifact in self._artifacts.get((task_id, run_id), []):
                 if artifact.logical_path == logical_path:
                     return artifact.artifact_id
         return None
+
+    def _artifact_host_path(self, artifact: ArtifactReference) -> Path:
+        with self._lock:
+            host_path = self._artifact_paths.get(
+                (artifact.task_id, artifact.run_id, artifact.artifact_id)
+            )
+        if host_path is None:
+            raise KeyError(f"missing artifact path for {artifact.artifact_id}")
+        return host_path
 
 
 def _guess_content_type(path: Path) -> str:
@@ -127,3 +205,11 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(8192), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _is_previewable_text(content_type: str) -> bool:
+    return content_type.startswith("text/") or content_type in {
+        "application/json",
+        "application/xml",
+        "application/yaml",
+    }

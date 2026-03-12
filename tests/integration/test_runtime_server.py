@@ -24,6 +24,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_ARTIFACT_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
@@ -150,6 +151,26 @@ class RuntimeIntegrationTests(unittest.TestCase):
             artifact_payload = artifacts_response.to_dict()["result"]["artifacts"]
             self.assertEqual(len(artifact_payload), 1)
             self.assertEqual(artifact_payload[0]["logical_path"], "/artifacts/repo_summary.md")
+
+            artifact_get_request = JsonRpcRequest(
+                method=METHOD_TASK_ARTIFACT_GET,
+                params={
+                    "task_id": task_id,
+                    "run_id": run_id,
+                    "artifact_id": artifact_payload[0]["artifact_id"],
+                },
+                id="3b",
+                correlation_id=correlation_id,
+            )
+            artifact_get_response, _ = server.handle_line(
+                json.dumps(artifact_get_request.to_dict())
+            )
+            artifact_get_payload = artifact_get_response.to_dict()["result"]
+            self.assertEqual(
+                artifact_get_payload["artifact"]["artifact_id"], artifact_payload[0]["artifact_id"]
+            )
+            self.assertEqual(artifact_get_payload["preview"]["kind"], "markdown")
+            self.assertIn("#", artifact_get_payload["preview"]["text"])
 
             logs_request = JsonRpcRequest(
                 method=METHOD_TASK_LOGS_STREAM,

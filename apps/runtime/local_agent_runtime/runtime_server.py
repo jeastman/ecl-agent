@@ -15,6 +15,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
+    METHOD_TASK_ARTIFACT_GET,
     METHOD_TASK_ARTIFACTS_LIST,
     METHOD_TASK_CREATE,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -166,6 +167,15 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.task_artifacts_list(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_TASK_ARTIFACT_GET:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.task_artifact_get(request.params),
                     ),
                     [],
                 )

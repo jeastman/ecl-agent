@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from unittest.mock import AsyncMock
+from unittest.mock import patch
 
 from apps.tui.local_agent_tui.protocol.event_stream import consume_task_stream
 from apps.tui.local_agent_tui.protocol.protocol_client import ProtocolClient, ProtocolClientError
@@ -39,19 +40,34 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_list_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
-        client._request = AsyncMock(return_value={"result": {"tasks": []}})  # type: ignore[method-assign]
-        payload = await client.task_list(limit=5)
+        request_mock = AsyncMock(return_value={"result": {"tasks": []}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_list(limit=5)
         self.assertEqual(payload["result"]["tasks"], [])
-        client._request.assert_awaited_once_with("task.list", {"limit": 5})  # type: ignore[attr-defined]
+        request_mock.assert_awaited_once_with("task.list", {"limit": 5})
 
     async def test_task_resume_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
-        client._request = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})  # type: ignore[method-assign]
-        payload = await client.task_resume("task_1", "run_1")
+        request_mock = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_resume("task_1", "run_1")
         self.assertEqual(payload["result"]["task"]["task_id"], "task_1")
-        client._request.assert_awaited_once_with(
+        request_mock.assert_awaited_once_with(
             "task.resume", {"task_id": "task_1", "run_id": "run_1"}
-        )  # type: ignore[attr-defined]
+        )
+
+    async def test_task_artifact_get_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(
+            return_value={"result": {"artifact": {"artifact_id": "artifact_1"}}}
+        )
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_artifact_get("task_1", "artifact_1", "run_1")
+        self.assertEqual(payload["result"]["artifact"]["artifact_id"], "artifact_1")
+        request_mock.assert_awaited_once_with(
+            "task.artifact.get",
+            {"task_id": "task_1", "artifact_id": "artifact_1", "run_id": "run_1"},
+        )
 
     async def test_consume_task_stream_filters_other_tasks_and_stops_on_selected_terminal_event(
         self,

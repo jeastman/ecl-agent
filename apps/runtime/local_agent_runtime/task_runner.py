@@ -489,6 +489,14 @@ class TaskRunner:
             content_type_prefix=content_type_prefix,
         )
 
+    def get_artifact_preview(
+        self,
+        task_id: str,
+        artifact_id: str,
+        run_id: str | None = None,
+    ) -> tuple:
+        return self._artifact_store.get_artifact_preview(task_id, artifact_id, run_id)
+
     @property
     def checkpoint_adapter(self) -> LangGraphCheckpointAdapter | None:
         return self._checkpoint_adapter

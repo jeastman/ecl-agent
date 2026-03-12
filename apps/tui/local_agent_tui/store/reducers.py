@@ -39,16 +39,39 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         selected_task_id=message.get("selected_task_id", state.selected_task_id),
         selected_approval_id=message.get("selected_approval_id", state.selected_approval_id),
         approval_feedback=message.get("approval_feedback", state.approval_feedback),
+        artifact_group_by=str(message.get("artifact_group_by", state.artifact_group_by)),
+        artifact_browser_origin_screen=str(
+            message.get("artifact_browser_origin_screen", state.artifact_browser_origin_screen)
+        ),
+        markdown_viewer_artifact_id=message.get(
+            "markdown_viewer_artifact_id", state.markdown_viewer_artifact_id
+        ),
+        artifact_browser_selected_id=message.get(
+            "artifact_browser_selected_id", state.artifact_browser_selected_id
+        ),
     )
     selected_artifact_id = message.get("selected_artifact_id")
-    if not isinstance(selected_artifact_id, str):
+    if isinstance(selected_artifact_id, str):
+        task_key = _selected_task_key(state_next)
+        if task_key is None:
+            return state_next
+        selected_artifacts = dict(state_next.selected_artifact_id_by_task)
+        selected_artifacts[task_key] = selected_artifact_id
+        state_next = replace(state_next, selected_artifact_id_by_task=selected_artifacts)
+
+    preview_status = message.get("artifact_preview_status")
+    preview_artifact_id = message.get("artifact_preview_artifact_id")
+    if not isinstance(preview_artifact_id, str) or not isinstance(preview_status, str):
         return state_next
-    task_key = _selected_task_key(state_next)
-    if task_key is None:
-        return state_next
-    selected_artifacts = dict(state_next.selected_artifact_id_by_task)
-    selected_artifacts[task_key] = selected_artifact_id
-    return replace(state_next, selected_artifact_id_by_task=selected_artifacts)
+    next_status = dict(state_next.artifact_preview_status_by_artifact)
+    next_status[preview_artifact_id] = preview_status
+    next_errors = dict(state_next.artifact_preview_error_by_artifact)
+    next_errors[preview_artifact_id] = _normalize_error(message.get("artifact_preview_error"))
+    return replace(
+        state_next,
+        artifact_preview_status_by_artifact=next_status,
+        artifact_preview_error_by_artifact=next_errors,
+    )
 
 
 def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> AppState:
@@ -126,6 +149,25 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             state,
             artifacts_by_task=artifacts_by_task,
             selected_artifact_id_by_task=selected_artifact_id_by_task,
+        )
+
+    if name == "task.artifact.get":
+        result = dict(payload["result"])
+        artifact = dict(result.get("artifact", {}))
+        artifact_id = str(artifact.get("artifact_id", ""))
+        if not artifact_id:
+            return state
+        preview_cache = dict(state.artifact_preview_cache)
+        preview_cache[artifact_id] = result
+        preview_status = dict(state.artifact_preview_status_by_artifact)
+        preview_status[artifact_id] = "loaded"
+        preview_errors = dict(state.artifact_preview_error_by_artifact)
+        preview_errors[artifact_id] = None
+        return replace(
+            state,
+            artifact_preview_cache=preview_cache,
+            artifact_preview_status_by_artifact=preview_status,
+            artifact_preview_error_by_artifact=preview_errors,
         )
 
     if name == "task.logs.stream":

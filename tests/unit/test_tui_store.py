@@ -5,6 +5,9 @@ import unittest
 from apps.tui.local_agent_tui.store.app_state import AppStateStore
 from apps.tui.local_agent_tui.store.selectors import (
     approval_count,
+    artifact_browser_rows,
+    selected_artifact_preview,
+    selected_markdown_artifact,
     artifact_count,
     pending_approvals,
     recent_artifacts,
@@ -517,6 +520,90 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(len(state.run_event_buffers[("task_1", "run_1")]), 250)
         self.assertEqual(len(state.artifacts_by_task[("task_1", "run_1")]), 1)
         self.assertEqual(len(state.approvals_by_task[("task_1", "run_1")]), 1)
+
+    def test_artifact_browser_selectors_project_grouping_and_preview(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.artifacts.list",
+                "payload": {
+                    "result": {
+                        "artifacts": [
+                            {
+                                "artifact_id": "artifact_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "display_name": "report.md",
+                                "logical_path": "/artifacts/report.md",
+                                "content_type": "text/markdown",
+                                "created_at": "2026-03-12T00:00:05Z",
+                            },
+                            {
+                                "artifact_id": "artifact_2",
+                                "task_id": "task_1",
+                                "run_id": "run_2",
+                                "display_name": "trace.json",
+                                "logical_path": "/artifacts/trace.json",
+                                "content_type": "application/json",
+                                "created_at": "2026-03-12T00:00:04Z",
+                            },
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "artifact_browser_selected_id": "artifact_1"})
+        store.dispatch(
+            {
+                "kind": "ui",
+                "artifact_preview_artifact_id": "artifact_1",
+                "artifact_preview_status": "loading",
+            }
+        )
+        loading_preview = selected_artifact_preview(store.snapshot())
+        self.assertEqual(loading_preview.status, "loading")
+
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.artifact.get",
+                "payload": {
+                    "result": {
+                        "artifact": {
+                            "artifact_id": "artifact_1",
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "display_name": "report.md",
+                            "logical_path": "/artifacts/report.md",
+                            "content_type": "text/markdown",
+                            "created_at": "2026-03-12T00:00:05Z",
+                        },
+                        "preview": {
+                            "kind": "markdown",
+                            "text": "# Report\n",
+                            "encoding": "utf-8",
+                        },
+                        "external_open_supported": False,
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "markdown_viewer_artifact_id": "artifact_1"})
+        state = store.snapshot()
+        rows = artifact_browser_rows(state)
+        preview = selected_artifact_preview(state)
+        markdown = selected_markdown_artifact(state)
+        self.assertEqual(rows[0].group_label, "task_1")
+        self.assertEqual(preview.status, "loaded")
+        self.assertIn("# Report", preview.body)
+        self.assertEqual(markdown.display_name, "report.md")  # type: ignore[union-attr]
+        store.dispatch({"kind": "ui", "artifact_group_by": "run"})
+        run_rows = artifact_browser_rows(store.snapshot())
+        self.assertEqual(run_rows[0].group_label, "task_1/run_2")
+        store.dispatch({"kind": "ui", "artifact_group_by": "type"})
+        type_rows = artifact_browser_rows(store.snapshot())
+        self.assertEqual(type_rows[0].group_label, "text/markdown")
 
     @staticmethod
     def _dispatch_created(store: AppStateStore) -> None:
