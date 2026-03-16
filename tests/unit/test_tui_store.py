@@ -19,6 +19,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     memory_group_summary,
     memory_scope_groups,
     pending_approvals,
+    pending_approvals_for_selected_task,
     recent_artifacts,
     selected_approval_detail,
     selected_memory_detail,
@@ -220,6 +221,89 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(detail.request_type, "boundary")
         self.assertEqual(detail.policy_context, "sandbox")
         self.assertEqual(detail.requested_action, "/workspace/docs/spec.md")
+
+    def test_selected_task_switch_updates_pending_approval_selection(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.list",
+                "payload": {
+                    "result": {
+                        "tasks": [
+                            {
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "executing",
+                                "objective": "Inspect repo",
+                                "updated_at": "2026-03-12T00:00:00Z",
+                            },
+                            {
+                                "task_id": "task_2",
+                                "run_id": "run_2",
+                                "status": "paused",
+                                "objective": "Review docs",
+                                "updated_at": "2026-03-11T00:00:00Z",
+                            },
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "status": "pending",
+                                "created_at": "2026-03-12T00:00:01Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.approvals.list",
+                "payload": {
+                    "result": {
+                        "approvals": [
+                            {
+                                "approval_id": "approval_2",
+                                "task_id": "task_2",
+                                "run_id": "run_2",
+                                "status": "pending",
+                                "created_at": "2026-03-12T00:00:02Z",
+                            }
+                        ]
+                    }
+                },
+            }
+        )
+
+        store.dispatch({"kind": "ui", "selected_task_id": "task_2"})
+        state = store.snapshot()
+        self.assertEqual(state.selected_approval_id, "approval_2")
+        self.assertEqual(
+            [approval.approval_id for approval in pending_approvals_for_selected_task(state)],
+            ["approval_2"],
+        )
+
+        store.dispatch({"kind": "ui", "selected_task_id": "task_1"})
+        state = store.snapshot()
+        self.assertEqual(state.selected_approval_id, "approval_1")
+        self.assertEqual(
+            [approval.approval_id for approval in pending_approvals_for_selected_task(state)],
+            ["approval_1"],
+        )
 
     def test_command_palette_filters_available_commands(self) -> None:
         store = AppStateStore()

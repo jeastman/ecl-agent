@@ -527,6 +527,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dashboard_keyboard_navigation_updates_selection_and_focus(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -542,13 +543,16 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("down")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_task_id, "task_2")  # type: ignore[attr-defined]
+                approvals = app.screen.query_one("#approval-queue", Static)
+                self.assertIn("network permission", str(approvals.visual))
+                self.assertNotIn("tool permission", str(approvals.visual))
                 await pilot.press("tab")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().focused_pane, "summary")  # type: ignore[attr-defined]
                 await pilot.press("tab")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().focused_pane, "approvals")  # type: ignore[attr-defined]
-                self.assertEqual(app._store.snapshot().selected_approval_id, "approval_1")  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
                 await pilot.press("down")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
@@ -571,6 +575,8 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
                 await pilot.press("escape")
+                await pilot.pause()
+                await pilot.press("down")
                 await pilot.pause()
                 await pilot.press("tab")
                 await pilot.pause()

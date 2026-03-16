@@ -6,7 +6,7 @@ from ..store.app_state import AppState
 from ..store.selectors import (
     dashboard_empty_state,
     footer_hints,
-    pending_approvals,
+    pending_approvals_for_selected_task,
     recent_artifacts,
     recent_tasks,
     selected_task_summary,
@@ -71,7 +71,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         tasks = recent_tasks(state)
         self.query_one(TaskListWidget).update_tasks(tasks, focused=state.focused_pane == "tasks")
         self.query_one(ApprovalQueueWidget).update_approvals(
-            pending_approvals(state, limit=5),
+            pending_approvals_for_selected_task(state, limit=5),
             focused=state.focused_pane == "approvals",
             inbox_mode=False,
         )

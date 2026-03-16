@@ -34,6 +34,7 @@ from .store.selectors import (
     memory_entry_items,
     memory_scope_groups,
     pending_approvals,
+    pending_approvals_for_selected_task,
     selected_artifact_browser_item,
     selected_approval_detail,
     selected_artifact_preview,
@@ -812,7 +813,11 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def _move_approval_selection(self, delta: int) -> None:
         state = self._store.snapshot()
-        approvals = pending_approvals(state)
+        approvals = (
+            pending_approvals_for_selected_task(state)
+            if state.active_screen == "dashboard" and state.focused_pane == "approvals"
+            else pending_approvals(state)
+        )
         if not approvals:
             return
         approval_ids = [approval.approval_id for approval in approvals]

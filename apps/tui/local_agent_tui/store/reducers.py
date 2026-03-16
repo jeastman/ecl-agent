@@ -32,12 +32,19 @@ def reduce_app_state(state: AppState, message: RuntimeMessage) -> AppState:
 
 def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
     assert message["kind"] == "ui"
+    selected_task_id = message.get("selected_task_id", state.selected_task_id)
+    selected_approval_id = message.get("selected_approval_id", state.selected_approval_id)
+    if "selected_task_id" in message and "selected_approval_id" not in message:
+        selected_approval_id = _selected_task_pending_approval_id(
+            state.approvals_by_task,
+            task_id=selected_task_id if isinstance(selected_task_id, str) else None,
+        )
     state_next = replace(
         state,
         active_screen=str(message.get("active_screen", state.active_screen)),
         focused_pane=str(message.get("focused_pane", state.focused_pane)),
-        selected_task_id=message.get("selected_task_id", state.selected_task_id),
-        selected_approval_id=message.get("selected_approval_id", state.selected_approval_id),
+        selected_task_id=selected_task_id,
+        selected_approval_id=selected_approval_id,
         approval_feedback=message.get("approval_feedback", state.approval_feedback),
         artifact_group_by=str(message.get("artifact_group_by", state.artifact_group_by)),
         artifact_browser_origin_screen=str(
@@ -637,6 +644,29 @@ def _resolved_selected_approval_id(
     if current_id in pending_ids:
         return current_id
     return pending_ids[0] if pending_ids else None
+
+
+def _selected_task_pending_approval_id(
+    approvals_by_task: dict[tuple[str, str], list[dict[str, Any]]],
+    *,
+    task_id: str | None,
+) -> str | None:
+    if task_id is None:
+        return None
+    pending_entries: list[dict[str, Any]] = []
+    for (entry_task_id, _run_id), entries in approvals_by_task.items():
+        if entry_task_id != task_id:
+            continue
+        for approval in entries:
+            status = str(approval.get("status", "pending"))
+            if status in {"pending", "waiting"}:
+                pending_entries.append(approval)
+    pending_entries.sort(key=lambda item: str(item.get("created_at", "")), reverse=True)
+    for approval in pending_entries:
+        approval_id = approval.get("approval_id")
+        if isinstance(approval_id, str):
+            return approval_id
+    return None
 
 
 def _resolved_selected_diagnostic_id(

@@ -447,6 +447,17 @@ def pending_approvals(
     return approvals
 
 
+def pending_approvals_for_selected_task(
+    state: AppState,
+    *,
+    limit: int | None = None,
+) -> list[ApprovalQueueItemViewModel]:
+    approvals = selected_task_pending_approvals(state)
+    if limit is not None:
+        approvals = approvals[:limit]
+    return approvals
+
+
 def selected_approval_detail(state: AppState) -> ApprovalDetailViewModel | None:
     approval = _selected_approval(state)
     if approval is None:
