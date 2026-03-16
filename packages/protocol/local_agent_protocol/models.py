@@ -16,6 +16,7 @@ METHOD_TASK_GET = "task.get"
 METHOD_TASK_APPROVE = "task.approve"
 METHOD_TASK_APPROVALS_LIST = "task.approvals.list"
 METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
+METHOD_TASK_REPLY = "task.reply"
 METHOD_TASK_RESUME = "task.resume"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
@@ -326,6 +327,48 @@ class TaskResumeParams:
 
 @dataclass(slots=True)
 class TaskResumeResult:
+    task: TaskSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class TaskReplyParams:
+    task_id: str
+    message: str
+    run_id: str | None = None
+    background: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(
+            {
+                "task_id": self.task_id,
+                "run_id": self.run_id,
+                "message": self.message,
+                "background": self.background if self.background else None,
+            }
+        )
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskReplyParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.reply requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.reply run_id must be a string when provided")
+        message = str(payload.get("message", "")).strip()
+        if not message:
+            raise ValueError("task.reply requires message")
+        background = payload.get("background", False)
+        if not isinstance(background, bool):
+            raise ValueError("task.reply background must be a boolean when provided")
+        return cls(task_id=task_id, run_id=run_id, message=message, background=background)
+
+
+@dataclass(slots=True)
+class TaskReplyResult:
     task: TaskSnapshot
 
     def to_dict(self) -> dict[str, Any]:

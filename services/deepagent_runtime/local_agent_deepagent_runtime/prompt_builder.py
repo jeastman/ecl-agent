@@ -16,10 +16,10 @@ class PromptBuilder:
     ) -> str:
         constraint_lines = _format_list(constraints or ["Honor sandbox and policy constraints."])
         success_lines = _format_list(success_criteria or ["Satisfy the user objective."])
-        workspace_lines = _format_list(workspace_roots)
         role_lines = _format_list(
             available_roles or ["No project-owned subagents are configured for this run."]
         )
+        _ = workspace_roots
         return "\n".join(
             [
                 "You are the project-owned primary runtime agent.",
@@ -33,8 +33,10 @@ class PromptBuilder:
                 "Objective:",
                 objective.strip(),
                 "",
-                "Governed Workspace Roots:",
-                workspace_lines,
+                "Accessible Workspace:",
+                "- The governed workspace is mounted at /.",
+                "- Inspect files with virtual paths such as /people.csv.",
+                "- Do not reference host paths from the runtime configuration or task metadata.",
                 "",
                 "Constraints:",
                 constraint_lines,

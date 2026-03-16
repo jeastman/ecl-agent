@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from packages.protocol.local_agent_protocol.models import ArtifactReference
 from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
@@ -87,6 +88,28 @@ class ArtifactStoreTests(unittest.TestCase):
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(first.artifact_id, second.artifact_id)
         self.assertEqual(artifacts[0].byte_size, len("# Updated Summary\n"))
+
+    def test_restore_artifact_rehydrates_existing_metadata(self) -> None:
+        self.sandbox.write_text("/artifacts/final_response.md", "# Final\n")
+        restored = self.store.restore_artifact(
+            ArtifactReference(
+                artifact_id="artifact_1",
+                task_id="task_1",
+                run_id="run_1",
+                logical_path="/artifacts/final_response.md",
+                content_type="text/markdown",
+                created_at="2026-03-12T00:00:00Z",
+                persistence_class="run",
+                display_name="final_response.md",
+                hash="existing-hash",
+            ),
+            sandbox_path="/artifacts/final_response.md",
+        )
+        self.assertEqual(restored.artifact_id, "artifact_1")
+        self.assertEqual(restored.logical_path, "/artifacts/final_response.md")
+        self.assertEqual(
+            self.store.get_artifact("task_1", "artifact_1", "run_1").artifact_id, "artifact_1"
+        )
 
 
 if __name__ == "__main__":

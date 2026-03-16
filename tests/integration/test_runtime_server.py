@@ -138,7 +138,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             get_response, _ = server.handle_line(json.dumps(get_request.to_dict()))
             get_payload = get_response.to_dict()
             self.assertEqual(get_payload["result"]["task"]["task_id"], task_id)
-            self.assertEqual(get_payload["result"]["task"]["artifact_count"], 1)
+            self.assertEqual(get_payload["result"]["task"]["artifact_count"], 2)
             self.assertNotIn("active_subagent", get_payload["result"]["task"])
 
             artifacts_request = JsonRpcRequest(
@@ -149,15 +149,24 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             artifacts_response, _ = server.handle_line(json.dumps(artifacts_request.to_dict()))
             artifact_payload = artifacts_response.to_dict()["result"]["artifacts"]
-            self.assertEqual(len(artifact_payload), 1)
-            self.assertEqual(artifact_payload[0]["logical_path"], "/artifacts/repo_summary.md")
+            self.assertEqual(len(artifact_payload), 2)
+            self.assertTrue(
+                any(
+                    artifact["logical_path"] == "/artifacts/repo_summary.md"
+                    for artifact in artifact_payload
+                )
+            )
 
             artifact_get_request = JsonRpcRequest(
                 method=METHOD_TASK_ARTIFACT_GET,
                 params={
                     "task_id": task_id,
                     "run_id": run_id,
-                    "artifact_id": artifact_payload[0]["artifact_id"],
+                    "artifact_id": next(
+                        artifact["artifact_id"]
+                        for artifact in artifact_payload
+                        if artifact["logical_path"] == "/artifacts/repo_summary.md"
+                    ),
                 },
                 id="3b",
                 correlation_id=correlation_id,
@@ -1317,6 +1326,38 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("recovery.discovered", event_types)
             self.assertIn("task.resumed", event_types)
             self.assertIn("task.completed", event_types)
+
+            artifacts_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_ARTIFACTS_LIST,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="6",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            artifacts = artifacts_response.to_dict()["result"]["artifacts"]
+            self.assertEqual(len(artifacts), 1)
+
+            artifact_get_response, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_ARTIFACT_GET,
+                        params={
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "artifact_id": artifacts[0]["artifact_id"],
+                        },
+                        id="7",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertEqual(
+                artifact_get_response.to_dict()["result"]["preview"]["kind"],
+                "markdown",
+            )
 
     def test_runtime_approval_round_trip_and_restart_recovery(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

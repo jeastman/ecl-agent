@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import ast
 import os
 import sys
 import threading
@@ -548,7 +549,8 @@ class AgentTUI(App):  # type: ignore[misc]
         self.run_worker(self._reconnect_runtime(), group="runtime-reconnect", exclusive=True)
 
     def handle_task_detail_command(self, raw_command: str) -> None:
-        command = raw_command.strip().lower()
+        stripped = raw_command.strip()
+        command = stripped.lower()
         clear_input = getattr(self.screen.query_one(InputBoxWidget), "clear_input", None)
         if callable(clear_input):
             clear_input()
@@ -556,10 +558,46 @@ class AgentTUI(App):  # type: ignore[misc]
             self._store.dispatch(
                 {
                     "kind": "ui",
-                    "task_input_feedback": "Supported commands: resume, approvals, artifacts, diagnostics, memory, config, help.",
+                    "task_input_feedback": "Supported commands: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help.",
                 }
             )
             self._render_state()
+            return
+        if command.startswith("reply "):
+            state = self._store.snapshot()
+            task = state.task_snapshots.get(state.selected_task_id or "")
+            if task is None:
+                return
+            if str(task.get("pause_reason", "")).lower() != "awaiting_user_input":
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "task_input_feedback": "Reply is only available when the task is awaiting user input.",
+                    }
+                )
+                self._render_state()
+                return
+            message = stripped[6:].strip()
+            if not message:
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "task_input_feedback": "Reply requires a non-empty message.",
+                    }
+                )
+                self._render_state()
+                return
+            self._store.dispatch({"kind": "ui", "task_input_feedback": "Submitting reply..."})
+            self._render_state()
+            self.run_worker(
+                self._reply_selected_task(
+                    task_id=str(task["task_id"]),
+                    run_id=str(task.get("run_id", "")) or None,
+                    message=message,
+                ),
+                group="task-reply",
+                exclusive=True,
+            )
             return
         commands = {
             "resume": self.action_resume_task,
@@ -576,7 +614,7 @@ class AgentTUI(App):  # type: ignore[misc]
                 {
                     "kind": "ui",
                     "task_input_feedback": (
-                        f"Unsupported command '{command}'. Use: resume, approvals, artifacts, diagnostics, memory, config, help."
+                        f"Unsupported command '{command}'. Use: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
                     ),
                 }
             )
@@ -621,10 +659,40 @@ class AgentTUI(App):  # type: ignore[misc]
         try:
             response = await self._client.task_resume(task_id, run_id)
             self._store.dispatch({"kind": "rpc", "name": "task.resume", "payload": response})
+            self._store.dispatch({"kind": "ui", "task_input_feedback": "Resume requested."})
             self._render_state()
             self._start_selected_task_stream(task_id=task_id, run_id=run_id)
         except ProtocolClientError as exc:
-            self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+            await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "task_input_feedback": f"Resume failed: {_protocol_error_message(exc)}",
+                }
+            )
+            self._render_state()
+
+    async def _reply_selected_task(
+        self,
+        *,
+        task_id: str,
+        run_id: str | None,
+        message: str,
+    ) -> None:
+        try:
+            response = await self._client.task_reply(task_id, message, run_id)
+            self._store.dispatch({"kind": "rpc", "name": "task.reply", "payload": response})
+            self._store.dispatch({"kind": "ui", "task_input_feedback": "Reply accepted."})
+            self._render_state()
+            self._start_selected_task_stream(task_id=task_id, run_id=run_id)
+        except ProtocolClientError as exc:
+            await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "task_input_feedback": f"Reply failed: {_protocol_error_message(exc)}",
+                }
+            )
             self._render_state()
 
     def action_open_artifacts(self) -> None:
@@ -868,6 +936,22 @@ class AgentTUI(App):  # type: ignore[misc]
         decision: str,
     ) -> None:
         try:
+            latest_task = await self._refresh_task_snapshot(task_id=task_id, run_id=run_id or None)
+            pending_approval_id = latest_task.get("pending_approval_id")
+            if (
+                isinstance(pending_approval_id, str)
+                and pending_approval_id
+                and pending_approval_id != approval_id
+            ):
+                await self._load_task_related(task_id=task_id, run_id=run_id or None)
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "approval_feedback": "Approval request is stale. Refreshed pending approvals.",
+                    }
+                )
+                self._render_state()
+                return
             response = await self._client.task_approve(
                 task_id,
                 run_id or None,
@@ -881,13 +965,30 @@ class AgentTUI(App):  # type: ignore[misc]
             self._render_state()
             self._start_selected_task_stream(task_id=task_id, run_id=run_id or None)
         except ProtocolClientError as exc:
+            await self._refresh_task_snapshot(task_id=task_id, run_id=run_id or None)
+            await self._load_task_related(task_id=task_id, run_id=run_id or None)
+            error_text = str(exc)
+            feedback = f"Approval request failed: {error_text}"
+            if "approval is not the active pending approval for this run" in error_text:
+                feedback = "Approval request is stale. Refreshed pending approvals."
             self._store.dispatch(
                 {
                     "kind": "ui",
-                    "approval_feedback": f"Approval request failed: {exc}",
+                    "approval_feedback": feedback,
                 }
             )
             self._render_state()
+
+    async def _refresh_task_snapshot(
+        self,
+        *,
+        task_id: str,
+        run_id: str | None,
+    ) -> dict[str, Any]:
+        task_response = await self._client.task_get(task_id, run_id)
+        self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_response})
+        task_payload = task_response.get("result", {}).get("task", {})
+        return dict(task_payload) if isinstance(task_payload, dict) else {}
 
     def _move_artifact_browser_selection(self, delta: int) -> None:
         rows = artifact_browser_rows(self._store.snapshot())
@@ -1450,6 +1551,22 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         selected = next((item for item in items if item.is_selected), items[0])
         self._store.dispatch({"kind": "ui", "selected_diagnostic_id": selected.diagnostic_id})
+
+
+def _protocol_error_message(error: Exception) -> str:
+    text = str(error).strip()
+    if not text:
+        return "Unknown runtime error."
+    try:
+        payload = ast.literal_eval(text)
+    except (SyntaxError, ValueError):
+        return text
+    if not isinstance(payload, dict):
+        return text
+    message = payload.get("message")
+    if isinstance(message, str) and message.strip():
+        return message.strip()
+    return text
 
 
 def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:

@@ -21,6 +21,12 @@ class PolicyDeniedInterrupt(Exception):
 
 
 @dataclass(slots=True)
+class ClarificationRequiredInterrupt(Exception):
+    question: str
+    reason_code: str | None = None
+
+
+@dataclass(slots=True)
 class InterruptBridge:
     governed_operation: Callable[[OperationContext], None] | None = None
     checkpoint_controller: CheckpointController | None = None
@@ -34,6 +40,10 @@ class InterruptBridge:
         except ApprovalRequiredInterrupt:
             self._record_interrupt_checkpoint("awaiting_approval")
             raise
+
+    def request_user_input(self, question: str, *, reason_code: str | None = None) -> None:
+        self._record_interrupt_checkpoint("awaiting_user_input")
+        raise ClarificationRequiredInterrupt(question=question, reason_code=reason_code)
 
     def _record_interrupt_checkpoint(self, reason: str) -> None:
         if self.checkpoint_controller is None:

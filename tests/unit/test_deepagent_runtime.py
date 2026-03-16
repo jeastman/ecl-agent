@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 from typing import Any, cast
 
+from langchain_core.messages import AIMessage
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
     ResolvedSubagentConfiguration,
@@ -56,6 +57,9 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("planner", prompt)
         self.assertIn("researcher", prompt)
         self.assertIn("native subagents", prompt.lower())
+        self.assertIn("The governed workspace is mounted at /.", prompt)
+        self.assertIn("/people.csv", prompt)
+        self.assertNotIn("/tmp/workspace", prompt)
 
     def test_subagent_prompt_includes_role_identity_overlay_and_scope_summary(self) -> None:
         resolved = _resolved_subagent(role_id="researcher")
@@ -386,12 +390,22 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         )
 
         self.assertTrue(result.success)
-        self.assertEqual(result.output_artifacts, ["/artifacts/result.md"])
+        self.assertEqual(
+            result.output_artifacts,
+            [
+                "/artifacts/result.md",
+                "/artifacts/task_1/run_1/final_response.md",
+            ],
+        )
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
         self.assertEqual(captures["agent_kwargs"]["skills"], ["# Skill\nUse it."])
         self.assertIn("skill-installer", _tool_names(captures["agent_kwargs"]["tools"]))
         self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "Researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
+        self.assertEqual(
+            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            "Delegated execution started and completed successfully.\n",
+        )
         self.assertIn("subagent.started", [event_type for event_type, _ in events])
         self.assertIn("subagent.completed", [event_type for event_type, _ in events])
         self.assertTrue(
@@ -459,6 +473,39 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         )
         self.assertEqual(completed_events[0]["status"], "failed")
         self.assertEqual(completed_events[0]["subagentId"], "researcher")
+
+    def test_harness_captures_final_response_artifact_for_failed_result_payload(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FailingResultAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.error_message, "model reported failure")
+        self.assertEqual(
+            result.output_artifacts,
+            ["/artifacts/task_1/run_1/final_response.md"],
+        )
+        self.assertEqual(
+            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            "Model produced a final response before failing.\n",
+        )
 
     def test_harness_pauses_cleanly_when_runtime_requests_approval(self) -> None:
         request = AgentExecutionRequest(
@@ -542,6 +589,202 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(checkpoint_events[0]["checkpoint_id"], "ckpt_1")
         self.assertEqual(checkpoint_events[1]["checkpoint_id"], "ckpt_2")
 
+    def test_harness_uses_persisted_conversation_messages_when_provided(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+            conversation_messages=(
+                {"role": "user", "content": "Inspect the repository"},
+                {"role": "assistant", "content": "Which area should I inspect?"},
+                {"role": "user", "content": "Focus on docs only."},
+            ),
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            captures["invoke_payload"]["messages"],
+            [
+                {"role": "user", "content": "Inspect the repository"},
+                {"role": "assistant", "content": "Which area should I inspect?"},
+                {"role": "user", "content": "Focus on docs only."},
+            ],
+        )
+
+    def test_harness_pauses_for_request_user_input_tool(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+            checkpoint_controller=FakeCheckpointController(),
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: ClarificationAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.paused)
+        self.assertEqual(result.pause_reason, "awaiting_user_input")
+        self.assertEqual(result.requested_user_input, "Which area should I inspect?")
+
+    def test_harness_skips_final_response_artifact_for_empty_or_missing_content(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: EmptyAssistantAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.output_artifacts, [])
+        self.assertFalse(self.sandbox.exists("/artifacts/task_1/run_1/final_response.md"))
+
+    def test_harness_writes_run_specific_final_response_paths(self) -> None:
+        harness = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, {}),
+        )
+        first_request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+        second_sandbox = self.factory.for_run(
+            task_id="task_1",
+            run_id="run_2",
+            workspace_roots=[str(self.workspace_root)],
+        )
+        second_request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_2",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=second_sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        first_result = harness.execute(first_request, on_event=lambda *_: None)
+        second_result = harness.execute(second_request, on_event=lambda *_: None)
+
+        self.assertIn("/artifacts/task_1/run_1/final_response.md", first_result.output_artifacts)
+        self.assertIn("/artifacts/task_1/run_2/final_response.md", second_result.output_artifacts)
+        self.assertTrue(self.sandbox.exists("/artifacts/task_1/run_1/final_response.md"))
+        self.assertTrue(second_sandbox.exists("/artifacts/task_1/run_2/final_response.md"))
+
+    def test_harness_captures_block_based_assistant_content(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: BlockAssistantAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertIn("/artifacts/task_1/run_1/final_response.md", result.output_artifacts)
+        self.assertEqual(
+            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            "First block\nSecond block\n",
+        )
+
+    def test_harness_captures_langchain_ai_message_content(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: AIMessageAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertIn("/artifacts/task_1/run_1/final_response.md", result.output_artifacts)
+        self.assertEqual(
+            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            "AIMessage response body\n",
+        )
+
 
 class FakeCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
@@ -595,6 +838,84 @@ class FailingCompiledAgent:
                     lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
                 )
         raise AssertionError("expected delegated failure before agent completion")
+
+
+class FailingResultAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        return {
+            "success": False,
+            "error": "model reported failure",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "Model produced a final response before failing.",
+                }
+            ],
+        }
+
+
+class ClarificationAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        tool = next(tool for tool in self._tools if tool.name == "request_user_input")
+        tool.invoke({"question": "Which area should I inspect?"})
+        raise AssertionError("request_user_input should interrupt execution")
+
+
+class EmptyAssistantAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        return {"messages": [{"role": "assistant", "content": "   "}]}
+
+
+class BlockAssistantAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        return {
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "First block"},
+                        {"type": "reasoning", "thinking": "ignore"},
+                        {"type": "output_text", "text": "Second block"},
+                    ],
+                }
+            ]
+        }
+
+
+class AIMessageAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        return {"messages": [AIMessage(content="AIMessage response body")]}
 
 
 class FakeCheckpointController:

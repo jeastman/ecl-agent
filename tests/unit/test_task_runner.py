@@ -171,6 +171,66 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(failure.message, "boom")
         self.assertEqual(bus.list_events(task_id, run_id)[-1].event.event_type, "task.failed")
 
+    def test_task_runner_registers_run_scoped_final_response_artifact_and_preview(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=FinalResponseHarness(),
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        artifacts = runner.list_artifacts(task_id, run_id)
+        self.assertEqual(len(artifacts), 1)
+        self.assertEqual(
+            artifacts[0].logical_path,
+            f"/artifacts/{task_id}/{run_id}/final_response.md",
+        )
+        artifact, preview = runner.get_artifact_preview(task_id, artifacts[0].artifact_id, run_id)
+        self.assertEqual(artifact.logical_path, f"/artifacts/{task_id}/{run_id}/final_response.md")
+        self.assertEqual(preview.kind, "markdown")
+        self.assertEqual(preview.text, "# Final Response\nImportant execution detail.\n")
+
+    def test_task_runner_keeps_failure_summary_and_registers_failure_artifact(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=FailureWithArtifactHarness(),
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.latest_summary, "Model reported failure.")
+        self.assertEqual(snapshot.artifact_count, 1)
+        artifacts = runner.list_artifacts(task_id, run_id)
+        self.assertEqual(
+            artifacts[0].logical_path,
+            f"/artifacts/{task_id}/{run_id}/final_response.md",
+        )
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertEqual(
+            event_types,
+            ["task.created", "task.started", "artifact.created", "task.failed"],
+        )
+
     def test_task_runner_pauses_and_resumes_from_checkpoint_metadata(self) -> None:
         store = InMemoryRunStateStore()
         bus = InMemoryEventBus()
@@ -230,6 +290,58 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(metrics.artifact_count, 1)
         self.assertIsNotNone(metrics.started_at)
         self.assertIsNotNone(metrics.ended_at)
+
+    def test_task_runner_replies_and_continues_same_checkpoint_thread(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=ClarificationHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=[str(self.workspace_root)],
+            identity_bundle_text="identity",
+        )
+
+        paused_snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(paused_snapshot.status, TaskStatus.PAUSED)
+        self.assertEqual(paused_snapshot.pause_reason, "awaiting_user_input")
+        initial_thread_id = paused_snapshot.checkpoint_thread_id
+
+        resumed_snapshot = runner.reply_to_run(
+            task_id,
+            "Focus on docs only.",
+            run_id=run_id,
+            identity_bundle_text="identity",
+        )
+
+        self.assertEqual(resumed_snapshot.status, TaskStatus.COMPLETED)
+        self.assertEqual(resumed_snapshot.checkpoint_thread_id, initial_thread_id)
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertIn("task.user_input_received", event_types)
+        messages = durable_services.run_message_store.list_messages(task_id, run_id)
+        self.assertEqual(
+            [(message.role, message.content) for message in messages],
+            [
+                (
+                    "user",
+                    "Inspect the repo\n\nComplete the objective using governed tools and native Deep Agent delegation when it improves focus or isolation.",
+                ),
+                ("assistant", "Which area should I inspect?"),
+                ("user", "Focus on docs only."),
+                ("assistant", "Completed after user clarification."),
+            ],
+        )
 
     def test_task_runner_requests_approval_and_resumes_after_approval(self) -> None:
         store = InMemoryRunStateStore()
@@ -421,6 +533,29 @@ class RaisingHarness:
         raise RuntimeError("boom")
 
 
+class FinalResponseHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+        request.sandbox.write_text(path, "# Final Response\nImportant execution detail.\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Captured final response.",
+            output_artifacts=[path],
+        )
+
+
+class FailureWithArtifactHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+        request.sandbox.write_text(path, "Model produced a final response before failing.\n")
+        return AgentExecutionResult(
+            success=False,
+            summary="Model reported failure.",
+            output_artifacts=[path],
+            error_message="model reported failure",
+        )
+
+
 class PauseThenResumeHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
         controller = request.checkpoint_controller
@@ -445,6 +580,25 @@ class PauseThenResumeHarness:
             success=True,
             summary="Completed after resume.",
             output_artifacts=["/artifacts/resumed.md"],
+        )
+
+
+class ClarificationHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        if len(request.conversation_messages) <= 1:
+            return AgentExecutionResult(
+                success=False,
+                summary="Which area should I inspect?",
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting_user_input",
+                requested_user_input="Which area should I inspect?",
+            )
+        return AgentExecutionResult(
+            success=True,
+            summary="Completed after user clarification.",
+            output_artifacts=[],
+            assistant_response="Completed after user clarification.",
         )
 
 

@@ -41,10 +41,12 @@ from packages.protocol.local_agent_protocol.models import (
     TaskGetResult,
     TaskListParams,
     TaskListResult,
-    TaskResumeParams,
-    TaskResumeResult,
     TaskLogsStreamParams,
     TaskLogsStreamResult,
+    TaskReplyParams,
+    TaskReplyResult,
+    TaskResumeParams,
+    TaskResumeResult,
 )
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 from services.memory_service.local_agent_memory_service.memory_promotion import (
@@ -152,6 +154,18 @@ class MethodHandlers:
                 request.task_id,
                 request.run_id,
                 background=background,
+            )
+        )
+
+    def task_reply(self, params: dict) -> TaskReplyResult:
+        request = TaskReplyParams.from_dict(params)
+        return TaskReplyResult(
+            task=self.task_runner.reply_to_run(
+                request.task_id,
+                request.message,
+                run_id=request.run_id,
+                identity_bundle_text=self.identity.content,
+                background=request.background,
             )
         )
 

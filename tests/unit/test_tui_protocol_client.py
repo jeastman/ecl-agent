@@ -99,6 +99,17 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
             "task.resume", {"task_id": "task_1", "run_id": "run_1"}
         )
 
+    async def test_task_reply_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_reply("task_1", "Focus on docs only.", "run_1")
+        self.assertEqual(payload["result"]["task"]["task_id"], "task_1")
+        request_mock.assert_awaited_once_with(
+            "task.reply",
+            {"task_id": "task_1", "run_id": "run_1", "message": "Focus on docs only."},
+        )
+
     async def test_task_diagnostics_list_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         request_mock = AsyncMock(return_value={"result": {"diagnostics": []}})

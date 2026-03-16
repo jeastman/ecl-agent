@@ -11,6 +11,7 @@ class EventType(StrEnum):
     CHECKPOINT_SAVED = "checkpoint.saved"
     TASK_PAUSED = "task.paused"
     TASK_RESUMED = "task.resumed"
+    TASK_USER_INPUT_RECEIVED = "task.user_input_received"
     APPROVAL_REQUESTED = "approval.requested"
     POLICY_DENIED = "policy.denied"
     RECOVERY_DISCOVERED = "recovery.discovered"

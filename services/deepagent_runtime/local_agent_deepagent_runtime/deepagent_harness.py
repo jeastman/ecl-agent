@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, Protocol, cast
 
 from deepagents import create_deep_agent
@@ -10,6 +11,7 @@ from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, Skil
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
+    ClarificationRequiredInterrupt,
     InterruptBridge,
     PolicyDeniedInterrupt,
 )
@@ -54,6 +56,15 @@ class CompiledAgent(Protocol):
     def invoke(
         self, input: dict[str, Any], config: dict[str, Any] | None = None
     ) -> dict[str, Any]: ...
+
+
+@dataclass(slots=True)
+class _CompletedAgentOutcome:
+    success: bool
+    summary: str
+    artifact_paths: list[str]
+    error_message: str | None = None
+    final_response: str | None = None
 
 
 class LangChainDeepAgentHarness:
@@ -117,6 +128,7 @@ class LangChainDeepAgentHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=interrupt_bridge.authorize,
             skill_install_handler=request.skill_install_handler,
+            user_input_handler=interrupt_bridge.request_user_input,
         )
         try:
             if request.checkpoint_controller is not None:
@@ -124,14 +136,16 @@ class LangChainDeepAgentHarness:
                     "resumed_before_invoke" if request.resume_from_checkpoint_id else "run_started"
                 )
                 callback("checkpoint.saved", metadata.to_dict())
-            summary, artifact_paths = self._run_agent_task(request, tools, prompt, callback)
-            if request.checkpoint_controller is not None:
+            outcome = self._run_agent_task(request, tools, prompt, callback)
+            if outcome.success and request.checkpoint_controller is not None:
                 metadata = request.checkpoint_controller.record_checkpoint("run_completed")
                 callback("checkpoint.saved", metadata.to_dict())
             return AgentExecutionResult(
-                success=True,
-                summary=summary,
-                output_artifacts=artifact_paths,
+                success=outcome.success,
+                summary=outcome.summary,
+                output_artifacts=outcome.artifact_paths,
+                error_message=outcome.error_message,
+                assistant_response=outcome.final_response,
             )
         except ApprovalRequiredInterrupt as exc:
             return AgentExecutionResult(
@@ -142,6 +156,15 @@ class LangChainDeepAgentHarness:
                 pause_reason="awaiting approval",
                 awaiting_approval=True,
                 pending_approval_id=exc.approval_id,
+            )
+        except ClarificationRequiredInterrupt as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary=exc.question,
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting_user_input",
+                requested_user_input=exc.question,
             )
         except PolicyDeniedInterrupt as exc:
             return AgentExecutionResult(
@@ -180,7 +203,7 @@ class LangChainDeepAgentHarness:
         tools: SandboxToolBindings,
         prompt: str,
         callback: EventCallback,
-    ) -> tuple[str, list[str]]:
+    ) -> _CompletedAgentOutcome:
         model = self._model_factory(
             self._model_name,
             model_provider=self._model_provider,
@@ -224,7 +247,7 @@ class LangChainDeepAgentHarness:
         )
         result = _invoke_agent(
             agent,
-            {"messages": [{"role": "user", "content": _execution_prompt(request)}]},
+            {"messages": _conversation_payload(request)},
             config=(
                 request.checkpoint_controller.build_invoke_config()
                 if request.checkpoint_controller is not None
@@ -232,7 +255,23 @@ class LangChainDeepAgentHarness:
             ),
         )
         summary = _extract_summary(result)
-        return summary, tools.written_paths
+        artifact_paths = list(tools.written_paths)
+        final_response = _extract_final_assistant_response(result)
+        final_response_artifact_path = _write_final_response_artifact(
+            request=request,
+            final_response=final_response,
+        )
+        if final_response_artifact_path is not None:
+            artifact_paths.append(final_response_artifact_path)
+        success = bool(result.get("success", True))
+        error_message = _extract_error_message(result)
+        return _CompletedAgentOutcome(
+            success=success,
+            summary=summary,
+            artifact_paths=artifact_paths,
+            error_message=error_message if not success else None,
+            final_response=final_response,
+        )
 
 
 def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
@@ -272,22 +311,22 @@ def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
             capability_aliases=("skill_installer", "skills.install"),
             requires_policy=False,
         ),
+        ResolvedToolBinding(
+            tool_id="request_user_input",
+            capability_aliases=("request_user_input", "user_input", "conversation"),
+            requires_policy=False,
+        ),
     )
 
 
-def _execution_prompt(request: "AgentExecutionRequest") -> str:
-    sections = [
-        request.objective.strip(),
-        "",
-        "Complete the objective using governed tools and native Deep Agent delegation when it improves focus or isolation.",
-    ]
-    if request.constraints:
-        sections.extend(["", "Constraints:"])
-        sections.extend(f"- {item}" for item in request.constraints if item.strip())
-    if request.success_criteria:
-        sections.extend(["", "Success Criteria:"])
-        sections.extend(f"- {item}" for item in request.success_criteria if item.strip())
-    return "\n".join(sections).strip()
+def _conversation_payload(request: "AgentExecutionRequest") -> list[dict[str, str]]:
+    if request.conversation_messages:
+        return [
+            {"role": message["role"], "content": message["content"]}
+            for message in request.conversation_messages
+            if message.get("role") and message.get("content")
+        ]
+    return [{"role": "user", "content": request.objective.strip()}]
 
 
 def _skill_payloads(skills: tuple[SkillDescriptor, ...]) -> list[str]:
@@ -319,6 +358,83 @@ def _extract_summary(result: dict[str, Any]) -> str:
             if isinstance(dict_content, str) and dict_content.strip():
                 return _truncate(dict_content.strip(), 280)
     return "Deep Agent execution completed."
+
+
+def _extract_final_assistant_response(result: dict[str, Any]) -> str | None:
+    messages = result.get("messages", [])
+    for message in reversed(messages):
+        role = getattr(message, "role", None)
+        message_type = getattr(message, "type", None)
+        content = getattr(message, "content", None)
+        content_blocks = getattr(message, "content_blocks", None)
+        if isinstance(message, dict):
+            role = message.get("role", role)
+            message_type = message.get("type", message_type)
+            content = message.get("content", content)
+            content_blocks = message.get("content_blocks", content_blocks)
+        if role != "assistant" and message_type != "ai":
+            continue
+        normalized = _normalize_message_content(content_blocks)
+        if normalized is None:
+            normalized = _normalize_message_content(content)
+        if normalized is not None:
+            return normalized
+    return None
+
+
+def _write_final_response_artifact(
+    *, request: "AgentExecutionRequest", final_response: str | None
+) -> str | None:
+    if final_response is None:
+        return None
+    sandbox_path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+    request.sandbox.write_text(sandbox_path, f"{final_response}\n")
+    return request.sandbox.normalize_path(sandbox_path)
+
+
+def _extract_error_message(result: dict[str, Any]) -> str | None:
+    error = result.get("error")
+    if isinstance(error, str) and error.strip():
+        return error.strip()
+    return None
+
+
+def _normalize_message_content(content: Any) -> str | None:
+    if isinstance(content, str):
+        stripped = content.strip()
+        return stripped or None
+    if not isinstance(content, list):
+        return None
+    parts: list[str] = []
+    for item in content:
+        normalized = _normalize_content_block(item)
+        if normalized is not None:
+            parts.append(normalized)
+    if not parts:
+        return None
+    return "\n".join(parts).strip() or None
+
+
+def _normalize_content_block(block: Any) -> str | None:
+    if isinstance(block, str):
+        stripped = block.strip()
+        return stripped or None
+    if isinstance(block, dict):
+        block_type = block.get("type")
+        if block_type not in (None, "text", "output_text"):
+            return None
+        for key in ("text", "content", "value"):
+            value = block.get(key)
+            if isinstance(value, str) and value.strip():
+                return value.strip()
+        return None
+    text = getattr(block, "text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+    value = getattr(block, "content", None)
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return None
 
 
 def _invoke_agent(

@@ -609,6 +609,7 @@ def task_notifications(state: AppState) -> NotificationStripViewModel:
             "artifact.created",
             "task.completed",
             "task.resumed",
+            "task.user_input_received",
         }
     ]
     priority_events = priority_events[-3:]
@@ -638,6 +639,8 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
         resume_enabled = bool(task.get("is_resumable")) or (
             isinstance(links, dict) and links.get("resume") == "task.resume"
         )
+        if str(task.get("pause_reason", "")).lower() == "awaiting_user_input":
+            input_placeholder = "Type: reply <message>"
     return TaskActionBarViewModel(
         resume_enabled=resume_enabled,
         approvals_enabled=approvals_enabled,
@@ -1898,6 +1901,8 @@ def _actionable_status_label(task: dict[str, Any] | None) -> str:
     if task is None:
         return "Select a task"
     status = str(task.get("status", "unknown")).lower()
+    if str(task.get("pause_reason", "")).lower() == "awaiting_user_input":
+        return "Reply to task"
     if status in {"paused", "awaiting_approval"}:
         return "Review approval"
     if status == "completed":
@@ -1913,6 +1918,8 @@ def _actionable_status_hint(task: dict[str, Any] | None) -> str:
     if task is None:
         return "Select a task to inspect its timeline, approvals, and artifacts."
     status = str(task.get("status", "unknown")).lower()
+    if str(task.get("pause_reason", "")).lower() == "awaiting_user_input":
+        return "Paused for your reply. Type: reply <message>"
     if status in {"paused", "awaiting_approval"}:
         return "Paused. Press A to review approval."
     if status == "completed":

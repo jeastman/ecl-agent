@@ -32,9 +32,13 @@ from services.memory_service.local_agent_memory_service.memory_store import SQLi
 from services.observability_service.local_agent_observability_service.event_store import (
     SQLiteEventStore,
 )
+from services.observability_service.local_agent_observability_service.message_store import (
+    SQLiteRunMessageStore,
+)
 from services.observability_service.local_agent_observability_service.observability_models import (
     DiagnosticRecord,
     PersistedEvent,
+    RunMessageRecord,
     RunMetricsRecord,
 )
 from services.observability_service.local_agent_observability_service.run_metrics_store import (
@@ -79,10 +83,19 @@ class PersistenceModelTests(unittest.TestCase):
             details={"phase": "execute"},
         )
         metrics = RunMetricsRecord(task_id="task_1", run_id="run_1", checkpoint_count=1)
+        message = RunMessageRecord(
+            message_id="msg_1",
+            task_id="task_1",
+            run_id="run_1",
+            role="user",
+            content="Need clarification",
+            created_at=utc_now_timestamp(),
+        )
 
         self.assertEqual(event.to_dict()["event_id"], "evt_1")
         self.assertEqual(diagnostic.to_dict()["kind"], "runtime")
         self.assertEqual(metrics.to_dict()["checkpoint_count"], 1)
+        self.assertEqual(message.to_dict()["role"], "user")
 
 
 class ThreadRegistryTests(unittest.TestCase):
@@ -217,9 +230,40 @@ class MemoryStoreTests(unittest.TestCase):
             )
 
             store.delete_memory("mem_1")
-
             self.assertIsNone(store.read_memory("mem_1"))
             self.assertEqual(store.list_memory(scope=MEMORY_SCOPE_PROJECT), [])
+
+
+class RunMessageStoreTests(unittest.TestCase):
+    def test_run_message_store_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteRunMessageStore(str(Path(temp_dir) / "runtime.db"))
+            store.append_message(
+                RunMessageRecord(
+                    message_id="msg_1",
+                    task_id="task_1",
+                    run_id="run_1",
+                    role="assistant",
+                    content="What environment should I target?",
+                    created_at="2026-03-10T00:00:00Z",
+                )
+            )
+            store.append_message(
+                RunMessageRecord(
+                    message_id="msg_2",
+                    task_id="task_1",
+                    run_id="run_1",
+                    role="user",
+                    content="Target staging.",
+                    created_at="2026-03-10T00:00:01Z",
+                )
+            )
+
+            messages = store.list_messages("task_1", "run_1")
+
+            self.assertEqual([message.message_id for message in messages], ["msg_1", "msg_2"])
+            self.assertEqual(messages[0].role, "assistant")
+            self.assertEqual(messages[1].content, "Target staging.")
 
     def test_memory_store_promotes_run_state_record_to_project(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

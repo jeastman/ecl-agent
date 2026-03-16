@@ -36,6 +36,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_REPLY,
     METHOD_TASK_RESUME,
     MemoryInspectParams,
     SkillInstallParams,
@@ -47,6 +48,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCreateRequest,
     TaskGetParams,
     TaskLogsStreamParams,
+    TaskReplyParams,
     TaskResumeParams,
 )
 from packages.task_model.local_agent_task_model.ids import new_correlation_id
@@ -132,6 +134,13 @@ def build_parser() -> argparse.ArgumentParser:
     resume = subparsers.add_parser("resume", help="Resume a paused or resumable task.")
     resume.add_argument("task_id", help="Task identifier.")
     resume.add_argument("--run-id", help="Optional run identifier.")
+
+    reply = subparsers.add_parser(
+        "reply", help="Reply to a paused task awaiting user input and continue it."
+    )
+    reply.add_argument("task_id", help="Task identifier.")
+    reply.add_argument("--run-id", help="Optional run identifier.")
+    reply.add_argument("--message", required=True, help="Reply message to send to the task.")
 
     memory = subparsers.add_parser("memory", help="Inspect runtime memory entries.")
     memory.add_argument("--task-id", help="Optional task identifier.")
@@ -347,6 +356,25 @@ def handle_resume(config_path: str, task_id: str, run_id: str | None) -> int:
     return 0
 
 
+def handle_reply(
+    config_path: str,
+    task_id: str,
+    run_id: str | None,
+    message: str,
+) -> int:
+    client = make_client(config_path)
+    console = make_console()
+    request = JsonRpcRequest(
+        method=METHOD_TASK_REPLY,
+        params=TaskReplyParams(task_id=task_id, run_id=run_id, message=message).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    console.print(render_task_snapshot(payload["result"]["task"], title="Task Reply Accepted"))
+    return 0
+
+
 def handle_memory(
     config_path: str,
     task_id: str | None,
@@ -469,6 +497,13 @@ def main(argv: list[str] | None = None) -> int:
                 config_path=config_path,
                 task_id=args.task_id,
                 run_id=args.run_id,
+            )
+        if args.command == "reply":
+            return handle_reply(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+                message=args.message,
             )
         if args.command == "memory":
             return handle_memory(

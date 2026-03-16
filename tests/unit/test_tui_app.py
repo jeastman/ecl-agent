@@ -104,6 +104,7 @@ class _FakeProtocolClient:
         self.connect_calls = 0
         self.close_calls = 0
         self.resume_calls: list[tuple[str, str | None]] = []
+        self.reply_calls: list[tuple[str, str | None, str]] = []
         self.approve_calls: list[tuple[str | None, str | None, str, str]] = []
         self.approvals_list_calls: list[tuple[str, str | None]] = []
         self.artifact_get_calls: list[tuple[str, str | None, str]] = []
@@ -390,6 +391,19 @@ class _FakeProtocolClient:
         }
         return {"result": {"task": self._tasks[task_id]}}
 
+    async def task_reply(
+        self, task_id: str, message: str, run_id: str | None = None, *, background: bool = False
+    ) -> dict:
+        self.reply_calls.append((task_id, run_id, message))
+        self._tasks[task_id] = {
+            **self._tasks[task_id],
+            "status": "executing",
+            "updated_at": "2026-03-12T00:00:00Z",
+            "latest_summary": "Reply accepted.",
+            "pause_reason": None,
+        }
+        return {"result": {"task": self._tasks[task_id]}}
+
     async def task_approve(
         self,
         task_id: str | None,
@@ -636,6 +650,52 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     ("task_1", "run_1", "approval_1", "rejected"),
                 )
                 self.assertIn("Rejected approval_1.", str(footer.visual))
+
+    async def test_approvals_screen_refreshes_when_selected_approval_is_stale(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("a")
+                await pilot.pause()
+                app._client._tasks["task_1"] = {  # type: ignore[attr-defined]
+                    **app._client._tasks["task_1"],  # type: ignore[attr-defined]
+                    "status": "awaiting_approval",
+                    "awaiting_approval": True,
+                    "pending_approval_id": "approval_3",
+                }
+                app._client._approvals["task_1"] = [  # type: ignore[attr-defined]
+                    {
+                        "approval_id": "approval_3",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "status": "pending",
+                        "type": "boundary",
+                        "scope": {
+                            "boundary_key": "sandbox",
+                            "path_scope": "/workspace/docs/next.md",
+                        },
+                        "description": "updated permission",
+                        "scope_summary": "filesystem.write",
+                        "created_at": "2026-03-12T00:00:04Z",
+                    }
+                ]
+                await pilot.press("a")
+                await pilot.pause()
+                footer = app.screen.query_one("#approvals-screen-footer", Static)
+                self.assertEqual(app._client.approve_calls, [])  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().selected_approval_id, "approval_3")  # type: ignore[attr-defined]
+                self.assertIn("stale", str(footer.visual).lower())
 
     async def test_opening_approvals_refreshes_known_task_approval_lists(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1153,6 +1213,34 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(loaded_model.status, "loaded")  # type: ignore[union-attr]
                 self.assertIn("Summary body", loaded_model.body)  # type: ignore[union-attr]
 
+    async def test_artifacts_enter_opens_markdown_viewer_before_screen_mount_completes(
+        self,
+    ) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("o")
+                await pilot.pause()
+                app.action_open_task()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "MarkdownViewerScreen")
+                self.assertEqual(
+                    app._store.snapshot().markdown_viewer_artifact_id,  # type: ignore[attr-defined]
+                    "artifact_1",
+                )
+
     async def test_task_detail_resume_action_updates_store(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
 
@@ -1177,6 +1265,42 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._store.snapshot().task_snapshots["task_2"]["status"], "executing"
                 )  # type: ignore[attr-defined]
                 self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
+
+    async def test_task_detail_resume_failure_stays_local_to_task_view(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.protocol.protocol_client import ProtocolClientError
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                app._client.task_resume = AsyncMock(  # type: ignore[attr-defined]
+                    side_effect=ProtocolClientError(
+                        "{'code': -32602, 'message': 'task.resume requires a paused or resumable run'}"
+                    )
+                )
+                await pilot.press("r")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().connection_status, "connected")  # type: ignore[attr-defined]
+                status = app.screen.query_one("#task-detail-command-status", Static)
+                self.assertIn(
+                    "Resume failed: task.resume requires a paused or resumable run",
+                    str(status.visual),
+                )
+                header = app.screen.query_one("#status-bar", Static)
+                self.assertNotIn("-32602", str(header.visual))
 
     async def test_task_detail_command_input_dispatches_commands(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1204,8 +1328,62 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await command_input.action_submit()
                 await pilot.pause()
                 status = app.screen.query_one("#task-detail-command-status", Static)
-                self.assertIn("Ran 'resume'.", str(status.visual))
+                self.assertIn("Resume requested.", str(status.visual))
                 self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
+
+    async def test_task_detail_command_input_dispatches_reply(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input, Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._client._tasks["task_3"] = {  # type: ignore[attr-defined]
+                    "task_id": "task_3",
+                    "run_id": "run_3",
+                    "status": "paused",
+                    "objective": "Review docs",
+                    "created_at": "2026-03-11T00:00:00Z",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "latest_summary": "Which area should I inspect?",
+                    "is_resumable": True,
+                    "pause_reason": "awaiting_user_input",
+                    "links": {"resume": "task.resume", "reply": "task.reply"},
+                }
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.list",
+                        "payload": {"result": {"tasks": list(app._client._tasks.values())}},  # type: ignore[attr-defined]
+                    }
+                )
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("i")
+                await pilot.pause()
+                command_input = app.screen.query_one(Input)
+                command_input.value = "reply Focus on docs only."
+                await command_input.action_submit()
+                await pilot.pause()
+                status = app.screen.query_one("#task-detail-command-status", Static)
+                self.assertIn("Reply accepted.", str(status.visual))
+                self.assertEqual(
+                    app._client.reply_calls[-1],  # type: ignore[attr-defined]
+                    ("task_3", "run_3", "Focus on docs only."),
+                )
 
     async def test_task_detail_timeline_filter_and_search_prompts_update_state(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

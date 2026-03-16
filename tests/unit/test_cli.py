@@ -298,6 +298,37 @@ class CliTests(unittest.TestCase):
         self.assertIn("Resumed successfully.", output)
         self.assertIn("ckpt_2", output)
 
+    def test_handle_reply_renders_updated_task_snapshot(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "result": {
+                "task": {
+                    "task_id": "task_1",
+                    "run_id": "run_1",
+                    "status": "executing",
+                    "objective": "Inspect the repo",
+                    "current_phase": "executing",
+                    "latest_summary": "Reply accepted.",
+                }
+            }
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_reply(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                    message="Focus on docs only.",
+                )
+        self.assertEqual(exit_code, 0)
+        output = stdout.getvalue()
+        self.assertIn("Task Reply Accepted", output)
+        self.assertIn("Reply accepted.", output)
+        request = fake_client.requests[0]
+        self.assertEqual(request.method, "task.reply")  # type: ignore[attr-defined]
+        self.assertEqual(request.params["message"], "Focus on docs only.")  # type: ignore[attr-defined]
+
     def test_handle_approvals_renders_runtime_owned_approvals(self) -> None:
         fake_client = _FakeClient()
         fake_client.response = {

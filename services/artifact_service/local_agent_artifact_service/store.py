@@ -50,6 +50,13 @@ class ArtifactStore(Protocol):
         run_id: str | None = None,
     ) -> tuple[ArtifactReference, ArtifactPreviewPayload]: ...
 
+    def restore_artifact(
+        self,
+        artifact: ArtifactReference,
+        *,
+        sandbox_path: str,
+    ) -> ArtifactReference: ...
+
 
 class InMemoryArtifactStore:
     _TEXT_PREVIEW_BYTES = 8192
@@ -176,6 +183,52 @@ class InMemoryArtifactStore:
                 message=artifact.summary,
             ),
         )
+
+    def restore_artifact(
+        self,
+        artifact: ArtifactReference,
+        *,
+        sandbox_path: str,
+    ) -> ArtifactReference:
+        logical_path, host_path, inferred_persistence_class = (
+            self._path_mapper.materialize_artifact_path(
+                task_id=artifact.task_id,
+                run_id=artifact.run_id,
+                sandbox_path=sandbox_path,
+            )
+        )
+        restored = ArtifactReference(
+            artifact_id=artifact.artifact_id,
+            task_id=artifact.task_id,
+            run_id=artifact.run_id,
+            logical_path=logical_path,
+            content_type=artifact.content_type or _guess_content_type(host_path),
+            created_at=artifact.created_at,
+            persistence_class=artifact.persistence_class or inferred_persistence_class,
+            source_role=artifact.source_role,
+            source_tool=artifact.source_tool,
+            byte_size=artifact.byte_size
+            if artifact.byte_size is not None
+            else host_path.stat().st_size,
+            display_name=artifact.display_name or host_path.name,
+            summary=artifact.summary,
+            hash=artifact.hash or _sha256(host_path),
+        )
+        with self._lock:
+            records = self._artifacts.setdefault((restored.task_id, restored.run_id), [])
+            self._artifact_paths[(restored.task_id, restored.run_id, restored.artifact_id)] = (
+                host_path
+            )
+            for index, existing in enumerate(records):
+                if (
+                    existing.artifact_id == restored.artifact_id
+                    or existing.logical_path == logical_path
+                ):
+                    records[index] = restored
+                    break
+            else:
+                records.append(restored)
+        return restored
 
     def _existing_artifact_id(self, task_id: str, run_id: str, logical_path: str) -> str | None:
         with self._lock:

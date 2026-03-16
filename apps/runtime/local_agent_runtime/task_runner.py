@@ -12,6 +12,7 @@ from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServ
 from apps.runtime.local_agent_runtime.event_bus import EventBus
 from apps.runtime.local_agent_runtime.run_state_store import RunStateStore
 from packages.protocol.local_agent_protocol.models import (
+    ArtifactReference,
     EventEnvelope,
     EventSource,
     EventSourceKind,
@@ -32,9 +33,11 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.checkpoint_adapter
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
+    ClarificationRequiredInterrupt,
     PolicyDeniedInterrupt,
 )
 from services.observability_service.local_agent_observability_service.observability_models import (
+    RunMessageRecord,
     RunMetricsRecord,
 )
 from services.policy_service.local_agent_policy_service.boundary_scope import BoundaryGrant
@@ -70,6 +73,7 @@ class AgentExecutionRequest:
     memory_store: MemoryStore | None
     allowed_capabilities: list[str]
     metadata: dict[str, Any]
+    conversation_messages: tuple[dict[str, str], ...] = ()
     primary_skills: tuple[SkillDescriptor, ...] = ()
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
@@ -90,6 +94,8 @@ class AgentExecutionResult:
     awaiting_approval: bool = False
     pending_approval_id: str | None = None
     failure_code: str | None = None
+    requested_user_input: str | None = None
+    assistant_response: str | None = None
 
 
 class AgentHarness(Protocol):
@@ -174,6 +180,7 @@ class TaskRunner:
         )
         self._run_threads: dict[tuple[str, str], Thread] = {}
         self._thread_lock = RLock()
+        self._rehydrated_artifact_runs: set[tuple[str, str]] = set()
 
     @property
     def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
@@ -223,12 +230,20 @@ class TaskRunner:
             links={
                 "artifacts": "task.artifacts.list",
                 "approve": "task.approve",
+                "reply": "task.reply",
                 "resume": "task.resume",
                 "events": "task.logs.stream",
             },
         )
         self._run_state_store.create(state)
         self._write_metrics(task_id, run_id, started_at=accepted_at)
+        self._seed_run_message_history(
+            task_id=task_id,
+            run_id=run_id,
+            objective=objective,
+            constraints=state.constraints,
+            success_criteria=state.success_criteria,
+        )
         self._publish(
             task_id=task_id,
             run_id=run_id,
@@ -274,6 +289,57 @@ class TaskRunner:
             raise ValueError("task.resume cannot resume while approval is still pending")
         if not state.is_resumable:
             raise ValueError("task.resume requires a paused or resumable run")
+        self._launch_run(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            correlation_id=None,
+            identity_bundle_text=identity_bundle_text,
+            resume=True,
+            background=background,
+        )
+        return self.get_task_snapshot(state.task_id, state.run_id)
+
+    def reply_to_run(
+        self,
+        task_id: str,
+        message: str,
+        *,
+        run_id: str | None,
+        identity_bundle_text: str,
+        background: bool = False,
+    ) -> TaskSnapshot:
+        state = self._run_state_store.get(task_id, run_id)
+        if state.status == TaskStatus.COMPLETED:
+            raise ValueError("task.reply cannot reply to a completed run")
+        if state.status == TaskStatus.FAILED:
+            raise ValueError("task.reply cannot reply to a failed run")
+        if state.awaiting_approval:
+            raise ValueError("task.reply cannot reply while approval is still pending")
+        if not state.is_resumable:
+            raise ValueError("task.reply requires a paused or resumable run")
+        if state.pause_reason != "awaiting_user_input":
+            raise ValueError("task.reply requires a run paused for awaiting_user_input")
+        now = utc_now_timestamp()
+        self._append_run_message(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            role="user",
+            content=message,
+            created_at=now,
+        )
+        self._publish(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            correlation_id=None,
+            event_type=EventType.TASK_USER_INPUT_RECEIVED.value,
+            timestamp=now,
+            source=self._source,
+            payload={
+                "status": TaskStatus.PAUSED.value,
+                "summary": "User input received. Resuming execution.",
+                "message": message,
+            },
+        )
         self._launch_run(
             task_id=state.task_id,
             run_id=state.run_id,
@@ -482,9 +548,11 @@ class TaskRunner:
         persistence_class: str | None = None,
         content_type_prefix: str | None = None,
     ) -> list:
+        resolved_run_id = self._run_state_store.get(task_id, run_id).run_id
+        self._ensure_artifacts_loaded(task_id, resolved_run_id)
         return self._artifact_store.list_artifacts(
             task_id,
-            run_id,
+            resolved_run_id,
             persistence_class=persistence_class,
             content_type_prefix=content_type_prefix,
         )
@@ -495,7 +563,9 @@ class TaskRunner:
         artifact_id: str,
         run_id: str | None = None,
     ) -> tuple:
-        return self._artifact_store.get_artifact_preview(task_id, artifact_id, run_id)
+        resolved_run_id = self._run_state_store.get(task_id, run_id).run_id
+        self._ensure_artifacts_loaded(task_id, resolved_run_id)
+        return self._artifact_store.get_artifact_preview(task_id, artifact_id, resolved_run_id)
 
     @property
     def checkpoint_adapter(self) -> LangGraphCheckpointAdapter | None:
@@ -638,6 +708,7 @@ class TaskRunner:
             workspace_roots=state.workspace_roots,
         )
         try:
+            conversation_messages = tuple(self._load_conversation_messages(task_id, run_id))
             result = self._agent_harness.execute(
                 AgentExecutionRequest(
                     task_id=task_id,
@@ -655,6 +726,7 @@ class TaskRunner:
                     ),
                     allowed_capabilities=list(state.allowed_capabilities),
                     metadata=dict(state.metadata),
+                    conversation_messages=conversation_messages,
                     primary_skills=self.primary_skills,
                     constraints=list(state.constraints),
                     success_criteria=list(state.success_criteria),
@@ -694,6 +766,15 @@ class TaskRunner:
                 awaiting_approval=True,
                 pending_approval_id=exc.approval_id,
             )
+        except ClarificationRequiredInterrupt as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary=exc.question,
+                output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting_user_input",
+                requested_user_input=exc.question,
+            )
         except PolicyDeniedInterrupt as exc:
             result = AgentExecutionResult(
                 success=False,
@@ -718,6 +799,14 @@ class TaskRunner:
             )
 
         artifact_count = state.artifact_count
+        assistant_response = result.requested_user_input or result.assistant_response
+        if assistant_response:
+            self._append_run_message(
+                task_id=task_id,
+                run_id=run_id,
+                role="assistant",
+                content=assistant_response,
+            )
         for sandbox_path in result.output_artifacts:
             artifact = self._artifact_store.register_artifact(
                 task_id=task_id,
@@ -787,6 +876,7 @@ class TaskRunner:
                         "status": TaskStatus.PAUSED.value,
                         "reason": result.pause_reason or "execution paused",
                         "summary": result.summary,
+                        "question": result.requested_user_input,
                     },
                 )
             self._write_metrics(task_id, run_id, artifact_count=artifact_count)
@@ -1084,6 +1174,79 @@ class TaskRunner:
         if self._checkpoint_adapter is None:
             return None
         return self._checkpoint_adapter.begin_run(task_id, run_id).thread_id
+
+    def _seed_run_message_history(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        objective: str,
+        constraints: list[str],
+        success_criteria: list[str],
+    ) -> None:
+        self._append_run_message(
+            task_id=task_id,
+            run_id=run_id,
+            role="user",
+            content=_initial_user_message(
+                objective=objective,
+                constraints=constraints,
+                success_criteria=success_criteria,
+            ),
+        )
+
+    def _append_run_message(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        role: str,
+        content: str,
+        created_at: str | None = None,
+    ) -> None:
+        if self._durable_services is None:
+            return
+        normalized_content = content.strip()
+        if not normalized_content:
+            return
+        self._durable_services.run_message_store.append_message(
+            RunMessageRecord(
+                message_id=f"msg_{uuid4().hex}",
+                task_id=task_id,
+                run_id=run_id,
+                role=role,
+                content=normalized_content,
+                created_at=created_at or utc_now_timestamp(),
+            )
+        )
+
+    def _load_conversation_messages(self, task_id: str, run_id: str) -> list[dict[str, str]]:
+        if self._durable_services is None:
+            state = self._run_state_store.get(task_id, run_id)
+            return [
+                {
+                    "role": "user",
+                    "content": _initial_user_message(
+                        objective=state.objective,
+                        constraints=state.constraints,
+                        success_criteria=state.success_criteria,
+                    ),
+                }
+            ]
+        messages = self._durable_services.run_message_store.list_messages(task_id, run_id)
+        if messages:
+            return [{"role": message.role, "content": message.content} for message in messages]
+        state = self._run_state_store.get(task_id, run_id)
+        return [
+            {
+                "role": "user",
+                "content": _initial_user_message(
+                    objective=state.objective,
+                    constraints=state.constraints,
+                    success_criteria=state.success_criteria,
+                ),
+            }
+        ]
 
     def _install_skill_via_tool(
         self,
@@ -1395,6 +1558,60 @@ class TaskRunner:
             },
         )
 
+    def _ensure_artifacts_loaded(self, task_id: str, run_id: str) -> None:
+        if self._durable_services is None:
+            return
+        key = (task_id, run_id)
+        if key in self._rehydrated_artifact_runs:
+            return
+        state = self._run_state_store.get(task_id, run_id)
+        self._sandbox_factory.for_run(
+            task_id=task_id,
+            run_id=run_id,
+            workspace_roots=state.workspace_roots,
+        )
+        for event in self._durable_services.event_store.get_events(task_id, run_id):
+            if event.event_type != EventType.ARTIFACT_CREATED.value:
+                continue
+            artifact_payload = event.payload.get("artifact")
+            if not isinstance(artifact_payload, dict):
+                continue
+            logical_path = artifact_payload.get("logical_path")
+            artifact_id = artifact_payload.get("artifact_id")
+            if not isinstance(logical_path, str) or not logical_path.strip():
+                continue
+            if not isinstance(artifact_id, str) or not artifact_id.strip():
+                continue
+            try:
+                self._artifact_store.restore_artifact(
+                    ArtifactReference(
+                        artifact_id=artifact_id,
+                        task_id=str(artifact_payload.get("task_id") or task_id),
+                        run_id=str(artifact_payload.get("run_id") or run_id),
+                        logical_path=logical_path,
+                        content_type=str(
+                            artifact_payload.get("content_type") or "application/octet-stream"
+                        ),
+                        created_at=str(artifact_payload.get("created_at") or event.timestamp),
+                        persistence_class=str(artifact_payload.get("persistence_class") or "run"),
+                        source_role=_str_or_none(artifact_payload.get("source_role")),
+                        source_tool=_str_or_none(artifact_payload.get("source_tool")),
+                        byte_size=_int_or_none(artifact_payload.get("byte_size")),
+                        display_name=_str_or_none(artifact_payload.get("display_name")),
+                        summary=_str_or_none(artifact_payload.get("summary")),
+                        downloadable=(
+                            bool(artifact_payload.get("downloadable"))
+                            if artifact_payload.get("downloadable") is not None
+                            else None
+                        ),
+                        hash=_str_or_none(artifact_payload.get("hash")),
+                    ),
+                    sandbox_path=logical_path,
+                )
+            except (KeyError, ValueError, FileNotFoundError):
+                continue
+        self._rehydrated_artifact_runs.add(key)
+
     def _write_skill_install_artifacts(
         self,
         *,
@@ -1640,3 +1857,37 @@ def _run_metrics_record(
         run_id=run_id,
         last_updated_at=utc_now_timestamp(),
     )
+
+
+def _initial_user_message(
+    *,
+    objective: str,
+    constraints: list[str],
+    success_criteria: list[str],
+) -> str:
+    sections = [
+        objective.strip(),
+        "",
+        "Complete the objective using governed tools and native Deep Agent delegation when it improves focus or isolation.",
+    ]
+    if constraints:
+        sections.extend(["", "Constraints:"])
+        sections.extend(f"- {item}" for item in constraints if item.strip())
+    if success_criteria:
+        sections.extend(["", "Success Criteria:"])
+        sections.extend(f"- {item}" for item in success_criteria if item.strip())
+    return "\n".join(sections).strip()
+
+
+def _str_or_none(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    return None
+
+
+def _int_or_none(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    return None

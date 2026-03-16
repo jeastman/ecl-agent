@@ -19,6 +19,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_GET,
     METHOD_TASK_LIST,
     METHOD_TASK_LOGS_STREAM,
+    METHOD_TASK_REPLY,
     METHOD_TASK_RESUME,
     MemoryInspectParams,
     TaskApprovalsListParams,
@@ -28,6 +29,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskGetParams,
     TaskListParams,
     TaskLogsStreamParams,
+    TaskReplyParams,
     TaskResumeParams,
     ApprovalDecisionPayload,
     TaskCreateParams,
@@ -203,6 +205,24 @@ class ProtocolClient:
         return await self._request(
             METHOD_TASK_RESUME,
             TaskResumeParams(task_id=task_id, run_id=run_id).to_dict(),
+        )
+
+    async def task_reply(
+        self,
+        task_id: str,
+        message: str,
+        run_id: str | None = None,
+        *,
+        background: bool = False,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_REPLY,
+            TaskReplyParams(
+                task_id=task_id,
+                run_id=run_id,
+                message=message,
+                background=background,
+            ).to_dict(),
         )
 
     async def next_event(self) -> dict[str, Any]:

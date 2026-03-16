@@ -127,6 +127,8 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
         return f" {payload.get('checkpoint_id') or 'checkpoint recorded'}"
     if event_type == "task.paused":
         return f" {payload.get('reason') or payload.get('summary') or 'paused'}"
+    if event_type == "task.user_input_received":
+        return f" {payload.get('summary') or 'user input received'}"
     if event_type == "task.resumed":
         return f" {payload.get('summary') or 'execution resumed'}"
     if event_type == "recovery.discovered":

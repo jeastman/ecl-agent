@@ -142,7 +142,7 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             last_error=None,
         )
 
-    if name in {"task.get", "task.resume", "task.approve"}:
+    if name in {"task.get", "task.resume", "task.reply", "task.approve"}:
         task = _merge_task_snapshot(
             state.task_snapshots.get(str(payload["result"]["task"]["task_id"])),
             dict(payload["result"]["task"]),
@@ -342,6 +342,10 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         snapshot["status"] = "executing"
         snapshot["awaiting_approval"] = False
         snapshot["pending_approval_id"] = None
+    elif event_type == "task.user_input_received":
+        snapshot["latest_summary"] = event_payload.get(
+            "summary", "User input received. Resuming execution."
+        )
     elif event_type == "task.completed":
         snapshot["status"] = "completed"
         snapshot["awaiting_approval"] = False
@@ -542,6 +546,8 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
         if isinstance(approval, dict):
             return str(approval.get("description") or approval.get("type") or "Approval requested")
         return "Approval requested"
+    if event_type == "task.user_input_received":
+        return str(payload.get("summary") or "User input received")
     if event_type == "task.failed":
         return str(payload.get("error") or "failed")
     return event_type
@@ -552,7 +558,7 @@ def _event_severity(event_type: str) -> str:
         return "error"
     if event_type in {"approval.requested", "task.paused"}:
         return "attention"
-    if event_type in {"artifact.created", "task.completed", "task.resumed"}:
+    if event_type in {"artifact.created", "task.completed", "task.resumed", "task.user_input_received"}:
         return "success"
     return "info"
 

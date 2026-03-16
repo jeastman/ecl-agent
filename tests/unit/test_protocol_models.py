@@ -8,6 +8,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_ARTIFACT_GET,
     METHOD_CONFIG_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
+    METHOD_TASK_REPLY,
     DiagnosticEntry,
     EventEnvelope,
     EventSource,
@@ -36,6 +37,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskListParams,
     TaskListResult,
     TaskLogsStreamParams,
+    TaskReplyParams,
     TaskResumeParams,
     TaskSnapshot,
     utc_now_timestamp,
@@ -86,6 +88,10 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(TaskResumeParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(
+            TaskReplyParams.from_dict({"task_id": "task_1", "message": "continue"}).message,
+            "continue",
+        )
+        self.assertEqual(
             TaskArtifactsListParams.from_dict({"task_id": "task_1"}).task_id,
             "task_1",
         )
@@ -111,6 +117,8 @@ class ProtocolModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
+        with self.assertRaisesRegex(ValueError, "task.reply requires message"):
+            TaskReplyParams.from_dict({"task_id": "task_1", "message": "  "})
         with self.assertRaisesRegex(
             ValueError, "task.list limit must be a positive integer when provided"
         ):
@@ -183,6 +191,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(METHOD_TASK_DIAGNOSTICS_LIST, "task.diagnostics.list")
         self.assertEqual(METHOD_TASK_LIST, "task.list")
         self.assertEqual(METHOD_TASK_ARTIFACT_GET, "task.artifact.get")
+        self.assertEqual(METHOD_TASK_REPLY, "task.reply")
 
     def test_task_list_result_serialization(self) -> None:
         result = TaskListResult(

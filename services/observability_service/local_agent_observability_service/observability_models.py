@@ -49,3 +49,16 @@ class RunMetricsRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class RunMessageRecord:
+    message_id: str
+    task_id: str
+    run_id: str
+    role: str
+    content: str
+    created_at: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

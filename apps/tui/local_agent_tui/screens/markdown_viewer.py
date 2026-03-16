@@ -45,6 +45,10 @@ class MarkdownViewerScreen(Screen):  # type: ignore[misc]
         Binding("q", "close_viewer", "Close", show=False, priority=True),
     ]
 
+    def __init__(self) -> None:
+        super().__init__()
+        self._search_visible = False
+
     def compose(self) -> ComposeResult:
         yield Container(
             StatusBar(id="status-bar"),
@@ -61,9 +65,6 @@ class MarkdownViewerScreen(Screen):  # type: ignore[misc]
             Static(id="markdown-viewer-footer", markup=False),
             id="markdown-viewer-root",
         )
-
-    def on_mount(self) -> None:
-        self._search_visible = False
 
     def on_show(self) -> None:
         app = getattr(self, "app", None)

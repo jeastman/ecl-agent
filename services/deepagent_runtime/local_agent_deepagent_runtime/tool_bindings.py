@@ -22,6 +22,7 @@ _MEMORY_CAPABILITIES = {"memory_lookup", "memory", "memory.read"}
 _PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
 _ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
 _SKILL_INSTALL_CAPABILITIES = {"skill_installer", "skills.install"}
+_USER_INPUT_CAPABILITIES = {"request_user_input", "user_input", "conversation"}
 
 
 class FilesystemScopeError(PermissionError):
@@ -39,6 +40,7 @@ class SandboxToolBindings:
     allowed_capabilities: list[str] | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
     skill_install_handler: Callable[..., dict[str, Any]] | None = None
+    user_input_handler: Callable[..., None] | None = None
     _written_paths: list[str] | None = None
 
     def read_file(self, path: str) -> str:
@@ -217,6 +219,22 @@ class SandboxToolBindings:
             reason=reason,
         )
 
+    def request_user_input(self, question: str, reason_code: str | None = None) -> None:
+        self._ensure_allowed("request_user_input", _USER_INPUT_CAPABILITIES)
+        if self.user_input_handler is None:
+            raise ValueError("request_user_input is not configured for this runtime")
+        payload = {"question": question.strip()}
+        if reason_code is not None and reason_code.strip():
+            payload["reason_code"] = reason_code.strip()
+        self._emit(
+            "tool.called",
+            {
+                "tool": "request_user_input",
+                "arguments": payload,
+            },
+        )
+        self.user_input_handler(**payload)
+
     def as_langchain_tools(
         self,
         resolved_bindings: tuple[ResolvedToolBinding, ...],
@@ -329,6 +347,16 @@ class SandboxToolBindings:
                 )
 
             tools.append(skill_installer)
+
+        if "request_user_input" in allowed_tool_ids:
+
+            @tool
+            def request_user_input(question: str, reason_code: str | None = None) -> str:
+                """Pause execution and ask the operator a concise plain-text question before continuing."""
+                self.request_user_input(question, reason_code)
+                return "awaiting_user_input"
+
+            tools.append(request_user_input)
 
         return tools
 
