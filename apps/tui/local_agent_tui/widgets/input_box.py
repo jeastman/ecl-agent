@@ -57,7 +57,7 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             hints.append("[Esc] Back")
         status = model.status_message
         if hints:
-            status = f"{status}\n\n{'   '.join(hints)}"
+            status = f"{status}\n{'   '.join(hints)}"
         self.query_one("#task-detail-command-status", Static).update(status)
 
     def focus_input(self) -> None:

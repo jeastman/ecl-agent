@@ -928,7 +928,7 @@ def timeline_state_summary(state: AppState) -> TimelineStateSummaryViewModel:
 
 def task_logs(state: AppState) -> LogViewModel:
     lines: list[LogEntryViewModel] = []
-    for event in _selected_task_events(state)[-40:]:
+    for event in _selected_task_events(state):
         if event.event_type.startswith("task.") or event.event_type.startswith("tool."):
             lines.append(
                 LogEntryViewModel(
@@ -1329,6 +1329,8 @@ def footer_hints(state: AppState) -> list[str]:
             "D Diagnostics",
             "Q Quit",
         ]
+        if state.task_detail_show_logs:
+            hints.insert(0, "Up/Down Scroll Logs")
         if action_bar.resume_enabled:
             hints.insert(0, "R Resume")
         return hints

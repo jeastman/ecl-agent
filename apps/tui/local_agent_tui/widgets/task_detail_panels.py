@@ -34,14 +34,13 @@ class TaskHeaderWidget(Static):  # type: ignore[misc]
         status = _status_markup(model.status)
         lines = [
             f"{model.task_id}  {status}  {model.run_id}",
-            f"Created: {model.created_at}",
-            f"Updated: {model.updated_at}",
-            f"Phase: {model.current_phase}",
-            f"Next: {model.actionable_label}",
+            f"Created: {model.created_at}   Updated: {model.updated_at}",
+            f"Phase: {model.current_phase}   Next: {model.actionable_label}",
         ]
         if model.active_subagent:
-            lines.append(f"Active Subagent: {model.active_subagent}")
-        lines.extend(["", model.objective or "No objective available.", "", model.actionable_hint])
+            lines[-1] = f"{lines[-1]}   Active: {model.active_subagent}"
+        lines.append(f"Objective: {model.objective or 'No objective available.'}")
+        lines.append(model.actionable_hint)
         self.update("\n".join(lines))
 
 

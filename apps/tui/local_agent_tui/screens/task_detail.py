@@ -33,11 +33,13 @@ if TYPE_CHECKING:
     from textual.app import ComposeResult
     from textual.containers import Container, Horizontal, Vertical
     from textual.screen import Screen
+    from textual.events import Key
     from textual.widgets import Static
 else:  # pragma: no cover
     try:
         from textual.app import ComposeResult
         from textual.containers import Container, Horizontal, Vertical
+        from textual.events import Key
         from textual.screen import Screen
         from textual.widgets import Static
     except ModuleNotFoundError as exc:
@@ -45,6 +47,7 @@ else:  # pragma: no cover
         Container = cast(Any, object)
         Horizontal = cast(Any, object)
         Vertical = cast(Any, object)
+        Key = cast(Any, object)
         Screen = cast(Any, object)
         Static = cast(Any, object)
         _TEXTUAL_IMPORT_ERROR = exc
@@ -98,3 +101,26 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
             f"Search: {timeline_state.search_query or 'none'}"
         )
         self.query_one("#task-detail-footer", Static).update(footer)
+
+    def on_key(self, event: Key) -> None:
+        app = getattr(self, "app", None)
+        store = getattr(app, "_store", None)
+        if store is None:
+            return
+        state = store.snapshot()
+        if not state.task_detail_show_logs:
+            return
+        log_view = self.query_one(LogViewWidget)
+        key = getattr(event, "key", "")
+        if key == "j":
+            log_view.scroll_line(1)
+            event.stop()
+        elif key == "k":
+            log_view.scroll_line(-1)
+            event.stop()
+        elif key == "g":
+            log_view.scroll_to_home()
+            event.stop()
+        elif key in {"G", "shift+g"}:
+            log_view.scroll_to_end()
+            event.stop()

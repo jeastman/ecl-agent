@@ -47,6 +47,7 @@ from .store.selectors import (
 )
 from .widgets.status_bar import StatusBar
 from .widgets.input_box import InputBoxWidget
+from .widgets.log_view import LogViewWidget
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -367,6 +368,9 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.active_screen == "approvals":
             self._move_approval_selection(delta)
             return
+        if state.active_screen == "task_detail" and state.task_detail_show_logs:
+            self._scroll_task_detail_logs(delta)
+            return
         if state.active_screen == "dashboard" and state.focused_pane == "summary":
             self._scroll_dashboard_summary(delta)
             return
@@ -413,6 +417,12 @@ class AgentTUI(App):  # type: ignore[misc]
             summary_pane.action_scroll_down()
         else:
             summary_pane.action_scroll_up()
+
+    def _scroll_task_detail_logs(self, delta: int) -> None:
+        if self.screen.__class__.__name__ != "TaskDetailScreen":
+            return
+        log_view = self.screen.query_one(LogViewWidget)
+        log_view.scroll_line(delta)
 
     def action_open_task(self) -> None:
         state = self._store.snapshot()

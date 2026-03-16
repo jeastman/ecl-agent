@@ -37,6 +37,10 @@ class ArtifactTableRow(ListItem):  # type: ignore[misc]
 
 
 class ArtifactTableWidget(ListView):  # type: ignore[misc]
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self._row_signature: tuple[tuple[str, str, str, str, str, str], ...] = ()
+
     def update_artifacts(
         self,
         items: list[ArtifactBrowserRowViewModel],
@@ -46,12 +50,19 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
     ) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        self.clear()
         selected_index = None
-        for index, item in enumerate(items):
-            self.append(ArtifactTableRow(item))
-            if item.is_selected:
-                selected_index = index
+        signature = tuple(_artifact_row_signature(item) for item in items)
+        if signature != self._row_signature:
+            self.clear()
+            for index, item in enumerate(items):
+                self.append(ArtifactTableRow(item))
+                if item.is_selected:
+                    selected_index = index
+            self._row_signature = signature
+        else:
+            for index, item in enumerate(items):
+                if item.is_selected:
+                    selected_index = index
         if selected_index is not None:
             self.index = selected_index
         self.border_title = f"Artifacts by {group_by}"
@@ -67,3 +78,14 @@ def _truncate(value: str, width: int) -> str:
     if width <= 3:
         return value[:width]
     return f"{value[: width - 3]}..."
+
+
+def _artifact_row_signature(item: ArtifactBrowserRowViewModel) -> tuple[str, str, str, str, str, str]:
+    return (
+        item.artifact_id,
+        item.display_name,
+        item.content_type,
+        item.created_at,
+        item.logical_path,
+        item.group_label,
+    )

@@ -1106,8 +1106,84 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     ("task_1", "run_1", "artifact_1"),
                 )
 
+    async def test_task_detail_timeline_and_logs_fill_available_height(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.log_view import LogViewWidget
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                timeline = app.screen.query_one("#task-detail-timeline", Static)
+                self.assertGreater(timeline.region.height, 5)
+                await pilot.press("l")
+                await pilot.pause()
+                logs = app.screen.query_one("#task-detail-logs", LogViewWidget)
+                self.assertGreater(logs.region.height, 5)
+
+    async def test_task_detail_logs_show_full_history_and_scroll(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.log_view import LogViewWidget
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                for index in range(60):
+                    app._dispatch_and_render(  # type: ignore[attr-defined]
+                        {
+                            "kind": "event",
+                            "payload": {
+                                "event": {
+                                    "timestamp": f"2026-03-12T00:00:{index:02d}Z",
+                                    "event_type": "tool.called",
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "source_kind": "tool",
+                                    "source_name": "shell",
+                                    "summary": f"log line {index}",
+                                    "payload": {"summary": f"log line {index}"},
+                                    "severity": "info",
+                                }
+                            },
+                        }
+                    )
+                await pilot.pause()
+                await pilot.press("l")
+                await pilot.pause()
+                logs = app.screen.query_one("#task-detail-logs", LogViewWidget)
+                body = app.screen.query_one("#task-detail-logs-body", Static)
+                self.assertIn("2026-03-12T00:00:59Z", str(body.visual))
+                self.assertEqual(logs.scroll_y, 0.0)
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertGreater(logs.scroll_y, 0.0)
+
     async def test_artifacts_screen_supports_external_open(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.artifact_table import ArtifactTableWidget
         from textual.widgets import Static
 
         class _FakeProcess:
@@ -1144,6 +1220,44 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 footer = app.screen.query_one("#artifacts-screen-footer", Static)
                 self.assertIn("Opened /artifacts/report.html.", str(footer.visual))
                 open_mock.assert_awaited()
+                table = app.screen.query_one(ArtifactTableWidget)
+                self.assertEqual(len(table.children), 2)
+
+    async def test_artifacts_screen_arrow_navigation_preserves_table_rows(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.artifact_table import ArtifactTableWidget
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("o")
+                await pilot.pause()
+                await pilot.pause()
+                payload = await app._client.task_artifacts_list("task_1", "run_1")  # type: ignore[attr-defined]
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.artifacts.list",
+                        "payload": payload,
+                    }
+                )
+                await pilot.pause()
+                table = app.screen.query_one(ArtifactTableWidget)
+                self.assertEqual(len(getattr(table, "_nodes", [])), 2)
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().artifact_browser_selected_id, "artifact_2")  # type: ignore[attr-defined]
+                self.assertEqual(len(getattr(table, "_nodes", [])), 2)
 
     async def test_markdown_viewer_scroll_and_search_bindings(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
