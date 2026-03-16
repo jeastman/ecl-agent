@@ -43,6 +43,16 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "absolute virtual path"):
             self.sandbox.execute_command(["pwd"], cwd="workspace")
 
+    def test_host_workspace_paths_translate_back_to_virtual_paths(self) -> None:
+        host_path = self.workspace_root / "README.md"
+        self.assertEqual(self.sandbox.normalize_path(str(host_path)), "/README.md")
+        self.assertEqual(self.sandbox.read_text(str(host_path)), "hello\n")
+
+    def test_virtual_root_getters_do_not_expose_host_paths(self) -> None:
+        self.assertEqual(self.sandbox.get_workspace_root(), "/")
+        self.assertEqual(self.sandbox.get_scratch_root(), "/tmp")
+        self.assertEqual(self.sandbox.get_memory_root(), "/.memory")
+
     def test_list_files_stays_rooted(self) -> None:
         nested = self.workspace_root / "src"
         nested.mkdir()

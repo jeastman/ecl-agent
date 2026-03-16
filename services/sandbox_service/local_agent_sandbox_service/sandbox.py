@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from services.sandbox_service.local_agent_sandbox_service.command_executor import CommandExecutor
 from services.sandbox_service.local_agent_sandbox_service.models import CommandResult
 from services.sandbox_service.local_agent_sandbox_service.path_policy import (
+    MEMORY_MOUNT,
+    SCRATCH_MOUNT,
     ZONE_MEMORY,
     ZONE_SCRATCH,
     ZONE_WORKSPACE,
@@ -85,7 +87,7 @@ class LocalExecutionSandboxFactory(SandboxPathMapper):
         roots = self._roots_by_run.get((task_id, run_id))
         if roots is None:
             raise KeyError(f"unknown sandbox roots for task/run: {task_id}/{run_id}")
-        normalized = normalize_sandbox_path(sandbox_path)
+        normalized = _normalize_input_path(roots, sandbox_path)
         resolved = _resolve_host_path(roots, normalized)
         if not resolved.is_file():
             raise ValueError(f"artifact path is not a file: {normalized.logical_path}")
@@ -104,16 +106,16 @@ class LocalExecutionSandbox:
         self._executor = CommandExecutor()
 
     def get_workspace_root(self) -> str:
-        return str(self._roots.workspace_root)
+        return "/"
 
     def get_scratch_root(self) -> str:
-        return str(self._roots.scratch_root)
+        return SCRATCH_MOUNT.as_posix()
 
     def get_memory_root(self) -> str:
-        return str(self._roots.memory_root)
+        return MEMORY_MOUNT.as_posix()
 
     def normalize_path(self, path: str) -> str:
-        return normalize_sandbox_path(path).logical_path
+        return _normalize_input_path(self._roots, path).logical_path
 
     def resolve_path(self, path: str) -> Path:
         return self._resolve(path)
@@ -131,7 +133,7 @@ class LocalExecutionSandbox:
         return self._resolve(path).exists()
 
     def list_files(self, root: str) -> list[str]:
-        normalized = normalize_sandbox_path(root)
+        normalized = _normalize_input_path(self._roots, root)
         resolved_root = _resolve_host_path(self._roots, normalized)
         if resolved_root.is_file():
             return [normalized.logical_path]
@@ -146,14 +148,14 @@ class LocalExecutionSandbox:
         return files
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> CommandResult:
-        normalized = normalize_sandbox_path(cwd or "/")
+        normalized = _normalize_input_path(self._roots, cwd or "/")
         resolved_cwd = _resolve_host_path(self._roots, normalized)
         if normalized.zone == ZONE_WORKSPACE:
             resolved_cwd = _ensure_allowed_workspace_root(self._roots, resolved_cwd)
         return self._executor.execute(command, resolved_cwd)
 
     def _resolve(self, path: str) -> Path:
-        normalized = normalize_sandbox_path(path)
+        normalized = _normalize_input_path(self._roots, path)
         return _resolve_host_path(self._roots, normalized)
 
 
@@ -168,6 +170,44 @@ def _resolve_host_path(roots: SandboxRoots, normalized: NormalizedSandboxPath) -
         raise ValueError(f"unsupported sandbox zone: {normalized.zone}")
     candidate = base_root / normalized.relative_path
     return ensure_within_root(base_root, candidate)
+
+
+def _normalize_input_path(roots: SandboxRoots, path: str) -> NormalizedSandboxPath:
+    raw = str(path).strip()
+    if not raw:
+        raise ValueError("sandbox path must be a non-empty string")
+    translated = _translate_host_path(roots, raw)
+    if translated is not None:
+        return translated
+    return normalize_sandbox_path(raw)
+
+
+def _translate_host_path(roots: SandboxRoots, raw: str) -> NormalizedSandboxPath | None:
+    candidate = Path(raw)
+    if not candidate.is_absolute():
+        return None
+    resolved_candidate = candidate.resolve(strict=False)
+    for workspace_root in roots.allowed_workspace_roots:
+        relative = _relative_host_path(resolved_candidate, workspace_root)
+        if relative is not None:
+            return NormalizedSandboxPath(zone=ZONE_WORKSPACE, relative_path=relative)
+    scratch_relative = _relative_host_path(resolved_candidate, roots.scratch_root)
+    if scratch_relative is not None:
+        return NormalizedSandboxPath(zone=ZONE_SCRATCH, relative_path=scratch_relative)
+    memory_relative = _relative_host_path(resolved_candidate, roots.memory_root)
+    if memory_relative is not None:
+        return NormalizedSandboxPath(zone=ZONE_MEMORY, relative_path=memory_relative)
+    return None
+
+
+def _relative_host_path(candidate: Path, root: Path) -> PurePosixPath | None:
+    try:
+        relative = candidate.relative_to(root.resolve())
+    except ValueError:
+        return None
+    if relative == Path("."):
+        return PurePosixPath(".")
+    return PurePosixPath(relative.as_posix())
 
 
 def _ensure_allowed_workspace_root(roots: SandboxRoots, candidate: Path) -> Path:
