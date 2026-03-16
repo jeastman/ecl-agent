@@ -1,79 +1,82 @@
 # Local Agent Harness
 
-Local Agent Harness is a local-first agent runtime and CLI built as a monorepo. The project is organized around a strict separation between an authoritative runtime, thin clients, and shared contracts so agent execution can evolve without pushing orchestration logic into the user interface.
+Local Agent Harness is a local-first agent runtime built as a Python monorepo. The runtime is the system of record for execution, and the repository currently ships two clients over that runtime-owned protocol:
 
-Milestone 2 is now the implemented baseline:
+- a thin CLI for submitting and inspecting work
+- a Textual TUI for operator workflows such as task browsing, event review, approvals, artifact preview, memory inspection, and config inspection
 
-- CLI submits and inspects work through JSON-RPC over stdio
-- runtime creates `task_id` and `run_id` and owns execution state
-- runtime invokes a real DeepAgent-backed `AgentHarness`
-- sandbox and runtime policy govern file, command, and memory operations
-- checkpoint metadata and persisted events support pause/resume and restart recovery
-- approval workflow is durable, sparse, and boundary-based
-- durable memory, diagnostics, and redacted config inspection are available through runtime-owned methods
-- CLI remains a thin client for status, logs, artifacts, approvals, diagnostics, resume, memory, and config inspection
+The current implemented baseline is Milestone 3:
 
-The current reference task is generating a Markdown architecture summary artifact at logical path `artifacts/repo_summary.md`.
+- JSON-RPC 2.0 over stdio between clients and the runtime
+- runtime-owned task lifecycle, artifacts, approvals, checkpoints, diagnostics, and memory
+- a real DeepAgent-backed primary harness behind project-owned adapters
+- governed sandbox access for files and commands
+- durable restart recovery and pause/resume
+- filesystem-backed subagent registry, role-scoped tools, and model routing
+- governed skill installation into managed primary-agent and subagent skill roots
 
 ## Architecture
 
 The repository follows a few non-negotiable rules:
 
-- the runtime is the system of record for task lifecycle and execution state
-- the CLI is a client, not the orchestration layer
-- LangChain and DeepAgent types stay inside the adapter layer
+- the runtime owns task lifecycle and execution state
+- clients stay thin and do not implement orchestration logic
+- DeepAgent and LangChain types stay inside the adapter layer
 - filesystem and command side effects go through the sandbox interface
-- shared protocol and task contracts live in common packages, not app-local copies
+- shared protocol, config, and task contracts live in common packages
 - checkpoint state stays separate from durable project memory
 
-The implemented Milestone 2 execution flow is:
+The implemented execution flow is:
 
-1. CLI calls `task.create`
-2. runtime creates task and run state
-3. runtime starts the task and invokes the agent harness
-4. harness uses sandbox-backed tools to inspect the workspace and write outputs
-5. runtime policy allows, denies, or pauses on approval boundaries
-6. checkpoint metadata, events, diagnostics, and metrics persist during execution
-7. paused or approval-blocked runs resume through `task.resume` or `task.approve`
-8. restart recovery reconstructs resumable run metadata from persisted state
-9. CLI reads runtime-owned methods for task state, logs, artifacts, approvals, diagnostics, memory, and config
+1. A client calls `task.create`.
+2. The runtime creates task and run state.
+3. The runtime starts execution and invokes the primary harness.
+4. The harness uses runtime-governed tools to inspect the workspace, delegate to subagents, and write outputs.
+5. Runtime policy allows, denies, or pauses on approval boundaries.
+6. Events, checkpoints, diagnostics, metrics, and artifacts persist during execution.
+7. Paused runs continue through `task.resume`, `task.reply`, or `task.approve`.
+8. Clients read runtime-owned state through protocol methods instead of reconstructing it locally.
 
 ## Repository Layout
 
-- `apps/cli` thin CLI client, JSON-RPC transport wrapper, and output renderers
+- `apps/cli` thin CLI client, runtime process wrapper, and rich renderers
 - `apps/runtime` runtime bootstrap, method handlers, task runner, and stdio server
-- `packages/protocol` shared JSON-RPC, task, artifact, and event envelope models
+- `apps/tui` Textual operator console over the same runtime protocol
+- `packages/protocol` shared JSON-RPC and runtime contract models
+- `packages/config` shared runtime configuration models and loader
 - `packages/identity` `IDENTITY.md` loading and identity bundle compilation
 - `packages/task_model` runtime-facing task and snapshot domain models
-- `packages/config` runtime configuration models
-- `packages/observability` shared observability support types
+- `packages/observability` shared logging support
 - `services/deepagent_runtime` project-owned DeepAgent adapter and tool bindings
-- `services/sandbox_service` governed workspace, scratch, memory, and command execution services
-- `services/artifact_service` runtime-owned artifact registration and lookup
-- `docs/specs` master architecture and runtime protocol specifications
-- `docs/adr` architectural decision records for runtime/client separation, adapter boundaries, memory, sandboxing, and routing
-- `docs/plans` milestone and phase plans
+- `services/sandbox_service` governed workspace, scratch, memory, and command execution
+- `services/subagent_registry` filesystem-backed subagent asset discovery
+- `services/subagent_runtime` model routing, tool scopes, skills, and skill installation
+- `services/checkpoint_service` checkpoint metadata and thread binding persistence
+- `services/memory_service` durable memory storage and promotion
+- `services/policy_service` approval and boundary policy engine
+- `services/observability_service` durable event, diagnostics, and metrics stores
+- `docs/specs` architecture and protocol specifications
+- `docs/adr` architectural decision records
 
-## Milestone 2 Scope
+## Implemented Scope
 
-Included:
+Included today:
 
-- protocol-backed runtime methods: `runtime.health`, `task.create`, `task.get`, `task.logs.stream`, `task.artifacts.list`, `task.approve`, `task.approvals.list`, `task.diagnostics.list`, `task.resume`, `memory.inspect`, `config.get`
-- event streaming and persisted history replay
-- local sandbox with workspace, scratch, and memory zones
-- runtime-owned artifact registration
-- single-agent DeepAgent-backed execution through a project-owned adapter
-- durable checkpoint metadata, thread binding, and restart recovery
-- runtime-owned policy decisions, approval persistence, and boundary grant reuse
-- durable memory storage and inspection across scopes
-- persisted diagnostics and run metrics
-- CLI commands for health, run, status, logs, artifacts, approvals, diagnostics, approve, resume, memory, and config
+- runtime methods for health, task creation/list/get, logs, artifacts, approvals, diagnostics, resume, reply, memory inspection, config inspection, and skill installation
+- event history replay and live event streaming
+- local governed sandbox with workspace, scratch, and memory zones
+- runtime-owned artifact registration and artifact preview support
+- single primary-agent execution with delegated subagent support
+- durable checkpoints, recovery, approval persistence, diagnostics, and run metrics
+- runtime-owned model resolution for the primary agent and subagents
+- CLI commands for health, run, status, logs, artifacts, approvals, diagnostics, approve, resume, reply, memory, config, and skill installation
+- TUI screens for dashboard, task detail, approvals, artifacts, memory, diagnostics, config, markdown preview, and timeline filtering/search
 
-Deferred to later milestones:
+Still deferred:
 
-- multi-subagent orchestration
-- remote sandbox support
-- web UI
+- web client
+- `task.cancel`
+- richer memory retrieval and governance semantics
 
 ## Prerequisites
 
@@ -104,11 +107,11 @@ What they do:
 
 - `uv run poe sync` installs or updates the local environment
 - `uv run poe test` runs the repository test suite
-- `uv run poe lint` runs Ruff checks
+- `uv run poe lint` runs Ruff checks across the repo
 - `uv run poe format` formats Python sources with Ruff
 - `uv run poe typecheck` runs mypy over `apps`, `packages`, and `tests`
 - `uv run poe health` runs the CLI health check against the local runtime
-- `uv run poe run` submits the default Milestone 2 reference task through the CLI
+- `uv run poe run` submits the default reference task through the CLI
 
 ## Quick Start
 
@@ -128,21 +131,24 @@ Run the CLI directly with the example config:
 
 ```bash
 python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml health
-python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml run "Generate a Markdown architecture summary for the repository"
+python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml run "Inspect the repository workspace"
 python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml status <task_id>
 python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml logs <task_id>
-python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml artifacts <task_id>
-python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml approvals <task_id>
-python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml diagnostics <task_id>
-python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml memory --scope project
+python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml reply <task_id> --message "Continue with the updated requirement"
 python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml config
+```
+
+Run the Textual TUI:
+
+```bash
+python -m apps.tui.local_agent_tui.bootstrap --config docs/architecture/runtime.example.toml
 ```
 
 ## Configuration File
 
-The runtime configuration file passed with `--config` is TOML. The example file is [docs/architecture/runtime.example.toml](docs/architecture/runtime.example.toml).
+The runtime configuration file passed with `--config` is TOML. The example file is [docs/architecture/runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml).
 
-Relative paths in the config are resolved relative to the config file location, not the current shell directory. That applies to `identity.path`, `persistence.root_path`, and `cli.default_workspace_root`.
+Relative paths in the config are resolved relative to the config file location, not the current shell directory. That applies to `identity.path` and `cli.default_workspace_root`.
 
 Current format:
 
@@ -187,39 +193,33 @@ deny_command_classes = ["network", "destructive", "secrets"]
 
 Settings:
 
-- `runtime.name`: required runtime identifier used in health and inspection output.
-- `runtime.log_level`: optional runtime log level string. Defaults to `info`.
+- `runtime.name`: required runtime identifier used in health output.
+- `runtime.log_level`: optional runtime log level. Defaults to `info`.
 - `transport.mode`: required transport selector. The current implementation expects `stdio-jsonrpc`.
 - `identity.path`: required path to the primary agent `IDENTITY.md`.
-- `models.primary.provider`: required provider for the primary model.
-- `models.primary.model`: required model name for the primary model.
-- `models.default.provider`: optional fallback provider for roles that do not resolve to a more specific model.
-- `models.default.model`: optional fallback model name paired with `models.default.provider`.
-- `models.subagents.<role>.provider`: optional provider override for a specific subagent role such as `researcher`.
-- `models.subagents.<role>.model`: optional model override for that specific subagent role.
-- `persistence.root_path`: optional runtime data root. The runtime stores `metadata/`, `scratch/`, and `memory/` under this directory. Defaults to `~/.local-agent-harness`.
-- `persistence.metadata_backend`: optional metadata backend. Currently only `sqlite` is supported.
-- `persistence.event_backend`: optional event backend. Currently only `sqlite` is supported.
-- `persistence.diagnostic_backend`: optional diagnostics backend. Currently only `sqlite` is supported.
-- `cli.default_workspace_root`: optional default workspace root for `agent run` when `--workspace-root` is omitted. When set, the local governed sandbox also uses this resolved path as the workspace boundary for task workspace roots. If unset, the CLI and sandbox both fall back to the current working directory.
-- `policy.approval_mode`: policy setting passed into the runtime policy engine. The example uses `boundary`.
-- `policy.sandbox_mode`: policy setting describing the governed sandbox model. The example uses `governed`.
-- `policy.safe_command_classes`: optional list of command classes treated as low-risk by policy.
-- `policy.deny_command_classes`: optional list of command classes denied by policy.
+- `models.primary`: required provider and model for the primary harness.
+- `models.default`: optional fallback model profile.
+- `models.subagents.<role>`: optional provider/model override for a subagent role.
+- `persistence.root_path`: runtime data root. The runtime stores durable metadata, scratch data, and memory under this directory.
+- `persistence.metadata_backend`: currently only `sqlite` is supported.
+- `persistence.event_backend`: currently only `sqlite` is supported.
+- `persistence.diagnostic_backend`: currently only `sqlite` is supported.
+- `cli.default_workspace_root`: default workspace root for client-submitted runs and the governed workspace boundary.
+- `policy`: open-ended runtime policy table preserved and exposed through `config.get` with redaction for secret-like values.
 
 Notes:
 
-- `models.default` is optional. If omitted, the primary model acts as the default fallback.
-- `models.subagents` is optional and may contain zero or more role-specific overrides.
-- `policy` is an open table in the current schema. The runtime preserves additional keys and exposes them through `agent config`, with redaction applied to secret-like values.
-- The config file does not define the exact active task workspace directly. `agent run --workspace-root ...` still sets that per run, but any explicit workspace root must resolve inside `cli.default_workspace_root` when that config value is set.
-- Agent-facing filesystem tools use a virtual filesystem rooted at `/`. The governed workspace is mounted at `/`, scratch space is mounted at `/tmp`, and runtime memory-backed files are mounted at `/.memory`.
-- Host filesystem paths such as `/Users/...` are not exposed directly to the agent. Paths are interpreted inside the virtual sandbox rooted at `/`.
+- If `models.default` is omitted, the primary model acts as the default fallback.
+- Agent-facing filesystem tools use a virtual filesystem rooted at `/`.
+- The governed workspace is mounted at `/`, scratch space at `/tmp`, and runtime memory-backed files at `/.memory`.
+- Host filesystem paths such as `/Users/...` are not exposed directly to the agent.
 
-Milestone 2 CLI surface:
+## CLI Surface
+
+The current CLI commands are:
 
 - `agent health`
-- `agent run "<objective>"`
+- `agent run "<objective>" [--workspace-root <path>]... [--constraint <text>]... [--success-criteria <text>]...`
 - `agent status <task_id> [--run-id <run_id>]`
 - `agent logs <task_id> [--run-id <run_id>]`
 - `agent artifacts <task_id> [--run-id <run_id>]`
@@ -227,57 +227,68 @@ Milestone 2 CLI surface:
 - `agent diagnostics <task_id> [--run-id <run_id>]`
 - `agent approve <approval_id> --decision approve|reject [--task-id <task_id>] [--run-id <run_id>]`
 - `agent resume <task_id> [--run-id <run_id>]`
+- `agent reply <task_id> [--run-id <run_id>] --message "<reply>"`
 - `agent memory [--task-id <task_id>] [--run-id <run_id>] [--scope <scope>] [--namespace <namespace>]`
 - `agent config`
+- `agent skill-install <task_id> --run-id <run_id> --source-path <sandbox_path> --target-scope primary_agent|subagent [--target-role <role>] [--install-mode fail_if_exists|replace] --reason "<why>"`
 
-The current root task `submit` remains as a compatibility alias for `run`, but Milestone 2 documentation and workflows should use `run`.
+`submit` remains as a compatibility alias for `run`.
 
 ## Protocol and Events
 
-The initial transport is JSON-RPC 2.0 over stdio. Request/response methods and runtime events share the same underlying stream but remain distinct at the protocol layer.
-
-Milestone 2 runtime methods:
+The transport is JSON-RPC 2.0 over stdio. The runtime currently implements:
 
 - `runtime.health`
 - `task.create`
+- `task.list`
 - `task.get`
 - `task.approve`
 - `task.approvals.list`
 - `task.diagnostics.list`
+- `task.reply`
 - `task.resume`
 - `task.logs.stream`
 - `task.artifacts.list`
+- `task.artifact.get`
 - `memory.inspect`
+- `skill.install`
 - `config.get`
 
-Milestone 2 event types:
+Observed event types include:
 
 - `task.created`
 - `task.started`
 - `checkpoint.saved`
 - `task.paused`
+- `task.user_input_received`
 - `task.resumed`
 - `approval.requested`
 - `policy.denied`
 - `recovery.discovered`
 - `plan.updated`
 - `subagent.started`
+- `subagent.completed`
 - `tool.called`
 - `artifact.created`
+- `skill.install.requested`
+- `skill.install.validated`
+- `skill.install.approval_requested`
+- `skill.install.completed`
+- `skill.install.failed`
 - `task.completed`
 - `task.failed`
 
 ## Documentation Map
 
-- [Master architecture spec](docs/specs/local-agent-harness-master-spec-v1.md)
-- [Runtime protocol spec](docs/specs/local-agent-harness-runtime-protocol-spec-v1.md)
-- [Architecture notes](docs/architecture/README.md)
-- [ADR index](docs/adr/README.md)
-- [Milestone 2 specification](docs/plans/MILESTONE-2.md)
-- [Milestone 2 implementation blueprint](docs/plans/MILESTONE-2-implementation-blueprint.md)
-- [CLI README](apps/cli/README.md)
-- [Runtime README](apps/runtime/README.md)
+- [Current implementation status](/Users/jeastman/Projects/e/ecl-agent/docs/current.status.md)
+- [Master architecture spec](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-master-spec-v1.md)
+- [Runtime protocol spec](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-runtime-protocol-spec-v1.md)
+- [Architecture notes](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/README.md)
+- [ADR index](/Users/jeastman/Projects/e/ecl-agent/docs/adr/README.md)
+- [CLI README](/Users/jeastman/Projects/e/ecl-agent/apps/cli/README.md)
+- [Runtime README](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/README.md)
+- [Apps overview](/Users/jeastman/Projects/e/ecl-agent/apps/README.md)
 
 ## Status
 
-The repository is in the Milestone 2 closure state. It provides a durable, resumable, governed, and inspectable single-agent runtime baseline while leaving Milestone 3 items such as sub-agent orchestration, role-based routing, and web clients explicitly deferred.
+The repository is past the earlier Milestone 2 baseline. The current codebase implements the durable runtime-governance features from Milestone 2 plus the Milestone 3 subagent, routing, and governed skill-installation baseline. A local operator TUI also exists today, while the web client remains future work.
