@@ -11,6 +11,7 @@ from services.artifact_service.local_agent_artifact_service.store import Artifac
 from services.memory_service.local_agent_memory_service.memory_store import MemoryStore
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
 from services.sandbox_service.local_agent_sandbox_service.sandbox import ExecutionSandbox
+from services.web_service.local_agent_web_service.ports import WebFetchPort, WebSearchPort
 
 EventCallback = Callable[[str, dict[str, Any]], None]
 
@@ -23,6 +24,8 @@ _PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
 _ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
 _SKILL_INSTALL_CAPABILITIES = {"skill_installer", "skills.install"}
 _USER_INPUT_CAPABILITIES = {"request_user_input", "user_input", "conversation"}
+_WEB_FETCH_CAPABILITIES = {"web_fetch", "web.fetch", "web"}
+_WEB_SEARCH_CAPABILITIES = {"web_search", "web.search", "web"}
 
 
 class FilesystemScopeError(PermissionError):
@@ -41,6 +44,8 @@ class SandboxToolBindings:
     governed_operation: Callable[[OperationContext], None] | None = None
     skill_install_handler: Callable[..., dict[str, Any]] | None = None
     user_input_handler: Callable[..., None] | None = None
+    web_fetch_port: WebFetchPort | None = None
+    web_search_port: WebSearchPort | None = None
     _written_paths: list[str] | None = None
 
     def read_file(self, path: str) -> str:
@@ -235,6 +240,81 @@ class SandboxToolBindings:
         )
         self.user_input_handler(**payload)
 
+    def web_fetch(
+        self,
+        url: str,
+        *,
+        max_bytes: int | None = None,
+        timeout: float | None = None,
+        user_agent: str | None = None,
+    ) -> dict[str, Any]:
+        self._ensure_allowed("web_fetch", _WEB_FETCH_CAPABILITIES)
+        if self.web_fetch_port is None:
+            raise ValueError("web_fetch is not configured for this runtime")
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="web.fetch",
+                path_scope=url.strip(),
+                metadata={"url": url.strip()},
+            )
+        )
+        document = self.web_fetch_port.fetch(
+            url,
+            max_bytes=max_bytes,
+            timeout=timeout,
+            user_agent=user_agent,
+        )
+        payload = document.to_dict()
+        self._emit(
+            "tool.called",
+            {
+                "tool": "web_fetch",
+                "arguments": {
+                    "url": url.strip(),
+                    "max_bytes": max_bytes,
+                    "timeout": timeout,
+                },
+                "url": payload["final_url"],
+                "content_type": payload["content_type"],
+                "status_code": payload["status_code"],
+                "content_length": len(document.markdown_content),
+            },
+        )
+        return payload
+
+    def web_search(
+        self,
+        query: str,
+        *,
+        limit: int = 5,
+        locale: str | None = None,
+    ) -> list[dict[str, Any]]:
+        self._ensure_allowed("web_search", _WEB_SEARCH_CAPABILITIES)
+        if self.web_search_port is None:
+            raise ValueError("web_search is not configured for this runtime")
+        self._govern(
+            OperationContext(
+                task_id=self.task_id,
+                run_id=self.run_id,
+                operation_type="web.search",
+                path_scope="https://duckduckgo.com",
+                metadata={"query": query.strip(), "limit": limit, "locale": locale},
+            )
+        )
+        results = self.web_search_port.search(query, limit=limit, locale=locale)
+        payload = [result.to_dict() for result in results]
+        self._emit(
+            "tool.called",
+            {
+                "tool": "web_search",
+                "arguments": {"query": query.strip(), "limit": limit, "locale": locale},
+                "result_count": len(payload),
+            },
+        )
+        return payload
+
     def as_langchain_tools(
         self,
         resolved_bindings: tuple[ResolvedToolBinding, ...],
@@ -357,6 +437,38 @@ class SandboxToolBindings:
                 return "awaiting_user_input"
 
             tools.append(request_user_input)
+
+        if "web_fetch" in allowed_tool_ids:
+
+            @tool
+            def web_fetch(
+                url: str,
+                max_bytes: int | None = None,
+                timeout: float | None = None,
+                user_agent: str | None = None,
+            ) -> dict[str, Any]:
+                """Fetch an HTTP page and return normalized markdown plus metadata."""
+                return self.web_fetch(
+                    url,
+                    max_bytes=max_bytes,
+                    timeout=timeout,
+                    user_agent=user_agent,
+                )
+
+            tools.append(web_fetch)
+
+        if "web_search" in allowed_tool_ids:
+
+            @tool
+            def web_search(
+                query: str,
+                limit: int = 5,
+                locale: str | None = None,
+            ) -> list[dict[str, Any]]:
+                """Search the public web and return normalized result metadata."""
+                return self.web_search(query, limit=limit, locale=locale)
+
+            tools.append(web_search)
 
         return tools
 

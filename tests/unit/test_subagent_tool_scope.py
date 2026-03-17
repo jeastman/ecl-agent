@@ -44,9 +44,14 @@ class RoleToolScopeResolverTests(unittest.TestCase):
         )
 
     def test_researcher_resolves_expected_tools(self) -> None:
-        tools = self.resolver.resolve_tools(_role("researcher", ("read_files", "memory_lookup")))
+        tools = self.resolver.resolve_tools(
+            _role("researcher", ("read_files", "memory_lookup", "web_fetch", "web_search"))
+        )
 
-        self.assertEqual([tool.tool_id for tool in tools], ["read_files", "memory_lookup"])
+        self.assertEqual(
+            [tool.tool_id for tool in tools],
+            ["read_files", "memory_lookup", "web_fetch", "web_search"],
+        )
 
     def test_librarian_resolves_expected_tools(self) -> None:
         tools = self.resolver.resolve_tools(_role("librarian", ("read_files", "memory_lookup")))

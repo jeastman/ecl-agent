@@ -30,6 +30,10 @@ from services.subagent_runtime.local_agent_subagent_runtime import (
     RuntimeSkillCatalog,
     RuntimeModelResolver,
 )
+from services.web_service.local_agent_web_service import (
+    DuckDuckGoSearchAdapter,
+    SimpleMarkdownWebFetchAdapter,
+)
 
 
 def create_runtime_server(
@@ -82,6 +86,8 @@ def create_runtime_server(
         or LangChainDeepAgentHarness(
             model_name=primary_model_route.model,
             model_provider=primary_model_route.provider,
+            web_fetch_port=SimpleMarkdownWebFetchAdapter(),
+            web_search_port=DuckDuckGoSearchAdapter(),
         ),
     )
     checkpoint_adapter = task_runner.checkpoint_adapter

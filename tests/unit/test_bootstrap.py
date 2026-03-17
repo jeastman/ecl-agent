@@ -56,7 +56,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(default_model.model, "gpt-5-nano")
             self.assertEqual(
                 [binding.tool_id for binding in researcher.tool_bindings],
-                ["read_files", "memory_lookup"],
+                ["read_files", "memory_lookup", "web_fetch", "web_search"],
             )
             self.assertEqual(researcher.skills, ())
             self.assertIn(

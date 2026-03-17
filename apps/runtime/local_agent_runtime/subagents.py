@@ -12,6 +12,8 @@ ALLOWED_SUBAGENT_TOOL_IDS = frozenset(
         "memory_lookup",
         "plan_update",
         "read_files",
+        "web_fetch",
+        "web_search",
         "write_files",
     }
 )

@@ -23,6 +23,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings impo
     FilesystemScopeError,
     SandboxToolBindings,
 )
+from services.web_service.local_agent_web_service.ports import WebFetchPort, WebSearchPort
 
 if TYPE_CHECKING:
     from apps.runtime.local_agent_runtime.task_runner import (
@@ -73,12 +74,16 @@ class LangChainDeepAgentHarness:
         *,
         model_name: str,
         model_provider: str,
+        web_fetch_port: WebFetchPort | None = None,
+        web_search_port: WebSearchPort | None = None,
         prompt_builder: PromptBuilder | None = None,
         model_factory: ModelFactory | None = None,
         agent_factory: AgentFactory | None = None,
     ) -> None:
         self._model_name = model_name
         self._model_provider = model_provider
+        self._web_fetch_port = web_fetch_port
+        self._web_search_port = web_search_port
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._model_factory = model_factory or init_chat_model
         self._agent_factory = agent_factory or create_deep_agent
@@ -129,6 +134,8 @@ class LangChainDeepAgentHarness:
             governed_operation=interrupt_bridge.authorize,
             skill_install_handler=request.skill_install_handler,
             user_input_handler=interrupt_bridge.request_user_input,
+            web_fetch_port=self._web_fetch_port,
+            web_search_port=self._web_search_port,
         )
         try:
             if request.checkpoint_controller is not None:
@@ -315,6 +322,16 @@ def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
             tool_id="request_user_input",
             capability_aliases=("request_user_input", "user_input", "conversation"),
             requires_policy=False,
+        ),
+        ResolvedToolBinding(
+            tool_id="web_fetch",
+            capability_aliases=("web_fetch", "web.fetch", "web"),
+            requires_policy=True,
+        ),
+        ResolvedToolBinding(
+            tool_id="web_search",
+            capability_aliases=("web_search", "web.search", "web"),
+            requires_policy=True,
         ),
     )
 

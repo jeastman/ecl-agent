@@ -34,3 +34,4 @@ approval_mode = "boundary"
 sandbox_mode = "governed"
 safe_command_classes = ["safe_read", "safe_exec"]
 deny_command_classes = ["network", "destructive", "secrets"]
+web_access_mode = "allow"

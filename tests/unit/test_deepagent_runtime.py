@@ -39,6 +39,7 @@ from services.memory_service.local_agent_memory_service.memory_store import SQLi
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
+from services.web_service.local_agent_web_service.models import WebDocument, WebSearchResult
 from langchain_core.tools import BaseTool
 
 
@@ -189,6 +190,35 @@ class SandboxToolBindingsTests(unittest.TestCase):
 
         with self.assertRaisesRegex(FilesystemScopeError, "allowed filesystem scopes are memory"):
             read_tool.invoke({"path": "/README.md"})
+
+    def test_web_tools_return_normalized_payloads_and_emit_events(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+            web_fetch_port=_StaticWebFetchPort(),
+            web_search_port=_StaticWebSearchPort(),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (
+                ResolvedToolBinding("web_fetch", ("web_fetch", "web.fetch", "web"), True),
+                ResolvedToolBinding("web_search", ("web_search", "web.search", "web"), True),
+            )
+        )
+        fetch_tool = next(tool for tool in tools if tool.name == "web_fetch")
+        search_tool = next(tool for tool in tools if tool.name == "web_search")
+
+        fetch_payload = fetch_tool.invoke({"url": "https://example.com"})
+        search_payload = search_tool.invoke({"query": "agent runtime", "limit": 1})
+
+        self.assertEqual(fetch_payload["final_url"], "https://example.com/final")
+        self.assertEqual(search_payload[0]["source"], "duckduckgo")
+        self.assertEqual([event[1]["tool"] for event in events], ["web_fetch", "web_search"])
 
 
 class SubagentCompilerTests(unittest.TestCase):
@@ -1046,12 +1076,41 @@ def _resolved_tool_binding(tool_id: str) -> ResolvedToolBinding:
         "memory_lookup": ("memory_lookup", "/.memory"),
         "plan_update": ("plan_update", "planning"),
         "artifact_inspect": ("artifact_inspect", "artifacts"),
+        "web_fetch": ("web_fetch", "web.fetch", "web"),
+        "web_search": ("web_search", "web.search", "web"),
     }[tool_id]
     return ResolvedToolBinding(
         tool_id=tool_id,
         capability_aliases=aliases,
-        requires_policy=tool_id in {"read_files", "write_files", "execute_commands"},
+        requires_policy=tool_id
+        in {"read_files", "write_files", "execute_commands", "web_fetch", "web_search"},
     )
+
+
+class _StaticWebFetchPort:
+    def fetch(self, url: str, **_: Any) -> WebDocument:
+        return WebDocument(
+            url=url,
+            final_url=f"{url}/final",
+            title="Example",
+            markdown_content="# Example\n\nCaptured.",
+            fetched_at="2025-01-01T00:00:00Z",
+            content_type="text/html",
+            status_code=200,
+        )
+
+
+class _StaticWebSearchPort:
+    def search(self, query: str, *, limit: int = 5, locale: str | None = None) -> list[WebSearchResult]:
+        return [
+            WebSearchResult(
+                title=f"Result for {query}",
+                url="https://example.com/result",
+                snippet=f"limit={limit} locale={locale}",
+                rank=1,
+                source="duckduckgo",
+            )
+        ]
 
 
 if __name__ == "__main__":

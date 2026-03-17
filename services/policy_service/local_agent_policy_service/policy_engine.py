@@ -96,6 +96,8 @@ class RuntimePolicyEngine:
                 or bool(metadata.get("overwrite"))
                 or (metadata.get("install_mode") == "replace")
             )
+        if context.operation_type in {"web.fetch", "web.search"}:
+            return _web_access_mode(self.policy_config) == "require_approval"
 
         return False
 
@@ -118,6 +120,8 @@ class RuntimePolicyEngine:
         if context.operation_type == "skill.install":
             path_scope = context.path_scope or ""
             return ".." in path_scope
+        if context.operation_type in {"web.fetch", "web.search"}:
+            return _web_access_mode(self.policy_config) == "deny"
 
         return False
 
@@ -133,6 +137,8 @@ class RuntimePolicyEngine:
             return "Identity memory mutation is denied by the runtime policy."
         if context.operation_type == "skill.install":
             return "Skill installation target is denied by the runtime policy."
+        if context.operation_type in {"web.fetch", "web.search"}:
+            return "Outbound web access is denied by the runtime policy."
         return "Operation is denied by the runtime policy."
 
 
@@ -148,3 +154,13 @@ def _deny_command_classes(policy_config: dict[str, object]) -> set[str]:
     if isinstance(configured, list) and all(isinstance(item, str) for item in configured):
         return {item for item in configured if item}
     return {"destructive", "network", "secrets"}
+
+
+def _web_access_mode(policy_config: dict[str, object]) -> str:
+    configured = policy_config.get("web_access_mode", "allow")
+    if not isinstance(configured, str):
+        return "allow"
+    normalized = configured.strip().lower()
+    if normalized in {"allow", "require_approval", "deny"}:
+        return normalized
+    return "allow"

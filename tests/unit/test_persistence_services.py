@@ -568,6 +568,39 @@ class ApprovalAndPolicyTests(unittest.TestCase):
             self.assertEqual(require.boundary_key, "memory.write:project:project.conventions")
             self.assertEqual(deny.decision, "DENY")
 
+    def test_runtime_policy_engine_applies_dedicated_web_policy_mode(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            approval_engine = RuntimePolicyEngine(
+                policy_config={"web_access_mode": "require_approval"},
+                boundary_grants=grants,
+            )
+            deny_engine = RuntimePolicyEngine(
+                policy_config={"web_access_mode": "deny"},
+                boundary_grants=grants,
+            )
+
+            require = approval_engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="web.fetch",
+                    path_scope="https://example.com/page",
+                )
+            )
+            deny = deny_engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="web.search",
+                    path_scope="https://duckduckgo.com",
+                )
+            )
+
+            self.assertEqual(require.decision, "REQUIRE_APPROVAL")
+            self.assertEqual(require.boundary_key, "web.fetch:example.com")
+            self.assertEqual(deny.decision, "DENY")
+
 
 if __name__ == "__main__":
     unittest.main()

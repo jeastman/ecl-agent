@@ -3,6 +3,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 from typing import Protocol
+from urllib.parse import urlparse
 
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
 
@@ -140,6 +141,15 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
             boundary_key=boundary_key,
             scope=scope,
             description=f"Allow {install_mode} installation for skill {skill_id}",
+        )
+    if context.operation_type in {"web.fetch", "web.search"}:
+        target = context.path_scope or ""
+        hostname = urlparse(target).netloc or "unknown-host"
+        kind = context.operation_type
+        return BoundaryDescriptor(
+            boundary_key=f"{kind}:{hostname}",
+            scope={"kind": kind, "host": hostname},
+            description=f"Allow {kind} access for host {hostname} during this run",
         )
     return None
 
