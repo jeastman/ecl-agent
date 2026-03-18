@@ -268,6 +268,32 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(search_payload[0]["source"], "duckduckgo")
         self.assertEqual([event[1]["tool"] for event in events], ["web_fetch", "web_search"])
 
+    def test_missing_required_argument_returns_retryable_tool_feedback(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            web_search_port=_StaticWebSearchPort(),
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("web_search", ("web_search", "web.search", "web"), True),)
+        )
+        search_tool = next(tool for tool in tools if tool.name == "web_search")
+
+        message = search_tool.invoke({"limit": 1})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("Field required", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "web_search")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertTrue(events[-1][1]["retryable"])
+
 
 class MCPProviderTests(unittest.TestCase):
     def test_connection_payload_merges_env_and_env_from_host(self) -> None:
@@ -1210,6 +1236,42 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(rejection_event["code"], "invalid_arguments")
         self.assertTrue(rejection_event["retryable"])
 
+    def test_harness_keeps_running_after_missing_local_tool_argument(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Search the web",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            web_search_port=_StaticWebSearchPort(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: MissingLocalToolArgumentAgent(kwargs, {}),
+        ).execute(
+            request,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        self.assertTrue(result.success)
+        artifact_text = self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md")
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", artifact_text)
+        self.assertIn("Field required", artifact_text)
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "web_search")
+        self.assertEqual(rejection_event["code"], "invalid_arguments")
+        self.assertTrue(rejection_event["retryable"])
+
 
 class MCPToolProviderTests(unittest.TestCase):
     def test_invalid_tool_arguments_return_retryable_rejection(self) -> None:
@@ -1416,6 +1478,27 @@ class InvalidMCPArgumentsAgent:
         search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         message = search_tool.invoke({"query": "agent runtime", "limit": 100})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class MissingLocalToolArgumentAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        search_tool = next(tool for tool in self._tools if tool.name == "web_search")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = search_tool.invoke({"limit": 1})
         write_tool.invoke(
             {
                 "path": "/workspace/artifacts/task_1/run_1/final_response.md",

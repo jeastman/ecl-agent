@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool, tool
+from pydantic import ValidationError
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding
 from packages.protocol.local_agent_protocol.models import ArtifactReference
@@ -382,7 +383,12 @@ class SandboxToolBindings:
                 except RecoverableToolRejection as exc:
                     return [self._handle_recoverable_rejection("list_files", {"root": root}, exc)]
 
-            tools.extend([read_file, list_files])
+            tools.extend(
+                [
+                    self._with_validation_handler(read_file, "read_file"),
+                    self._with_validation_handler(list_files, "list_files"),
+                ]
+            )
 
         if "write_files" in allowed_tool_ids:
 
@@ -395,7 +401,7 @@ class SandboxToolBindings:
                 except RecoverableToolRejection as exc:
                     return self._handle_recoverable_rejection("write_file", {"path": path}, exc)
 
-            tools.append(write_file)
+            tools.append(self._with_validation_handler(write_file, "write_file"))
 
         if "execute_commands" in allowed_tool_ids:
 
@@ -416,7 +422,7 @@ class SandboxToolBindings:
                         exc,
                     )
 
-            tools.append(execute_command)
+            tools.append(self._with_validation_handler(execute_command, "execute_command"))
 
         if "memory_lookup" in allowed_tool_ids:
 
@@ -435,7 +441,7 @@ class SandboxToolBindings:
                     ]
                 return records
 
-            tools.append(memory_lookup)
+            tools.append(self._with_validation_handler(memory_lookup, "memory_lookup"))
 
         if "plan_update" in allowed_tool_ids:
 
@@ -444,7 +450,7 @@ class SandboxToolBindings:
                 """Emit a runtime-friendly plan update."""
                 return self.plan_update(summary, phase)
 
-            tools.append(plan_update)
+            tools.append(self._with_validation_handler(plan_update, "plan_update"))
 
         if "artifact_inspect" in allowed_tool_ids:
 
@@ -453,7 +459,7 @@ class SandboxToolBindings:
                 """Inspect task artifacts and return metadata with previews when available."""
                 return self.artifact_inspect()
 
-            tools.append(artifact_inspect)
+            tools.append(self._with_validation_handler(artifact_inspect, "artifact_inspect"))
 
         if "skill_installer" in allowed_tool_ids:
 
@@ -479,7 +485,7 @@ class SandboxToolBindings:
                     reason,
                 )
 
-            tools.append(skill_installer)
+            tools.append(self._with_validation_handler(skill_installer, "skill-installer"))
 
         if "request_user_input" in allowed_tool_ids:
 
@@ -489,7 +495,7 @@ class SandboxToolBindings:
                 self.request_user_input(question, reason_code)
                 return "awaiting_user_input"
 
-            tools.append(request_user_input)
+            tools.append(self._with_validation_handler(request_user_input, "request_user_input"))
 
         if "web_fetch" in allowed_tool_ids:
 
@@ -508,7 +514,7 @@ class SandboxToolBindings:
                     user_agent=user_agent,
                 )
 
-            tools.append(web_fetch)
+            tools.append(self._with_validation_handler(web_fetch, "web_fetch"))
 
         if "web_search" in allowed_tool_ids:
 
@@ -521,7 +527,7 @@ class SandboxToolBindings:
                 """Search the public web and return normalized result metadata."""
                 return self.web_search(query, limit=limit, locale=locale)
 
-            tools.append(web_search)
+            tools.append(self._with_validation_handler(web_search, "web_search"))
 
         return tools
 
@@ -603,6 +609,36 @@ class SandboxToolBindings:
         }
         self._emit("tool.rejected", payload)
         return _format_tool_rejection_message(rejection)
+
+    def _with_validation_handler(self, tool_obj: BaseTool, tool_name: str) -> BaseTool:
+        tool_obj.handle_validation_error = (
+            lambda exc: self._handle_validation_error(tool_name=tool_name, exc=exc)
+        )
+        return tool_obj
+
+    def _handle_validation_error(
+        self,
+        *,
+        tool_name: str,
+        exc: ValidationError | Any,
+    ) -> str:
+        details = exc.errors() if hasattr(exc, "errors") else []
+        message = str(exc)
+        payload = {
+            "tool": tool_name,
+            "arguments": {},
+            "code": "invalid_arguments",
+            "category": "argument_validation",
+            "message": message,
+            "retryable": True,
+            "details": {"errors": details},
+            "summary": f"{tool_name} rejected: {message}",
+        }
+        self._emit("tool.rejected", payload)
+        return (
+            f"TOOL_REJECTED [invalid_arguments]: {message} "
+            "Adjust the tool arguments to satisfy the schema and try again."
+        )
 
 
 def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
