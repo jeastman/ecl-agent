@@ -218,6 +218,25 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(events[-1][1]["code"], "path_validation")
         self.assertEqual(events[-1][1]["arguments"]["path"], "<host-native-path>")
 
+    def test_missing_command_returns_recoverable_tool_feedback(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        message = bindings.execute_command(["atlassian"], cwd="/workspace")
+
+        self.assertIn("TOOL_REJECTED [command_not_found]", message)
+        self.assertIn("Pick an installed command", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["code"], "command_not_found")
+        self.assertTrue(events[-1][1]["retryable"])
+
     def test_web_tools_return_normalized_payloads_and_emit_events(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         bindings = SandboxToolBindings(
@@ -1109,6 +1128,42 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(tool_event["raw_tool_name"], "echo_text")
         self.assertEqual(tool_event["exposed_tool_name"], "fixture_echo_text")
 
+    def test_harness_keeps_running_after_missing_command_tool_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: MissingCommandAgent(kwargs, {}),
+        ).execute(
+            request,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
+            "TOOL_REJECTED [command_not_found]: Command 'atlassian' is not installed or not on PATH. Pick an installed command or verify the executable name before retrying.\n",
+        )
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "execute_command")
+        self.assertEqual(rejection_event["code"], "command_not_found")
+        self.assertTrue(rejection_event["retryable"])
+
 
 class FakeCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
@@ -1254,6 +1309,27 @@ class MCPPrimaryAgent:
         tool = next(tool for tool in self._tools if tool.name == "fixture_echo_text")
         text = _tool_result_text(tool.invoke({"text": "primary-call"}))
         return {"messages": [{"role": "assistant", "content": text}]}
+
+
+class MissingCommandAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        execute_tool = next(tool for tool in self._tools if tool.name == "execute_command")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = execute_tool.invoke({"command": ["atlassian"], "cwd": "/workspace"})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
 
 
 class FakeCheckpointController:

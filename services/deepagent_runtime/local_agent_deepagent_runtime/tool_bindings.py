@@ -133,6 +133,7 @@ class SandboxToolBindings:
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any] | str:
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
+        arguments = {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()}
         try:
             normalized_cwd = self.sandbox.normalize_path(cwd or self.sandbox.get_workspace_root())
             self._govern(
@@ -161,10 +162,25 @@ class SandboxToolBindings:
                 "stderr": result.stderr,
                 "cwd": result.cwd,
             }
+        except FileNotFoundError as exc:
+            missing_command = command[0] if command else "<unknown>"
+            return self._handle_recoverable_rejection(
+                "execute_command",
+                arguments,
+                RecoverableToolRejection(
+                    code="command_not_found",
+                    message=f"Command '{missing_command}' is not installed or not on PATH.",
+                    category="command_execution",
+                    details={
+                        "command": missing_command,
+                        "errno": getattr(exc, "errno", None),
+                    },
+                ),
+            )
         except RecoverableToolRejection as exc:
             return self._handle_recoverable_rejection(
                 "execute_command",
-                {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()},
+                arguments,
                 exc,
             )
 
@@ -621,6 +637,7 @@ def _format_tool_rejection_message(rejection: RecoverableToolRejection) -> str:
         "path_validation": "Use a virtual path under '/workspace', '/tmp', or '/.memory'.",
         "scope_denied": "Use a path within the delegated filesystem scope for this tool call.",
         "policy_denied": "Use a non-destructive or otherwise policy-compliant alternative.",
+        "command_execution": "Pick an installed command or verify the executable name before retrying.",
     }.get(rejection.category, "Adjust the tool arguments and try again.")
     return f"TOOL_REJECTED [{rejection.code}]: {message} {guidance}"
 
