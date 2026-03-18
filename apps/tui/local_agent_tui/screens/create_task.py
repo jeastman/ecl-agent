@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
@@ -49,7 +51,7 @@ class CreateTaskScreen(ModalScreen[None]):  # type: ignore[misc]
         self.app.submit_create_task(input_widget.text)  # type: ignore[attr-defined]
 
     def set_status(self, message: str) -> None:
-        self.query_one("#create-task-status", Static).update(message)
+        self.query_one("#create-task-status", Static).update(escape(message))
 
     def reset_form(self) -> None:
         input_widget = self.query_one("#create-task-input", TextArea)

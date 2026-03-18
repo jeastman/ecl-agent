@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import (
     footer_hints,
@@ -79,27 +81,27 @@ class MemoryScreen(Screen):  # type: ignore[misc]
         summary.border_title = "Selected Scope"
         summary_text = memory_group_summary(state)
         if self._last_summary != summary_text:
-            summary.update(summary_text)
+            summary.update(escape(summary_text))
             self._last_summary = summary_text
         detail_model = selected_memory_detail(state)
         detail = self.query_one("#memory-screen-detail", Static)
-        detail.border_title = detail_model.title
+        detail.border_title = escape(detail_model.title)
         detail_text = "\n".join(
             [
-                detail_model.summary,
+                escape(detail_model.summary),
                 "",
                 "Content",
-                detail_model.content,
+                escape(detail_model.content),
                 "",
                 "Metadata",
-                f"Scope: {detail_model.raw_scope or 'n/a'}",
-                f"Namespace: {detail_model.namespace or 'n/a'}",
-                f"Source Run: {detail_model.source_run}",
-                f"Confidence: {detail_model.confidence}",
-                f"Created: {detail_model.created_at or 'n/a'}",
-                f"Updated: {detail_model.updated_at or 'n/a'}",
+                f"Scope: {escape(detail_model.raw_scope) if detail_model.raw_scope else 'n/a'}",
+                f"Namespace: {escape(detail_model.namespace) if detail_model.namespace else 'n/a'}",
+                f"Source Run: {escape(detail_model.source_run)}",
+                f"Confidence: {escape(detail_model.confidence)}",
+                f"Created: {escape(detail_model.created_at) if detail_model.created_at else 'n/a'}",
+                f"Updated: {escape(detail_model.updated_at) if detail_model.updated_at else 'n/a'}",
                 "Provenance",
-                detail_model.provenance,
+                escape(detail_model.provenance),
             ]
         )
         detail_signature = (detail_model.title, detail_text)
@@ -109,7 +111,7 @@ class MemoryScreen(Screen):  # type: ignore[misc]
         footer = "   ".join(footer_hints(state))
         footer = f"{footer}\nMemory inspector is read-only."
         if state.memory_request_error:
-            footer = f"{footer}\n{state.memory_request_error}"
+            footer = f"{footer}\n{escape(state.memory_request_error)}"
         if self._last_footer != footer:
             self.query_one("#memory-screen-footer", Static).update(footer)
             self._last_footer = footer

@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import (
     approval_count,
@@ -47,17 +49,17 @@ class StatusBar(Static):  # type: ignore[misc]
         memory_status = status_bar_memory_status(state)
         segments = [
             f"[bold {ACCENT}]LOCAL AGENT HARNESS[/]",
-            f"Name: {runtime_name}",
-            f"Runtime: [{status_color}]{connection_label(state)}[/]",
-            f"Health: {runtime_health_label(state)}",
-            f"Transport: {transport}",
-            f"Model: {model_name}" if model_name else "",
-            f"Sandbox: {sandbox_mode}" if sandbox_mode else "",
+            f"Name: {escape(runtime_name)}",
+            f"Runtime: [{status_color}]{escape(connection_label(state))}[/]",
+            f"Health: {escape(runtime_health_label(state))}",
+            f"Transport: {escape(transport)}",
+            f"Model: {escape(model_name)}" if model_name else "",
+            f"Sandbox: {escape(sandbox_mode)}" if sandbox_mode else "",
             f"Tasks: {task_count(state)}",
             f"Approvals: [{WARNING}]{approval_count(state)}[/]",
             f"Artifacts: [{ACCENT}]{artifact_count(state)}[/]",
             f"Diagnostics: [{DANGER}]{diagnostics_count(state)}[/]",
-            f"Memory: {memory_status}",
+            f"Memory: {escape(memory_status)}",
         ]
         self.update(_fit_status_bar(segments, self.size.width or 120))
 

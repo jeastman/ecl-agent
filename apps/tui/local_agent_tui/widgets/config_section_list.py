@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ConfigSectionItemViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -23,7 +25,7 @@ else:  # pragma: no cover
 class ConfigSectionRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: ConfigSectionItemViewModel) -> None:
         self.section_id = item.section_id
-        super().__init__(Label(f"{item.title}\n{item.description}"))
+        super().__init__(Label(f"{escape(item.title)}\n{escape(item.description)}"))
 
 
 class ConfigSectionListWidget(ListView):  # type: ignore[misc]

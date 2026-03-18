@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import footer_hints, pending_approvals, selected_approval_detail
 from ..widgets.approval_detail import ApprovalDetailWidget
@@ -56,5 +58,5 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
         self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
         footer = "   ".join(footer_hints(state))
         if state.approval_feedback:
-            footer = f"{footer}\n{state.approval_feedback}"
+            footer = f"{footer}\n{escape(state.approval_feedback)}"
         self.query_one("#approvals-screen-footer", Static).update(footer)

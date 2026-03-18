@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import diagnostics_items, footer_hints, selected_diagnostics_detail
 from ..widgets.status_bar import StatusBar
@@ -54,8 +56,8 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
                 (
                     "\n".join(
                         [
-                            f"{'>' if item.is_selected else ' '} {item.kind}  {item.created_at}",
-                            f"  {item.message}",
+                            f"{'>' if item.is_selected else ' '} {escape(item.kind)}  {escape(item.created_at)}",
+                            f"  {escape(item.message)}",
                         ]
                     )
                 )
@@ -65,6 +67,6 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
         )
         detail = selected_diagnostics_detail(state)
         detail_panel = self.query_one("#diagnostics-screen-detail", Static)
-        detail_panel.border_title = detail.title
-        detail_panel.update(f"{detail.summary}\n\n{detail.body}".strip())
+        detail_panel.border_title = escape(detail.title)
+        detail_panel.update(f"{escape(detail.summary)}\n\n{escape(detail.body)}".strip())
         self.query_one("#diagnostics-screen-footer", Static).update("   ".join(footer_hints(state)))

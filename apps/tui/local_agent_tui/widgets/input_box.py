@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import TaskActionBarViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -55,9 +57,9 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             hints.append("[L] Hide Logs" if model.logs_visible else "[L] Show Logs")
         if model.back_enabled:
             hints.append("[Esc] Back")
-        status = model.status_message
+        status = escape(model.status_message)
         if hints:
-            status = f"{status}\n{'   '.join(hints)}"
+            status = f"{status}\n{'   '.join(escape(hint) for hint in hints)}"
         self.query_one("#task-detail-command-status", Static).update(status)
 
     def focus_input(self) -> None:

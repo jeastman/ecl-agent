@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import LogViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 
@@ -46,9 +48,9 @@ class LogViewWidget(VerticalScroll):  # type: ignore[misc]
         should_tail = self.scroll_y >= max(0.0, self.max_scroll_y - 1)
         body.update(
             "\n".join(
-                f"{line.timestamp} [{_level_color(line.level)}]{line.level:<7}[/] "
-                f"{line.source_name or 'runtime'}  {'[reverse]' if line.is_highlighted else ''}"
-                f"{line.message}{'[/reverse]' if line.is_highlighted else ''}"
+                f"{escape(line.timestamp)} [{_level_color(line.level)}]{escape(line.level):<7}[/] "
+                f"{escape(line.source_name or 'runtime')}  {'[reverse]' if line.is_highlighted else ''}"
+                f"{escape(line.message)}{'[/reverse]' if line.is_highlighted else ''}"
                 for line in model.lines
             )
         )

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ArtifactPreviewViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -35,13 +37,13 @@ class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
     def update_preview(self, model: ArtifactPreviewViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        self.border_title = model.title
+        self.border_title = escape(model.title)
         self.query_one("#artifact-preview-meta", Static).update(
             "\n".join(
                 [
-                    f"Status: {model.status}",
-                    f"Type: {model.content_type or 'unknown'}",
-                    f"Action: {model.open_label}",
+                    f"Status: {escape(model.status)}",
+                    f"Type: {escape(model.content_type) if model.content_type else 'unknown'}",
+                    f"Action: {escape(model.open_label)}",
                     f"External Open: {'yes' if model.external_open_supported else 'no'}",
                     "",
                 ]

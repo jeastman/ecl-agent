@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import TimelineGroupViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 
@@ -64,9 +66,20 @@ def _render_event_line(
         "attention": ("ATTN", WARNING),
         "success": ("OK", SUCCESS),
     }.get(severity, ("INFO", ACCENT))
-    source = f" {source_name}" if source_name else ""
+    safe_timestamp = escape(timestamp)
+    safe_event_type = escape(event_type)
+    safe_source_name = escape(source_name) if source_name else None
+    safe_summary = escape(summary)
+    safe_highlight_label = escape(highlight_label) if highlight_label else None
+    source = f" {safe_source_name}" if safe_source_name else ""
     collapsed = (
-        f"{event_type}{source} (x{repeat_count})" if repeat_count > 1 else f"{event_type}{source}"
+        f"{safe_event_type}{source} (x{repeat_count})"
+        if repeat_count > 1
+        else f"{safe_event_type}{source}"
     )
-    prefix = f"[reverse]{highlight_label}[/reverse] " if highlight and highlight_label else ""
-    return f"{prefix}[{color}]{timestamp} [{marker}][/] {collapsed}  {summary}"
+    prefix = (
+        f"[reverse]{safe_highlight_label}[/reverse] "
+        if highlight and safe_highlight_label
+        else ""
+    )
+    return f"{prefix}[{color}]{safe_timestamp} [{marker}][/] {collapsed}  {safe_summary}"

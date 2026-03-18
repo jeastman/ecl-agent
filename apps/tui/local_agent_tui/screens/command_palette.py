@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import CommandPaletteItemViewModel, command_palette
 
@@ -76,7 +78,7 @@ def _render_results(items: list[CommandPaletteItemViewModel]) -> str:
     for item in items:
         marker = ">" if item.is_selected else " "
         lines.append(f"{marker} {_highlight_matches(item.label, item.match_spans)}")
-        lines.append(f"  {item.hint}")
+        lines.append(f"  {escape(item.hint)}")
     return "\n".join(lines)
 
 
@@ -87,9 +89,9 @@ def _highlight_matches(text: str, spans: list[tuple[int, int]]) -> str:
     cursor = 0
     for start, end in spans:
         if start > cursor:
-            rendered.append(text[cursor:start])
-        rendered.append(f"[reverse]{text[start:end]}[/reverse]")
+            rendered.append(escape(text[cursor:start]))
+        rendered.append(f"[reverse]{escape(text[start:end])}[/reverse]")
         cursor = end
     if cursor < len(text):
-        rendered.append(text[cursor:])
+        rendered.append(escape(text[cursor:]))
     return "".join(rendered)

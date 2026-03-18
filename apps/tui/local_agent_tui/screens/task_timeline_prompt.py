@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
@@ -60,7 +62,7 @@ class TaskTimelinePromptScreen(ModalScreen[None]):  # type: ignore[misc]
             self.app.submit_task_timeline_filter(event.value)  # type: ignore[attr-defined]
 
     def set_status(self, message: str) -> None:
-        self.query_one("#task-timeline-prompt-status", Static).update(message)
+        self.query_one("#task-timeline-prompt-status", Static).update(escape(message))
 
     def on_key(self, event: Any) -> None:
         if getattr(event, "key", "") == "escape":

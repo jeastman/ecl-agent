@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import MemoryEntryItemViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -23,7 +25,7 @@ else:  # pragma: no cover
 class MemoryEntryRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: MemoryEntryItemViewModel) -> None:
         self.memory_id = item.memory_id
-        super().__init__(Label(f"{item.title}\n{item.subtitle}"))
+        super().__init__(Label(f"{escape(item.title)}\n{escape(item.subtitle)}"))
 
 
 class MemoryEntryListWidget(ListView):  # type: ignore[misc]

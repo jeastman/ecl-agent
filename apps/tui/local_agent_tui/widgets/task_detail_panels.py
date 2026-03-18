@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import (
     NotificationStripViewModel,
     SubagentActivityItemViewModel,
@@ -46,14 +48,16 @@ class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
             return
         status = _status_markup(model.status)
         lines = [
-            f"{model.task_id}  {status}  {model.run_id}",
-            f"Created: {model.created_at}   Updated: {model.updated_at}",
-            f"Phase: {model.current_phase}   Next: {model.actionable_label}",
+            f"{escape(model.task_id)}  {status}  {escape(model.run_id)}",
+            f"Created: {escape(model.created_at)}   Updated: {escape(model.updated_at)}",
+            f"Phase: {escape(model.current_phase)}   Next: {escape(model.actionable_label)}",
         ]
         if model.active_subagent:
-            lines[-1] = f"{lines[-1]}   Active: {model.active_subagent}"
-        lines.append(f"Objective: {model.objective or 'No objective available.'}")
-        lines.append(model.actionable_hint)
+            lines[-1] = f"{lines[-1]}   Active: {escape(model.active_subagent)}"
+        lines.append(
+            f"Objective: {escape(model.objective) if model.objective else 'No objective available.'}"
+        )
+        lines.append(escape(model.actionable_hint))
         body.update("\n".join(lines))
         self.scroll_to(y=0, animate=False, immediate=True)
 
@@ -78,7 +82,8 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
             return
         self.update(
             "\n".join(
-                f"{item.subagent_id}  {_status_markup(item.status)}\n{item.latest_summary}"
+                f"{escape(item.subagent_id)}  {_status_markup(item.status)}\n"
+                f"{escape(item.latest_summary)}"
                 for item in items
             )
         )
@@ -94,7 +99,11 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
             return
         self.update(
             "\n".join(
-                f"{item.timestamp} {_severity_markup(item.severity)} {item.summary}"
+                _render_notification_line(
+                    timestamp=item.timestamp,
+                    severity=item.severity,
+                    summary=item.summary,
+                )
                 for item in model.items
             )
         )
@@ -110,7 +119,7 @@ def _status_markup(status: str) -> str:
         "paused": WARNING,
         "awaiting_approval": WARNING,
     }.get(status.lower(), ACCENT)
-    return f"[{color}]{status.upper()}[/]"
+    return f"[{color}]{escape(status.upper())}[/]"
 
 
 def _severity_markup(severity: str) -> str:
@@ -119,4 +128,8 @@ def _severity_markup(severity: str) -> str:
         "attention": WARNING,
         "success": SUCCESS,
     }.get(severity.lower(), ACCENT)
-    return f"[{color}][{severity.upper()}][/]"
+    return f"[{color}]\\[{escape(severity.upper())}\\][/]"
+
+
+def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> str:
+    return f"{escape(timestamp)} {_severity_markup(severity)} {escape(summary)}"

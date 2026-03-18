@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ArtifactBrowserRowViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -30,8 +32,8 @@ class ArtifactTableRow(ListItem):  # type: ignore[misc]
         group = _truncate(item.group_label, 18)
         marker = "*" if item.is_highlighted else " "
         text = (
-            f"{marker} {name:<26} {content_type:<18} {created:<20} {origin:<18}\n"
-            f"  Group: {group}  Path: {_truncate(item.logical_path, 52)}"
+            f"{marker} {escape(name):<26} {escape(content_type):<18} {escape(created):<20} {escape(origin):<18}\n"
+            f"  Group: {escape(group)}  Path: {escape(_truncate(item.logical_path, 52))}"
         )
         super().__init__(Label(text))
 
@@ -65,7 +67,7 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
                     selected_index = index
         if selected_index is not None:
             self.index = selected_index
-        self.border_title = f"Artifacts by {group_by}"
+        self.border_title = escape(f"Artifacts by {group_by}")
         self.border_subtitle = (
             "Name                       Type               Created              Task/Run"
         )

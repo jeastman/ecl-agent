@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ConfigDetailViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -29,15 +31,15 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
         signature = (model.title, model.status, model.summary, model.body)
         if self._last_signature == signature:
             return
-        self.border_title = model.title
+        self.border_title = escape(model.title)
         self.update(
             "\n".join(
                 [
-                    f"Status: {model.status}",
+                    f"Status: {escape(model.status)}",
                     "",
-                    model.summary,
+                    escape(model.summary),
                     "",
-                    model.body,
+                    escape(model.body),
                 ]
             ).strip()
         )

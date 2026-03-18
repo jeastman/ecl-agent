@@ -3,6 +3,8 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import TaskListItemViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
 
@@ -31,11 +33,11 @@ class TaskListRow(ListItem):  # type: ignore[misc]
             status_bits.append(f"[{WARNING}]APPROVAL[/]")
         if item.artifact_count:
             status_bits.append(f"[{ACCENT}]ART {item.artifact_count}[/]")
-        title = f"{_compact_id(item.task_id)}  {' | '.join(status_bits)}"
+        title = f"{escape(_compact_id(item.task_id))}  {' | '.join(status_bits)}"
         objective_preview = _objective_preview(item.objective)
         metadata = (
             f"[{TEXT_MUTED}]Updated {_compact_timestamp(item.updated_at)}"
-            f"   {_compact_id(item.run_id)}[/]"
+            f"   {escape(_compact_id(item.run_id))}[/]"
         )
         text = f"{title}\n{objective_preview}\n{metadata}"
         if item.is_highlighted:
@@ -70,7 +72,7 @@ def _status_markup(status: str) -> str:
         "awaiting_approval": WARNING,
         "accepted": ACCENT,
     }.get(status.lower(), ACCENT)
-    return f"[{color}]{status.upper()}[/]"
+    return f"[{color}]{escape(status.upper())}[/]"
 
 
 def _objective_preview(objective: str) -> str:
@@ -79,15 +81,15 @@ def _objective_preview(objective: str) -> str:
     if not normalized:
         return f"[{TEXT_MUTED}]No objective provided.[/]"
     if len(normalized) <= 84:
-        return normalized
-    return f"{normalized[:81].rstrip()}..."
+        return escape(normalized)
+    return escape(f"{normalized[:81].rstrip()}...")
 
 
 def _compact_timestamp(timestamp: str) -> str:
     if "T" not in timestamp:
-        return timestamp or "unknown"
+        return escape(timestamp or "unknown")
     date_part, time_part = timestamp.split("T", 1)
-    return f"{date_part} {time_part[:5]}"
+    return escape(f"{date_part} {time_part[:5]}")
 
 
 def _compact_id(value: str) -> str:

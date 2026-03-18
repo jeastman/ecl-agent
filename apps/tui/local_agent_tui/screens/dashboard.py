@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.app_state import AppState
 from ..store.selectors import (
     dashboard_empty_state,
@@ -89,7 +91,8 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         artifacts = recent_artifacts(state)
         artifacts_pane.update(
             "\n".join(
-                f"{artifact.task_id}  {artifact.display_name}\n{artifact.content_type}"
+                f"{escape(artifact.task_id)}  {escape(artifact.display_name)}\n"
+                f"{escape(artifact.content_type)}"
                 for artifact in artifacts
             )
             or "No recent artifacts."
@@ -117,21 +120,21 @@ def _task_summary_text(state: AppState) -> str:
     if summary is None:
         return "Select a task to view its summary."
     lines = [
-        f"Task: {summary.task_id}",
+        f"Task: {escape(summary.task_id)}",
         f"Status: {_status_markup(summary.status)}",
-        f"Next Action: {summary.actionable_label}",
-        f"Run: {summary.run_id}",
-        f"Created: {summary.created_at}",
-        f"Updated: {summary.updated_at}",
+        f"Next Action: {escape(summary.actionable_label)}",
+        f"Run: {escape(summary.run_id)}",
+        f"Created: {escape(summary.created_at)}",
+        f"Updated: {escape(summary.updated_at)}",
         f"Artifacts: {summary.artifact_count}",
         "",
         "Objective",
-        summary.objective or "No objective available.",
+        escape(summary.objective) if summary.objective else "No objective available.",
         "",
         "Latest Summary",
-        summary.latest_summary,
+        escape(summary.latest_summary),
         "",
-        summary.actionable_hint,
+        escape(summary.actionable_hint),
     ]
     if summary.awaiting_approval:
         lines.extend(["", "Approval required before the task can continue."])
@@ -148,4 +151,4 @@ def _status_markup(status: str) -> str:
         "paused": WARNING,
         "awaiting_approval": WARNING,
     }.get(status.lower(), ACCENT)
-    return f"[{color}]{status.upper()}[/]"
+    return f"[{color}]{escape(status.upper())}[/]"

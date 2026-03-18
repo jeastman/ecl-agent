@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ApprovalDetailViewModel
 from ..theme.colors import DANGER, WARNING
 
@@ -28,19 +30,19 @@ class ApprovalDetailWidget(Static):  # type: ignore[misc]
             self.update("Select an approval to inspect its details.")
             return
         lines = [
-            f"Task: {detail.task_id}",
-            f"Run: {detail.run_id}",
-            f"Approval: {detail.approval_id}",
-            f"Type: {detail.request_type}",
-            f"Policy: {detail.policy_context}",
-            f"Action: {detail.requested_action}",
-            f"Status: [{DANGER if detail.status in {'pending', 'waiting'} else WARNING}]{detail.status}[/]",
-            f"Created: {detail.created_at}",
+            f"Task: {escape(detail.task_id)}",
+            f"Run: {escape(detail.run_id)}",
+            f"Approval: {escape(detail.approval_id)}",
+            f"Type: {escape(detail.request_type)}",
+            f"Policy: {escape(detail.policy_context)}",
+            f"Action: {escape(detail.requested_action)}",
+            f"Status: [{DANGER if detail.status in {'pending', 'waiting'} else WARNING}]{escape(detail.status)}[/]",
+            f"Created: {escape(detail.created_at)}",
             "",
             "Description",
-            detail.description,
+            escape(detail.description),
             "",
             "Scope",
-            detail.scope_summary,
+            escape(detail.scope_summary),
         ]
         self.update("\n".join(lines))

@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ApprovalQueueItemViewModel
 from ..theme.colors import DANGER, WARNING
 
@@ -46,12 +48,13 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
             suffix = "[/reverse]" if item.is_highlighted else ""
             rendered_items.append(
                 (
-                    f"{prefix}{marker} {item.task_id:<10} {item.request_type[:16]:<16} "
-                    f"{item.policy_context[:19]:<19} "
-                    f"[{urgency}]{item.status.upper():<10}[/]{suffix}"
+                    f"{prefix}{marker} {escape(item.task_id)[:10]:<10} "
+                    f"{escape(item.request_type)[:16]:<16} "
+                    f"{escape(item.policy_context)[:19]:<19} "
+                    f"[{urgency}]{escape(item.status.upper())[:10]:<10}[/]{suffix}"
                 )
             )
             if inbox_mode:
-                rendered_items.append(f"  Action: {item.requested_action}")
-            rendered_items.append(f"  {item.description}")
+                rendered_items.append(f"  Action: {escape(item.requested_action)}")
+            rendered_items.append(f"  {escape(item.description)}")
         self.update("\n".join(rendered_items))

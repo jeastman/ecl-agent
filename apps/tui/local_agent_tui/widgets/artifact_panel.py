@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.markup import escape
+
 from ..store.selectors import ArtifactPanelItemViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -28,7 +30,8 @@ class ArtifactPanelWidget(Static):  # type: ignore[misc]
             return
         self.update(
             "\n".join(
-                f"{'>' if item.is_selected else ' '} {item.display_name}\n{item.content_type}  {item.logical_path}"
+                f"{'>' if item.is_selected else ' '} {escape(item.display_name)}\n"
+                f"{escape(item.content_type)}  {escape(item.logical_path)}"
                 for item in items
             )
         )
