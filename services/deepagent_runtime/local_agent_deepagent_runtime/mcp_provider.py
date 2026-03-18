@@ -8,6 +8,7 @@ from typing import Any, Callable
 from langchain_core.tools import BaseTool, StructuredTool
 from langchain_mcp_adapters.callbacks import Callbacks
 from langchain_mcp_adapters.tools import load_mcp_tools
+from pydantic import ValidationError
 
 from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
@@ -175,6 +176,13 @@ class MCPToolProvider:
             description=raw_tool.description,
             args_schema=raw_tool.args_schema,
             response_format="content",
+            handle_validation_error=lambda exc: self._handle_validation_error(
+                role=role,
+                server=server,
+                raw_tool_name=original_name,
+                exposed_tool_name=exposed_name,
+                exc=exc,
+            ),
             metadata={
                 **(raw_tool.metadata or {}),
                 "mcp": {
@@ -186,6 +194,41 @@ class MCPToolProvider:
             },
             func=_invoke,
             coroutine=_ainvoke,
+        )
+
+    def _handle_validation_error(
+        self,
+        *,
+        role: str,
+        server: MCPServerConfig,
+        raw_tool_name: str,
+        exposed_tool_name: str,
+        exc: ValidationError | Any,
+    ) -> str:
+        details = exc.errors() if hasattr(exc, "errors") else []
+        message = str(exc)
+        self._emit(
+            "tool.rejected",
+            {
+                "tool": exposed_tool_name,
+                "arguments": {},
+                "server_name": server.name,
+                "transport": server.transport,
+                "raw_tool_name": raw_tool_name,
+                "exposed_tool_name": exposed_tool_name,
+                "tool_source": "mcp",
+                "agent_role": role,
+                "code": "invalid_arguments",
+                "category": "argument_validation",
+                "message": message,
+                "retryable": True,
+                "details": {"errors": details},
+                "summary": f"{exposed_tool_name} rejected: {message}",
+            },
+        )
+        return (
+            f"TOOL_REJECTED [invalid_arguments]: {message} "
+            "Adjust the tool arguments to satisfy the schema and try again."
         )
 
     def _emit_tool_called(

@@ -8,6 +8,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
+from pydantic import BaseModel, Field
 from packages.config.local_agent_config.models import CompactionConfig, MCPConfig, MCPServerConfig
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
@@ -34,6 +35,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
     SubagentCompiler,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider import (
+    MCPToolProvider,
     _connection_payload,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
@@ -45,7 +47,7 @@ from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
 from services.web_service.local_agent_web_service.models import WebDocument, WebSearchResult
-from langchain_core.tools import BaseTool
+from langchain_core.tools import BaseTool, StructuredTool
 
 
 class PromptBuilderTests(unittest.TestCase):
@@ -1164,6 +1166,76 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(rejection_event["code"], "command_not_found")
         self.assertTrue(rejection_event["retryable"])
 
+    def test_harness_keeps_running_after_invalid_mcp_tool_arguments(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        async def _fake_load_mcp_tools(*args: Any, **kwargs: Any) -> list[BaseTool]:
+            return [_invalid_mcp_search_tool()]
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider.load_mcp_tools",
+            _fake_load_mcp_tools,
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                mcp_config=_fixture_mcp_config(),
+                model_factory=lambda model_name, *, model_provider: {},
+                agent_factory=lambda **kwargs: InvalidMCPArgumentsAgent(kwargs, {}),
+            ).execute(
+                request,
+                on_event=lambda event_type, payload: events.append((event_type, payload)),
+            )
+
+        self.assertTrue(result.success)
+        artifact_text = self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md")
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", artifact_text)
+        self.assertIn("Input should be less than or equal to 50", artifact_text)
+        self.assertIn("Adjust the tool arguments to satisfy the schema", artifact_text)
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "fixture_search")
+        self.assertEqual(rejection_event["code"], "invalid_arguments")
+        self.assertTrue(rejection_event["retryable"])
+
+
+class MCPToolProviderTests(unittest.TestCase):
+    def test_invalid_tool_arguments_return_retryable_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider = MCPToolProvider(
+            config=_fixture_mcp_config(),
+            task_id="task_1",
+            run_id="run_1",
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tool = provider._wrap_tool(
+            role="primary",
+            server=_fixture_mcp_config().servers["fixture"],
+            raw_tool=_invalid_mcp_search_tool(),
+        )
+
+        message = tool.invoke({"query": "agent runtime", "limit": 100})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("Adjust the tool arguments to satisfy the schema", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "fixture_search")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertTrue(events[-1][1]["retryable"])
+
 
 class FakeCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
@@ -1323,6 +1395,27 @@ class MissingCommandAgent:
         execute_tool = next(tool for tool in self._tools if tool.name == "execute_command")
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         message = execute_tool.invoke({"command": ["atlassian"], "cwd": "/workspace"})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class InvalidMCPArgumentsAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = search_tool.invoke({"query": "agent runtime", "limit": 100})
         write_tool.invoke(
             {
                 "path": "/workspace/artifacts/task_1/run_1/final_response.md",
@@ -1492,6 +1585,20 @@ def _fixture_mcp_config(source: str = "runtime_toml") -> MCPConfig:
                 source_path=str(Path("tests/fixtures/mcp_echo_server.py").resolve()),
             )
         },
+    )
+
+
+class _InvalidSearchArgs(BaseModel):
+    query: str
+    limit: int = Field(default=5, le=50)
+
+
+def _invalid_mcp_search_tool() -> BaseTool:
+    return StructuredTool.from_function(
+        func=lambda query, limit=5: [{"text": f"{query}:{limit}"}],
+        name="fixture_search",
+        description="Search fixture MCP tool.",
+        args_schema=_InvalidSearchArgs,
     )
 
 
