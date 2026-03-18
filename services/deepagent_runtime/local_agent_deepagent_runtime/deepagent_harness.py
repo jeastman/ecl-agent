@@ -6,11 +6,15 @@ from typing import TYPE_CHECKING, Any, Callable, Protocol, cast
 from deepagents import create_deep_agent
 from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain.chat_models import init_chat_model
+from langchain_core.exceptions import ContextOverflowError
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, SkillDescriptor
-from packages.config.local_agent_config.models import MCPConfig
+from packages.config.local_agent_config.models import CompactionConfig, MCPConfig
 from packages.task_model.local_agent_task_model.models import (
     RecoverableToolRejectionThresholdExceeded,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strategy import (
+    CompactionStrategyPort,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
@@ -81,6 +85,8 @@ class LangChainDeepAgentHarness:
         mcp_config: MCPConfig | None = None,
         web_fetch_port: WebFetchPort | None = None,
         web_search_port: WebSearchPort | None = None,
+        compaction_policy: CompactionConfig | None = None,
+        compaction_strategy: CompactionStrategyPort | None = None,
         prompt_builder: PromptBuilder | None = None,
         model_factory: ModelFactory | None = None,
         agent_factory: AgentFactory | None = None,
@@ -90,6 +96,8 @@ class LangChainDeepAgentHarness:
         self._mcp_config = mcp_config or MCPConfig()
         self._web_fetch_port = web_fetch_port
         self._web_search_port = web_search_port
+        self._compaction_policy = compaction_policy or CompactionConfig()
+        self._compaction_strategy = compaction_strategy
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._model_factory = model_factory or init_chat_model
         self._agent_factory = agent_factory or create_deep_agent
@@ -195,6 +203,14 @@ class LangChainDeepAgentHarness:
                 error_message=str(exc),
                 failure_code="recoverable_rejection_threshold_exceeded",
             )
+        except ContextOverflowError as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary="Agent harness failed during Deep Agent execution.",
+                output_artifacts=[],
+                error_message=str(exc),
+                failure_code="compaction_failed",
+            )
         except (SubagentCompilationError, PermissionError, ValueError) as exc:
             return AgentExecutionResult(
                 success=False,
@@ -251,6 +267,13 @@ class LangChainDeepAgentHarness:
         )
         primary_tools.extend(mcp_provider.tools_for_role("primary"))
         try:
+            middleware = []
+            if self._compaction_strategy is not None and self._compaction_policy.enabled:
+                middleware = self._compaction_strategy.build_middleware(
+                    model=model,
+                    policy=self._compaction_policy,
+                    on_compaction=callback,
+                )
             agent = self._agent_factory(
                 model=model,
                 tools=primary_tools,
@@ -258,6 +281,7 @@ class LangChainDeepAgentHarness:
                 subagents=subagents_for_agent,
                 skills=_skill_payloads(request.primary_skills),
                 name="primary",
+                middleware=middleware,
                 **(
                     request.checkpoint_controller.build_agent_kwargs()
                     if request.checkpoint_controller is not None

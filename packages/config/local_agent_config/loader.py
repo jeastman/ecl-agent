@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 
 from packages.config.local_agent_config.models import (
     CliConfig,
+    CompactionConfig,
+    CompactionSize,
     MCPConfig,
     MCPServerConfig,
     ModelConfig,
@@ -120,6 +122,72 @@ def _optional_string_list(payload: object, key: str) -> tuple[str, ...]:
     return tuple(resolved)
 
 
+def _parse_compaction_size(
+    payload: object,
+    *,
+    key: str,
+    default_kind: str,
+    default_value: float | int,
+) -> CompactionSize:
+    if payload is None:
+        return CompactionSize(default_kind, default_value)
+    if not isinstance(payload, dict):
+        raise ValueError(f"{key} must be a table/object")
+    kind = payload.get("kind", default_kind)
+    value = payload.get("value", default_value)
+    if not isinstance(kind, str) or kind not in {"fraction", "tokens", "messages"}:
+        raise ValueError(f"{key}.kind must be one of: fraction, tokens, messages")
+    if kind == "fraction":
+        if not isinstance(value, (int, float)) or float(value) <= 0 or float(value) >= 1:
+            raise ValueError(f"{key}.value must be between 0 and 1 for fraction")
+        return CompactionSize(kind, float(value))
+    if not isinstance(value, int) or value <= 0:
+        raise ValueError(f"{key}.value must be a positive integer for {kind}")
+    return CompactionSize(kind, value)
+
+
+def _parse_compaction_config(payload: object) -> CompactionConfig:
+    if payload is None:
+        return CompactionConfig()
+    if not isinstance(payload, dict):
+        raise ValueError("compaction must be a table")
+    tool_token_limit_before_evict = payload.get("tool_token_limit_before_evict", 20000)
+    if (
+        not isinstance(tool_token_limit_before_evict, int)
+        or tool_token_limit_before_evict <= 0
+    ):
+        raise ValueError("compaction.tool_token_limit_before_evict must be a positive integer")
+    strategy = payload.get("strategy", "deepagents_native")
+    if not isinstance(strategy, str) or not strategy.strip():
+        raise ValueError("compaction.strategy must be a non-empty string")
+    return CompactionConfig(
+        enabled=_optional_bool(payload, "enabled", default=True),
+        strategy=strategy.strip(),
+        automatic=_optional_bool(payload, "automatic", default=True),
+        explicit_client=_optional_bool(payload, "explicit_client", default=True),
+        explicit_agent_tool=_optional_bool(payload, "explicit_agent_tool", default=True),
+        trigger=_parse_compaction_size(
+            payload.get("trigger"),
+            key="compaction.trigger",
+            default_kind="fraction",
+            default_value=0.85,
+        ),
+        keep=_parse_compaction_size(
+            payload.get("keep"),
+            key="compaction.keep",
+            default_kind="fraction",
+            default_value=0.10,
+        ),
+        fallback_trigger=_parse_compaction_size(
+            payload.get("fallback_trigger"),
+            key="compaction.fallback_trigger",
+            default_kind="tokens",
+            default_value=170000,
+        ),
+        tool_token_limit_before_evict=tool_token_limit_before_evict,
+    )
+
+
 def _normalize_mcp_transport(raw_transport: str | None) -> str | None:
     if raw_transport is None:
         return None
@@ -204,6 +272,24 @@ def _parse_mcp_server_config(
             transport = "stdio"
         if transport != "stdio":
             raise ValueError(f"MCP server {name} command-based entries must use stdio transport")
+        env_payload = _optional_string_map(payload.get("env"), f"mcp.servers.{name}.env")
+        env_from_host_payload = _optional_string_sequence(
+            payload.get("env_from_host", payload.get("envFromHost")),
+            f"mcp.servers.{name}.env_from_host",
+        )
+        if not enabled:
+            return MCPServerConfig(
+                name=name,
+                transport=transport,
+                enabled=enabled,
+                description=description,
+                command=command_value,
+                args=_optional_string_list(payload.get("args"), f"mcp.servers.{name}.args"),
+                env=env_payload,
+                env_from_host=env_from_host_payload,
+                source=source,
+                source_path=source_path,
+            )
         env_from_host = _resolve_env_from_host(
             payload.get("env_from_host", payload.get("envFromHost")),
             key=f"mcp.servers.{name}.env_from_host",
@@ -216,7 +302,7 @@ def _parse_mcp_server_config(
             command=command_value,
             args=_optional_string_list(payload.get("args"), f"mcp.servers.{name}.args"),
             env=_resolve_host_env_map(
-                _optional_string_map(payload.get("env"), f"mcp.servers.{name}.env"),
+                env_payload,
                 key=f"mcp.servers.{name}.env",
             ),
             env_from_host=env_from_host,
@@ -230,6 +316,18 @@ def _parse_mcp_server_config(
         raise ValueError(f"MCP server {name} url-based entries cannot use stdio transport")
     if payload.get("env_from_host", payload.get("envFromHost")) is not None:
         raise ValueError(f"MCP server {name} env_from_host is supported only for stdio servers")
+    headers_payload = _optional_string_map(payload.get("headers"), f"mcp.servers.{name}.headers")
+    if not enabled:
+        return MCPServerConfig(
+            name=name,
+            transport=transport,
+            enabled=enabled,
+            description=description,
+            url=url_value,
+            headers=headers_payload,
+            source=source,
+            source_path=source_path,
+        )
 
     return MCPServerConfig(
         name=name,
@@ -238,7 +336,7 @@ def _parse_mcp_server_config(
         description=description,
         url=url_value,
         headers=_resolve_host_env_map(
-            _optional_string_map(payload.get("headers"), f"mcp.servers.{name}.headers"),
+            headers_payload,
             key=f"mcp.servers.{name}.headers",
         ),
         source=source,
@@ -343,6 +441,7 @@ def load_runtime_config(path: str) -> RuntimeConfig:
     cli_payload = payload.get("cli", {})
     policy_payload = payload.get("policy", {})
     mcp_payload = payload.get("mcp", {})
+    compaction_payload = payload.get("compaction", {})
     if not isinstance(persistence_payload, dict):
         raise ValueError("persistence must be a table")
     if not isinstance(cli_payload, dict):
@@ -351,6 +450,8 @@ def load_runtime_config(path: str) -> RuntimeConfig:
         raise ValueError("policy must be a table")
     if not isinstance(mcp_payload, dict):
         raise ValueError("mcp must be a table")
+    if not isinstance(compaction_payload, dict):
+        raise ValueError("compaction must be a table")
 
     subagent_overrides_payload = model_payload.get("subagents", {})
     if not isinstance(subagent_overrides_payload, dict):
@@ -431,4 +532,5 @@ def load_runtime_config(path: str) -> RuntimeConfig:
         },
         policy=policy_payload,
         mcp=_resolve_mcp_config(config_path, mcp_payload),
+        compaction=_parse_compaction_config(compaction_payload),
     )

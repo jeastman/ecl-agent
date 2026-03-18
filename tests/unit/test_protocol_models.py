@@ -6,6 +6,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_ARTIFACT_GET,
+    METHOD_TASK_COMPACT,
     METHOD_CONFIG_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_REPLY,
@@ -29,6 +30,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskArtifactsListParams,
     TaskApproveParams,
     TaskApprovalsListParams,
+    TaskCompactParams,
     TaskDiagnosticsListParams,
     TaskDiagnosticsListResult,
     TaskCreateParams,
@@ -103,6 +105,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(TaskListParams.from_dict({"limit": 5}).limit, 5)
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(TaskResumeParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
+        self.assertEqual(TaskCompactParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(
             TaskReplyParams.from_dict({"task_id": "task_1", "message": "continue"}).message,
             "continue",
@@ -133,6 +136,8 @@ class ProtocolModelTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
+        with self.assertRaisesRegex(ValueError, "task.compact requires task_id"):
+            TaskCompactParams.from_dict({})
         with self.assertRaisesRegex(ValueError, "task.reply requires message"):
             TaskReplyParams.from_dict({"task_id": "task_1", "message": "  "})
         with self.assertRaisesRegex(
@@ -207,6 +212,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(METHOD_TASK_DIAGNOSTICS_LIST, "task.diagnostics.list")
         self.assertEqual(METHOD_TASK_LIST, "task.list")
         self.assertEqual(METHOD_TASK_ARTIFACT_GET, "task.artifact.get")
+        self.assertEqual(METHOD_TASK_COMPACT, "task.compact")
         self.assertEqual(METHOD_TASK_REPLY, "task.reply")
 
     def test_task_list_result_serialization(self) -> None:

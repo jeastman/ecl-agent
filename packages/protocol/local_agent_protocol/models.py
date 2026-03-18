@@ -19,6 +19,7 @@ METHOD_TASK_APPROVALS_LIST = "task.approvals.list"
 METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
 METHOD_TASK_REPLY = "task.reply"
 METHOD_TASK_RESUME = "task.resume"
+METHOD_TASK_COMPACT = "task.compact"
 METHOD_TASK_LOGS_STREAM = "task.logs.stream"
 METHOD_TASK_ARTIFACTS_LIST = "task.artifacts.list"
 METHOD_TASK_ARTIFACT_GET = "task.artifact.get"
@@ -261,6 +262,9 @@ class TaskSnapshot:
     pause_reason: str | None = None
     checkpoint_thread_id: str | None = None
     latest_checkpoint_id: str | None = None
+    is_compacted: bool | None = None
+    latest_compaction_id: str | None = None
+    latest_compaction_trigger: str | None = None
     active_subagent: str | None = None
     artifact_count: int | None = None
     recoverable_rejection_count: int | None = None
@@ -354,6 +358,33 @@ class TaskResumeParams:
 
 @dataclass(slots=True)
 class TaskResumeResult:
+    task: TaskSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class TaskCompactParams:
+    task_id: str
+    run_id: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskCompactParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.compact requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.compact run_id must be a string when provided")
+        return cls(task_id=task_id, run_id=run_id)
+
+
+@dataclass(slots=True)
+class TaskCompactResult:
     task: TaskSnapshot
 
     def to_dict(self) -> dict[str, Any]:

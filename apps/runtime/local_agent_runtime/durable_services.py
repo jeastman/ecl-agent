@@ -24,6 +24,10 @@ from services.observability_service.local_agent_observability_service.diagnostic
     DiagnosticStore,
     SQLiteDiagnosticStore,
 )
+from services.observability_service.local_agent_observability_service.conversation_compaction_store import (
+    ConversationCompactionStore,
+    SQLiteConversationCompactionStore,
+)
 from services.observability_service.local_agent_observability_service.event_store import (
     EventStore,
     SQLiteEventStore,
@@ -65,6 +69,7 @@ class DurableRuntimeServices:
     diagnostic_store: DiagnosticStore
     run_metrics_store: RunMetricsStore
     run_message_store: RunMessageStore
+    conversation_compaction_store: ConversationCompactionStore
 
 
 def create_durable_runtime_services(
@@ -97,6 +102,7 @@ def create_durable_runtime_services(
         diagnostic_store=SQLiteDiagnosticStore(str(database_path)),
         run_metrics_store=SQLiteRunMetricsStore(str(database_path)),
         run_message_store=SQLiteRunMessageStore(str(database_path)),
+        conversation_compaction_store=SQLiteConversationCompactionStore(str(database_path)),
     )
 
 

@@ -8,10 +8,14 @@ from uuid import uuid4
 from apps.runtime.local_agent_runtime.subagents import ResolvedSubagentConfiguration
 from apps.runtime.local_agent_runtime.subagents import SkillDescriptor
 from apps.runtime.local_agent_runtime.artifact_store import ArtifactStore
+from apps.runtime.local_agent_runtime.conversation_compaction_service import (
+    ConversationCompactionService,
+)
 from apps.runtime.local_agent_runtime.durable_services import DurableRuntimeServices
 from apps.runtime.local_agent_runtime.event_bus import EventBus
 from apps.runtime.local_agent_runtime.run_state_store import RunStateStore
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_TASK_COMPACT,
     ArtifactReference,
     EventEnvelope,
     EventSource,
@@ -20,8 +24,10 @@ from packages.protocol.local_agent_protocol.models import (
     TaskSnapshot,
     utc_now_timestamp,
 )
+from packages.config.local_agent_config.models import CompactionConfig
 from packages.task_model.local_agent_task_model.ids import new_event_id, new_run_id, new_task_id
 from packages.task_model.local_agent_task_model.models import (
+    CompactionTrigger,
     EventType,
     FailureInfo,
     RecoverableToolRejection,
@@ -164,6 +170,8 @@ class TaskRunner:
         resolved_subagents: list[ResolvedSubagentConfiguration] | None = None,
         primary_skills: tuple[SkillDescriptor, ...] = (),
         skill_catalog: RuntimeSkillCatalog | None = None,
+        compaction_policy: CompactionConfig | None = None,
+        conversation_compaction_service: ConversationCompactionService | None = None,
     ) -> None:
         self._run_state_store = run_state_store
         self._event_bus = event_bus
@@ -174,6 +182,7 @@ class TaskRunner:
         self._resolved_subagents = list(resolved_subagents or [])
         self._primary_skills = tuple(primary_skills)
         self._skill_catalog = skill_catalog
+        self._compaction_policy = compaction_policy or CompactionConfig()
         self._skill_installer = (
             SkillInstallationService(skill_catalog) if skill_catalog is not None else None
         )
@@ -186,6 +195,7 @@ class TaskRunner:
         self._run_threads: dict[tuple[str, str], Thread] = {}
         self._thread_lock = RLock()
         self._rehydrated_artifact_runs: set[tuple[str, str]] = set()
+        self._conversation_compaction_service = conversation_compaction_service
 
     @property
     def resolved_subagents(self) -> list[ResolvedSubagentConfiguration]:
@@ -524,6 +534,16 @@ class TaskRunner:
 
     def get_task_snapshot(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
         state = self._run_state_store.get(task_id, run_id)
+        latest_compaction = (
+            None
+            if self._conversation_compaction_service is None
+            else self._conversation_compaction_service.latest_snapshot(state.task_id, state.run_id)
+        )
+        links = dict(state.links)
+        if self._allows_explicit_compaction(state):
+            links["compact"] = METHOD_TASK_COMPACT
+        else:
+            links.pop("compact", None)
         return TaskSnapshot(
             task_id=state.task_id,
             run_id=state.run_id,
@@ -542,14 +562,51 @@ class TaskRunner:
             pause_reason=state.pause_reason,
             checkpoint_thread_id=state.checkpoint_thread_id,
             latest_checkpoint_id=state.latest_checkpoint_id,
+            is_compacted=latest_compaction is not None,
+            latest_compaction_id=(
+                latest_compaction.compaction_id if latest_compaction is not None else None
+            ),
+            latest_compaction_trigger=(
+                latest_compaction.trigger if latest_compaction is not None else None
+            ),
             active_subagent=state.active_subagent,
             artifact_count=state.artifact_count,
             recoverable_rejection_count=state.recoverable_rejection_count,
             last_event_at=state.last_event_at,
             failure=state.failure,
             last_recoverable_rejection=state.last_recoverable_rejection,
-            links=state.links or None,
+            links=links or None,
         )
+
+    def compact_run(self, task_id: str, run_id: str | None = None) -> TaskSnapshot:
+        state = self._run_state_store.get(task_id, run_id)
+        if not self._allows_explicit_compaction(state):
+            raise ValueError("task.compact requires an accepted, paused, or resumable run")
+        record = self._persist_compaction_projection(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            trigger=CompactionTrigger.EXPLICIT_CLIENT,
+        )
+        if record is not None:
+            now = utc_now_timestamp()
+            self._publish(
+                task_id=state.task_id,
+                run_id=state.run_id,
+                correlation_id=None,
+                event_type=EventType.CONVERSATION_COMPACTED.value,
+                timestamp=now,
+                source=self._source,
+                payload={
+                    "compaction_id": record.compaction_id,
+                    "trigger": record.trigger,
+                    "strategy": record.strategy,
+                    "cutoff_index": record.cutoff_index,
+                    "summary": "Conversation context compacted.",
+                    "created_at": record.created_at,
+                    "artifact_path": record.artifact_path,
+                },
+            )
+        return self.get_task_snapshot(state.task_id, state.run_id)
 
     def list_artifacts(
         self,
@@ -717,6 +774,24 @@ class TaskRunner:
             run_id=run_id,
             workspace_roots=state.workspace_roots,
         )
+        compaction_triggers: list[CompactionTrigger] = []
+
+        def _on_harness_event(event_type: str, payload: dict[str, Any]) -> None:
+            if event_type == EventType.CONVERSATION_COMPACTED.value:
+                trigger_name = payload.get("trigger")
+                if isinstance(trigger_name, str):
+                    try:
+                        compaction_triggers.append(CompactionTrigger(trigger_name))
+                    except ValueError:
+                        pass
+            self._handle_harness_event(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=event_type,
+                payload=payload,
+            )
+
         try:
             conversation_messages = tuple(self._load_conversation_messages(task_id, run_id))
             result = self._agent_harness.execute(
@@ -758,13 +833,7 @@ class TaskRunner:
                         **kwargs,
                     ).to_dict(),
                 ),
-                on_event=lambda event_type, payload: self._handle_harness_event(
-                    task_id=task_id,
-                    run_id=run_id,
-                    correlation_id=correlation_id,
-                    event_type=event_type,
-                    payload=payload,
-                ),
+                on_event=_on_harness_event,
             )
         except ApprovalRequiredInterrupt as exc:
             result = AgentExecutionResult(
@@ -824,6 +893,12 @@ class TaskRunner:
                 run_id=run_id,
                 role="assistant",
                 content=assistant_response,
+            )
+        if compaction_triggers:
+            self._persist_compaction_projection(
+                task_id=task_id,
+                run_id=run_id,
+                trigger=compaction_triggers[-1],
             )
         for sandbox_path in result.output_artifacts:
             artifact = self._artifact_store.register_artifact(
@@ -1318,6 +1393,10 @@ class TaskRunner:
                     ),
                 }
             ]
+        if self._conversation_compaction_service is not None:
+            projected = self._conversation_compaction_service.projected_messages(task_id, run_id)
+            if projected:
+                return projected
         messages = self._durable_services.run_message_store.list_messages(task_id, run_id)
         if messages:
             return [{"role": message.role, "content": message.content} for message in messages]
@@ -1332,6 +1411,48 @@ class TaskRunner:
                 ),
             }
         ]
+
+    def _allows_explicit_compaction(self, state: RunState) -> bool:
+        if (
+            not self._compaction_policy.enabled
+            or not self._compaction_policy.explicit_client
+            or self._conversation_compaction_service is None
+        ):
+            return False
+        if state.status == TaskStatus.ACCEPTED:
+            return True
+        if state.status in {TaskStatus.PAUSED, TaskStatus.AWAITING_APPROVAL}:
+            return True
+        return bool(state.is_resumable)
+
+    def _persist_compaction_projection(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        trigger: CompactionTrigger,
+    ) -> Any | None:
+        if self._conversation_compaction_service is None:
+            return None
+        record = self._conversation_compaction_service.compact(
+            task_id=task_id,
+            run_id=run_id,
+            trigger=trigger,
+        )
+        if record is None:
+            return None
+        now = utc_now_timestamp()
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            updated_at=now,
+            last_event_at=now,
+            latest_summary="Conversation context compacted.",
+            is_compacted=True,
+            latest_compaction_id=record.compaction_id,
+            latest_compaction_trigger=record.trigger,
+        )
+        return record
 
     def _install_skill_via_tool(
         self,

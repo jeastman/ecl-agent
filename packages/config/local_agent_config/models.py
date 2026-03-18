@@ -42,6 +42,27 @@ class RuntimeSettings:
     log_level: str = "info"
 
 
+@dataclass(frozen=True, slots=True)
+class CompactionSize:
+    kind: str
+    value: float | int
+
+
+@dataclass(slots=True)
+class CompactionConfig:
+    enabled: bool = True
+    strategy: str = "deepagents_native"
+    automatic: bool = True
+    explicit_client: bool = True
+    explicit_agent_tool: bool = True
+    trigger: CompactionSize = field(default_factory=lambda: CompactionSize("fraction", 0.85))
+    keep: CompactionSize = field(default_factory=lambda: CompactionSize("fraction", 0.10))
+    fallback_trigger: CompactionSize = field(
+        default_factory=lambda: CompactionSize("tokens", 170000)
+    )
+    tool_token_limit_before_evict: int = 20000
+
+
 @dataclass(slots=True)
 class PersistenceConfig:
     root_path: str
@@ -68,3 +89,4 @@ class RuntimeConfig:
     subagent_model_overrides: dict[str, ModelConfig] = field(default_factory=dict)
     policy: dict[str, object] = field(default_factory=dict)
     mcp: MCPConfig = field(default_factory=MCPConfig)
+    compaction: CompactionConfig = field(default_factory=CompactionConfig)

@@ -32,10 +32,14 @@ from services.memory_service.local_agent_memory_service.memory_store import SQLi
 from services.observability_service.local_agent_observability_service.event_store import (
     SQLiteEventStore,
 )
+from services.observability_service.local_agent_observability_service.conversation_compaction_store import (
+    SQLiteConversationCompactionStore,
+)
 from services.observability_service.local_agent_observability_service.message_store import (
     SQLiteRunMessageStore,
 )
 from services.observability_service.local_agent_observability_service.observability_models import (
+    ConversationCompactionRecord,
     DiagnosticRecord,
     PersistedEvent,
     RunMessageRecord,
@@ -232,6 +236,34 @@ class MemoryStoreTests(unittest.TestCase):
             store.delete_memory("mem_1")
             self.assertIsNone(store.read_memory("mem_1"))
             self.assertEqual(store.list_memory(scope=MEMORY_SCOPE_PROJECT), [])
+
+
+class ConversationCompactionStoreTests(unittest.TestCase):
+    def test_conversation_compaction_store_round_trip(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            store = SQLiteConversationCompactionStore(str(Path(temp_dir) / "runtime.db"))
+            store.append_compaction(
+                ConversationCompactionRecord(
+                    compaction_id="cmp_1",
+                    task_id="task_1",
+                    run_id="run_1",
+                    trigger="explicit_client",
+                    strategy="deepagents_native",
+                    cutoff_index=2,
+                    summary_content="Here is a summary of the conversation to date:\n\nSummary",
+                    created_at="2026-03-18T12:00:00Z",
+                    provenance={"message_count": 4},
+                    artifact_path=None,
+                )
+            )
+
+            loaded = store.latest_compaction("task_1", "run_1")
+
+            self.assertIsNotNone(loaded)
+            assert loaded is not None
+            self.assertEqual(loaded.compaction_id, "cmp_1")
+            self.assertEqual(loaded.cutoff_index, 2)
+            self.assertEqual(loaded.provenance["message_count"], 4)
 
 
 class RunMessageStoreTests(unittest.TestCase):

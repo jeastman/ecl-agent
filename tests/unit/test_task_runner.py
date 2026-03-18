@@ -7,13 +7,21 @@ from pathlib import Path
 from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
+from apps.runtime.local_agent_runtime.conversation_compaction_service import (
+    ConversationCompactionService,
+)
 from apps.runtime.local_agent_runtime.task_runner import (
     AgentExecutionResult,
     StubAgentHarness,
     TaskRunner,
 )
 from packages.config.local_agent_config.loader import load_runtime_config
+from packages.config.local_agent_config.models import CompactionConfig
 from services.artifact_service.local_agent_artifact_service.store import InMemoryArtifactStore
+from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strategy import (
+    CompactionResult,
+    CompactionSnapshot,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
 )
@@ -24,6 +32,7 @@ from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
 from packages.task_model.local_agent_task_model.models import TaskStatus
+from packages.task_model.local_agent_task_model.models import CompactionTrigger
 
 
 class TaskRunnerTests(unittest.TestCase):
@@ -536,6 +545,88 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertIsNotNone(harness.request.memory_store)
         self.assertEqual(harness.request.artifact_store.__class__.__name__, "InMemoryArtifactStore")
 
+    def test_task_runner_persists_compaction_projection_after_harness_event(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=CompactionEventHarness(),
+            durable_services=durable_services,
+            compaction_policy=CompactionConfig(),
+            conversation_compaction_service=ConversationCompactionService(
+                run_message_store=durable_services.run_message_store,
+                compaction_store=durable_services.conversation_compaction_store,
+                strategy=FakeCompactionStrategy(),
+            ),
+        )
+
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertTrue(snapshot.is_compacted)
+        self.assertEqual(snapshot.latest_compaction_trigger, "threshold")
+        self.assertIsNotNone(snapshot.latest_compaction_id)
+        self.assertIn(
+            "conversation.compacted",
+            [event.event.event_type for event in bus.list_events(task_id, run_id)],
+        )
+        projected = runner._load_conversation_messages(task_id, run_id)
+        self.assertEqual(projected[0]["role"], "user")
+        self.assertIn("summary of the conversation", projected[0]["content"].lower())
+
+    def test_task_runner_explicit_compact_updates_projection_and_links(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=ClarificationHarness(),
+            durable_services=durable_services,
+            compaction_policy=CompactionConfig(),
+            conversation_compaction_service=ConversationCompactionService(
+                run_message_store=durable_services.run_message_store,
+                compaction_store=durable_services.conversation_compaction_store,
+                strategy=FakeCompactionStrategy(),
+            ),
+        )
+
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        paused_snapshot = runner.get_task_snapshot(task_id, run_id)
+        assert paused_snapshot.links is not None
+        self.assertEqual(paused_snapshot.links["compact"], "task.compact")
+
+        compacted_snapshot = runner.compact_run(task_id, run_id)
+
+        self.assertTrue(compacted_snapshot.is_compacted)
+        self.assertEqual(compacted_snapshot.latest_compaction_trigger, "explicit_client")
+        projected = runner._load_conversation_messages(task_id, run_id)
+        self.assertEqual(projected[0]["role"], "user")
+        self.assertIn("summary of the conversation", projected[0]["content"].lower())
+
 
 class EventingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
@@ -721,6 +812,55 @@ class CapturingHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
         self.request = request
         return AgentExecutionResult(success=True, summary="captured", output_artifacts=[])
+
+
+class CompactionEventHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        if on_event is not None:
+            on_event(
+                "conversation.compacted",
+                {
+                    "compaction_id": "cmp_runtime",
+                    "trigger": "threshold",
+                    "strategy": "deepagents_native",
+                    "cutoff_index": 1,
+                    "summary": "Conversation context compacted during Deep Agent execution.",
+                    "created_at": "2026-03-18T12:00:00Z",
+                },
+            )
+        return AgentExecutionResult(
+            success=True,
+            summary="Completed after compaction.",
+            output_artifacts=[],
+            assistant_response="Completed after compaction.",
+        )
+
+
+class FakeCompactionStrategy:
+    strategy_id = "deepagents_native"
+
+    def build_middleware(self, *, model, policy, on_compaction):
+        return []
+
+    def compact_messages(self, *, messages, trigger):
+        if len(messages) <= 1:
+            return CompactionResult(snapshot=None, projected_messages=list(messages))
+        return CompactionResult(
+            snapshot=CompactionSnapshot(
+                compaction_id="cmp_test",
+                trigger=trigger,
+                strategy=self.strategy_id,
+                cutoff_index=max(1, len(messages) - 1),
+                summary_content="Here is a summary of the conversation to date:\n\nSummary",
+                created_at="2026-03-18T12:00:00Z",
+                provenance={"message_count": len(messages)},
+                artifact_path=None,
+            ),
+            projected_messages=[
+                {"role": "user", "content": "Here is a summary of the conversation to date:\n\nSummary"},
+                messages[-1],
+            ],
+        )
 
 
 if __name__ == "__main__":

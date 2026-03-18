@@ -33,6 +33,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskArtifactsListResult,
     TaskApproveParams,
     TaskApproveResult,
+    TaskCompactParams,
+    TaskCompactResult,
     TaskCreateParams,
     TaskCreateResult,
     TaskDiagnosticsListParams,
@@ -154,6 +156,15 @@ class MethodHandlers:
                 request.task_id,
                 request.run_id,
                 background=background,
+            )
+        )
+
+    def task_compact(self, params: dict) -> TaskCompactResult:
+        request = TaskCompactParams.from_dict(params)
+        return TaskCompactResult(
+            task=self.task_runner.compact_run(
+                request.task_id,
+                request.run_id,
             )
         )
 
@@ -351,6 +362,28 @@ class MethodHandlers:
                 },
                 "subagents": resolved_subagents,
                 "policy": dict(self.config.policy),
+                "compaction": {
+                    "enabled": self.config.compaction.enabled,
+                    "strategy": self.config.compaction.strategy,
+                    "automatic": self.config.compaction.automatic,
+                    "explicit_client": self.config.compaction.explicit_client,
+                    "explicit_agent_tool": self.config.compaction.explicit_agent_tool,
+                    "trigger": {
+                        "kind": self.config.compaction.trigger.kind,
+                        "value": self.config.compaction.trigger.value,
+                    },
+                    "keep": {
+                        "kind": self.config.compaction.keep.kind,
+                        "value": self.config.compaction.keep.value,
+                    },
+                    "fallback_trigger": {
+                        "kind": self.config.compaction.fallback_trigger.kind,
+                        "value": self.config.compaction.fallback_trigger.value,
+                    },
+                    "tool_token_limit_before_evict": (
+                        self.config.compaction.tool_token_limit_before_evict
+                    ),
+                },
             },
             redactions,
         )

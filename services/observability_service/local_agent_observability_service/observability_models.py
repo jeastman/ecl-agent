@@ -62,3 +62,20 @@ class RunMessageRecord:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(slots=True)
+class ConversationCompactionRecord:
+    compaction_id: str
+    task_id: str
+    run_id: str
+    trigger: str
+    strategy: str
+    cutoff_index: int
+    summary_content: str
+    created_at: str
+    provenance: dict[str, Any]
+    artifact_path: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)

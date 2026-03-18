@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from langchain.chat_models import init_chat_model
+
 from apps.runtime.local_agent_runtime.artifact_store import InMemoryArtifactStore
+from apps.runtime.local_agent_runtime.conversation_compaction_service import (
+    ConversationCompactionService,
+)
 from apps.runtime.local_agent_runtime.durable_services import create_durable_runtime_services
 from apps.runtime.local_agent_runtime.event_bus import InMemoryEventBus
 from apps.runtime.local_agent_runtime.method_handlers import MethodHandlers
@@ -17,6 +22,9 @@ from packages.config.local_agent_config.models import RuntimeConfig
 from packages.identity.local_agent_identity.models import IdentityBundle
 from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
     LangChainDeepAgentHarness,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strategy import (
+    DeepAgentsNativeCompactionStrategy,
 )
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
@@ -61,6 +69,12 @@ def create_runtime_server(
     primary_skills = skill_catalog.load_primary_skills()
     resolved_subagents = skill_catalog.resolve_subagents()
     primary_model_route = model_resolver.resolve_primary()
+    compaction_strategy = DeepAgentsNativeCompactionStrategy(
+        model_name=primary_model_route.model,
+        model_provider=primary_model_route.provider,
+        model_factory=init_chat_model,
+        policy=config.compaction,
+    )
     durable_services = create_durable_runtime_services(
         config,
         runtime_root_override=runtime_root,
@@ -74,6 +88,11 @@ def create_runtime_server(
         virtual_workspace_root=config.cli.virtual_workspace_root,
     )
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)
+    conversation_compaction_service = ConversationCompactionService(
+        run_message_store=durable_services.run_message_store,
+        compaction_store=durable_services.conversation_compaction_store,
+        strategy=compaction_strategy,
+    )
     task_runner = TaskRunner(
         run_state_store=run_state_store,
         event_bus=event_bus,
@@ -83,6 +102,8 @@ def create_runtime_server(
         resolved_subagents=resolved_subagents,
         primary_skills=primary_skills,
         skill_catalog=skill_catalog,
+        compaction_policy=config.compaction,
+        conversation_compaction_service=conversation_compaction_service,
         agent_harness=agent_harness
         or LangChainDeepAgentHarness(
             model_name=primary_model_route.model,
@@ -90,6 +111,8 @@ def create_runtime_server(
             mcp_config=config.mcp,
             web_fetch_port=SimpleMarkdownWebFetchAdapter(),
             web_search_port=DuckDuckGoSearchAdapter(),
+            compaction_policy=config.compaction,
+            compaction_strategy=compaction_strategy,
         ),
     )
     checkpoint_adapter = task_runner.checkpoint_adapter

@@ -26,8 +26,17 @@ class EventType(StrEnum):
     SKILL_INSTALL_APPROVAL_REQUESTED = "skill.install.approval_requested"
     SKILL_INSTALL_COMPLETED = "skill.install.completed"
     SKILL_INSTALL_FAILED = "skill.install.failed"
+    CONVERSATION_COMPACTED = "conversation.compacted"
     TASK_COMPLETED = "task.completed"
     TASK_FAILED = "task.failed"
+
+
+class CompactionTrigger(StrEnum):
+    THRESHOLD = "threshold"
+    OVERFLOW_FALLBACK = "overflow_fallback"
+    EXPLICIT_AGENT = "explicit_agent"
+    EXPLICIT_CLIENT = "explicit_client"
+    RESUME_BOUNDARY = "resume_boundary"
 
 
 class TaskStatus(StrEnum):
@@ -111,6 +120,9 @@ class RunState:
     pause_reason: str | None = None
     checkpoint_thread_id: str | None = None
     latest_checkpoint_id: str | None = None
+    is_compacted: bool = False
+    latest_compaction_id: str | None = None
+    latest_compaction_trigger: str | None = None
     links: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

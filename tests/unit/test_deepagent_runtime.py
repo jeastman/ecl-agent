@@ -8,7 +8,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
-from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
+from packages.config.local_agent_config.models import CompactionConfig, MCPConfig, MCPServerConfig
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
     ResolvedSubagentConfiguration,
@@ -739,6 +739,39 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
                 {"role": "user", "content": "Focus on docs only."},
             ],
         )
+
+    def test_harness_passes_compaction_middleware_into_agent_factory(self) -> None:
+        captures: dict[str, Any] = {}
+        class _FakeStrategy:
+            def build_middleware(self, *, model, policy, on_compaction):
+                return ["mw_1", "mw_2"]
+
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            compaction_policy=CompactionConfig(),
+            compaction_strategy=_FakeStrategy(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        middleware = captures["agent_kwargs"]["middleware"]
+        self.assertGreaterEqual(len(middleware), 2)
 
     def test_harness_pauses_for_request_user_input_tool(self) -> None:
         request = AgentExecutionRequest(
