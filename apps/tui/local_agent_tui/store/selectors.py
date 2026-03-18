@@ -537,10 +537,10 @@ def task_plan_view(state: AppState) -> PlanViewModel:
         )
         for event in plan_events[-5:]
     ]
-    current_step = (
-        recent_updates[-1].summary
-        if recent_updates
-        else str(task.get("latest_summary") or "Waiting for plan updates.")
+    current_step = str(
+        task.get("latest_summary")
+        or (recent_updates[-1].summary if recent_updates else "")
+        or "Waiting for plan updates."
     )
     return PlanViewModel(
         current_phase=str(task.get("current_phase") or "unknown"),
@@ -550,6 +550,7 @@ def task_plan_view(state: AppState) -> PlanViewModel:
 
 
 def task_subagent_activity(state: AppState) -> list[SubagentActivityItemViewModel]:
+    task = _selected_task(state)
     items: dict[str, SubagentActivityItemViewModel] = {}
     for event in _selected_task_events(state):
         subagent_id = _subagent_id(event)
@@ -581,6 +582,15 @@ def task_subagent_activity(state: AppState) -> list[SubagentActivityItemViewMode
                 completed_at=event.timestamp,
                 latest_summary=str(event.payload.get("summary") or event.summary),
             )
+    active_subagent = _str_or_none(task.get("active_subagent")) if task is not None else None
+    if active_subagent and active_subagent not in items:
+        items[active_subagent] = SubagentActivityItemViewModel(
+            subagent_id=active_subagent,
+            status="RUNNING",
+            started_at=None,
+            completed_at=None,
+            latest_summary=str(task.get("latest_summary") or "Subagent is running."),
+        )
     return list(items.values())
 
 

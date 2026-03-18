@@ -712,13 +712,86 @@ class TuiStoreTests(unittest.TestCase):
         notifications = task_notifications(state)
 
         self.assertEqual(header.current_phase, "planning")  # type: ignore[union-attr]
-        self.assertEqual(plan.current_step, "Analyze repository")
+        self.assertEqual(plan.current_step, "Inspect docs")
         self.assertEqual(timeline.events[2].repeat_count, 2)
         self.assertEqual(subagents[0].subagent_id, "researcher")
         self.assertEqual(subagents[0].status, "RUNNING")
         self.assertTrue(actions.resume_enabled)
         self.assertTrue(actions.artifact_open_enabled)
         self.assertEqual(notifications.items[-1].summary, "report.md")
+
+    def test_task_plan_view_tracks_live_subagent_summary(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "plan.updated",
+                        "timestamp": "2026-03-12T00:00:01Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {"summary": "Analyze repository", "phase": "planning"},
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "subagent.started",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "subagentId": "researcher",
+                            "taskDescription": "Inspect docs",
+                        },
+                    }
+                },
+            }
+        )
+
+        plan = task_plan_view(store.snapshot())
+
+        self.assertEqual(plan.current_phase, "planning")
+        self.assertEqual(plan.current_step, "Inspect docs")
+        self.assertEqual(plan.recent_updates[-1].summary, "Analyze repository")
+
+    def test_task_subagent_activity_falls_back_to_active_snapshot(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "executing",
+                            "objective": "Inspect repo",
+                            "created_at": "2026-03-12T00:00:00Z",
+                            "updated_at": "2026-03-12T00:00:02Z",
+                            "current_phase": "executing",
+                            "latest_summary": "Inspect docs",
+                            "active_subagent": "researcher",
+                        }
+                    }
+                },
+            }
+        )
+
+        subagents = task_subagent_activity(store.snapshot())
+
+        self.assertEqual(len(subagents), 1)
+        self.assertEqual(subagents[0].subagent_id, "researcher")
+        self.assertEqual(subagents[0].status, "RUNNING")
+        self.assertEqual(subagents[0].latest_summary, "Inspect docs")
 
     def test_tool_called_execute_command_summary_shows_command_and_cwd(self) -> None:
         store = AppStateStore()

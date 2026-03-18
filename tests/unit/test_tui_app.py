@@ -1219,6 +1219,58 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     ("task_1", "run_1", "artifact_1"),
                 )
 
+    async def test_task_detail_side_panels_update_for_streamed_subagent_event(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+
+                plan = app.screen.query_one("#task-detail-plan", Static)
+                subagents = app.screen.query_one("#task-detail-subagents", Static)
+                header = app.screen.query_one("#task-detail-header-body", Static)
+
+                self.assertIn("Scanning repository", str(plan.visual))
+                self.assertIn("No subagent activity yet.", str(subagents.visual))
+
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "subagent.started",
+                                "timestamp": "2026-03-12T00:00:04Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {
+                                    "subagentId": "researcher",
+                                    "taskDescription": "Inspect docs",
+                                },
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+
+                self.assertIn("Active: researcher", str(header.visual))
+                self.assertIn("Inspect docs", str(plan.visual))
+                self.assertIn("researcher", str(subagents.visual))
+                self.assertIn("RUNNING", str(subagents.visual))
+                self.assertIn("Inspect docs", str(subagents.visual))
+
     async def test_task_detail_header_caps_height_and_scrolls_long_content(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from apps.tui.local_agent_tui.widgets.task_detail_panels import TaskHeaderWidget

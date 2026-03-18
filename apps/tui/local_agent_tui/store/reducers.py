@@ -405,8 +405,14 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         )
     elif event_type == "subagent.started":
         snapshot["active_subagent"] = event_payload.get("subagentId")
+        snapshot["latest_summary"] = event_payload.get(
+            "taskDescription", _event_summary(event_type, event_payload)
+        )
     elif event_type == "subagent.completed":
         snapshot["active_subagent"] = None
+        snapshot["latest_summary"] = event_payload.get("summary") or _event_summary(
+            event_type, event_payload
+        )
 
     next_state = _append_event_record(
         next_state,
