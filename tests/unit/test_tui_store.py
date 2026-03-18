@@ -720,6 +720,32 @@ class TuiStoreTests(unittest.TestCase):
         self.assertTrue(actions.artifact_open_enabled)
         self.assertEqual(notifications.items[-1].summary, "report.md")
 
+    def test_tool_called_execute_command_summary_shows_command_and_cwd(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.called",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "tool": "execute_command",
+                            "command": ["rm", "-f", "/tmp/ecl/cache file.txt"],
+                            "cwd": "/tmp/ecl",
+                        },
+                    }
+                },
+            }
+        )
+
+        timeline = task_timeline(store.snapshot())
+
+        self.assertEqual(timeline.events[-1].summary, "rm -f '/tmp/ecl/cache file.txt' (/tmp/ecl)")
+
     def test_task_logs_stream_does_not_change_selected_task(self) -> None:
         store = AppStateStore()
         store.dispatch(

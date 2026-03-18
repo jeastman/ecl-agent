@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import shlex
 from typing import Any
 
 from packages.task_model.local_agent_task_model.models import FailureInfo
@@ -531,6 +532,9 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
         return f"{payload.get('subagentId', 'subagent')} completed ({status})"
     if event_type == "tool.called":
         tool = str(payload.get("tool", "tool"))
+        command = _tool_command_summary(payload)
+        if command is not None:
+            return command
         if isinstance(payload.get("path"), str):
             return f"{tool} {payload['path']}"
         if isinstance(payload.get("logical_path"), str):
@@ -563,6 +567,27 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
     if event_type == "task.failed":
         return str(payload.get("error") or "failed")
     return event_type
+
+
+def _tool_command_summary(payload: dict[str, Any]) -> str | None:
+    command = payload.get("command")
+    if isinstance(command, list) and all(isinstance(part, str) for part in command):
+        rendered = shlex.join(command)
+        cwd = payload.get("cwd")
+        if isinstance(cwd, str) and cwd.strip():
+            return f"{rendered} ({cwd})"
+        return rendered
+
+    arguments = payload.get("arguments")
+    if isinstance(arguments, dict):
+        nested_command = arguments.get("command")
+        if isinstance(nested_command, list) and all(isinstance(part, str) for part in nested_command):
+            rendered = shlex.join(nested_command)
+            cwd = arguments.get("cwd")
+            if isinstance(cwd, str) and cwd.strip():
+                return f"{rendered} ({cwd})"
+            return rendered
+    return None
 
 
 def _event_severity(event_type: str) -> str:
