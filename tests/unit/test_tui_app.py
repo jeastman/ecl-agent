@@ -1344,6 +1344,50 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 logs = app.screen.query_one("#task-detail-logs", LogViewWidget)
                 self.assertGreater(logs.region.height, 5)
 
+    async def test_task_detail_side_panels_keep_visible_content_on_tighter_height(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 28)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "subagent.started",
+                                "timestamp": "2026-03-12T00:00:04Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {
+                                    "subagentId": "researcher",
+                                    "taskDescription": "Inspect docs",
+                                },
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+                plan = app.screen.query_one("#task-detail-plan", Static)
+                subagents = app.screen.query_one("#task-detail-subagents", Static)
+                notifications = app.screen.query_one("#task-detail-notifications", Static)
+                self.assertGreaterEqual(plan.region.height, 7)
+                self.assertGreaterEqual(subagents.region.height, 7)
+                self.assertIn("Inspect docs", str(plan.visual))
+                self.assertIn("researcher", str(subagents.visual))
+                self.assertIn("No urgent updates.", str(notifications.visual))
+
     async def test_task_detail_logs_show_full_history_and_scroll(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from apps.tui.local_agent_tui.widgets.log_view import LogViewWidget
