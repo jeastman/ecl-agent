@@ -15,6 +15,7 @@ from typing import Any
 from apps.runtime.local_agent_runtime.bootstrap import create_runtime_server
 from apps.runtime.local_agent_runtime.task_runner import AgentExecutionResult
 from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness
+from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
 from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
 from packages.protocol.local_agent_protocol.models import (
@@ -209,6 +210,106 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(
                 artifact_event.event.payload["artifact"]["persistence_class"],
                 "run",
+            )
+
+    def test_runtime_task_flow_supports_mcp_stdio_tools(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            config.mcp = MCPConfig(
+                tool_name_prefix=True,
+                servers={
+                    "fixture": MCPServerConfig(
+                        name="fixture",
+                        transport="stdio",
+                        command=sys.executable,
+                        args=(str(Path("tests/fixtures/mcp_echo_server.py").resolve()),),
+                        source="runtime_toml",
+                        source_path=str(Path("tests/fixtures/mcp_echo_server.py").resolve()),
+                    )
+                },
+            )
+            identity = load_identity_bundle(config.identity_path)
+            harness = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                mcp_config=config.mcp,
+                model_factory=lambda model_name, *, model_provider: {
+                    "model_name": model_name,
+                    "model_provider": model_provider,
+                },
+                agent_factory=lambda **kwargs: _MCPCompiledAgent(kwargs["tools"]),
+            )
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=harness,
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Use the MCP fixture tool",
+                        workspace_roots=["/workspace"],
+                    )
+                ).to_dict(),
+                id="1",
+                correlation_id=new_correlation_id(),
+            )
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            payload = create_response.to_dict()
+            task_id = payload["result"]["task_id"]
+            run_id = payload["result"]["run_id"]
+
+            get_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="2",
+                        correlation_id=create_request.correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertEqual(get_response.to_dict()["result"]["task"]["status"], "completed")
+
+            artifacts_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_ARTIFACTS_LIST,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="3",
+                        correlation_id=create_request.correlation_id,
+                    ).to_dict()
+                )
+            )
+            artifacts = artifacts_response.to_dict()["result"]["artifacts"]
+            final_response = next(
+                artifact
+                for artifact in artifacts
+                if artifact["logical_path"] == f"/workspace/artifacts/{task_id}/{run_id}/final_response.md"
+            )
+            artifact_get_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_ARTIFACT_GET,
+                        params={
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "artifact_id": final_response["artifact_id"],
+                        },
+                        id="4",
+                        correlation_id=create_request.correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertIn(
+                "fixture:runtime-call",
+                artifact_get_response.to_dict()["result"]["preview"]["text"],
             )
 
     def test_runtime_task_list_returns_recent_snapshots(self) -> None:
@@ -1543,6 +1644,37 @@ class _FakeCompiledAgent:
             if tool.name == name:
                 return tool.invoke(arguments)
         raise AssertionError(f"missing tool: {name}")
+
+
+def _tool_result_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        if parts:
+            return "\n".join(parts)
+    return str(value)
+
+
+class _MCPCompiledAgent:
+    def __init__(self, tools: list[Any]) -> None:
+        self._tools = tools
+
+    def invoke(
+        self,
+        input: dict[str, Any],
+        config: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        for tool in self._tools:
+            if tool.name == "fixture_echo_text":
+                text = _tool_result_text(tool.invoke({"text": "runtime-call"}))
+                return {"messages": [{"role": "assistant", "content": text}]}
+        raise AssertionError("missing tool: fixture_echo_text")
 
 
 class _PauseThenResumeHarness:

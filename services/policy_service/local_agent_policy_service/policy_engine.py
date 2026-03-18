@@ -100,6 +100,15 @@ class RuntimePolicyEngine:
                 or bool(metadata.get("overwrite"))
                 or (metadata.get("install_mode") == "replace")
             )
+        if context.operation_type == "mcp.server.connect":
+            metadata = context.metadata or {}
+            source = str(metadata.get("source") or "runtime_toml")
+            transport = str(metadata.get("transport") or "stdio")
+            if source == "runtime_toml":
+                return False
+            if transport == "stdio":
+                return True
+            return _web_access_mode(self.policy_config) == "require_approval"
         if context.operation_type in {"web.fetch", "web.search"}:
             return _web_access_mode(self.policy_config) == "require_approval"
 
@@ -126,6 +135,15 @@ class RuntimePolicyEngine:
         if context.operation_type == "skill.install":
             path_scope = context.path_scope or ""
             return ".." in path_scope
+        if context.operation_type == "mcp.server.connect":
+            metadata = context.metadata or {}
+            source = str(metadata.get("source") or "runtime_toml")
+            transport = str(metadata.get("transport") or "stdio")
+            if source == "runtime_toml":
+                return False
+            if transport == "stdio":
+                return False
+            return _web_access_mode(self.policy_config) == "deny"
         if context.operation_type in {"web.fetch", "web.search"}:
             return _web_access_mode(self.policy_config) == "deny"
 
@@ -143,6 +161,8 @@ class RuntimePolicyEngine:
             return "Identity memory mutation is denied by the runtime policy."
         if context.operation_type == "skill.install":
             return "Skill installation target is denied by the runtime policy."
+        if context.operation_type == "mcp.server.connect":
+            return "Outbound MCP server access is denied by the runtime policy."
         if context.operation_type in {"web.fetch", "web.search"}:
             return "Outbound web access is denied by the runtime policy."
         return "Operation is denied by the runtime policy."

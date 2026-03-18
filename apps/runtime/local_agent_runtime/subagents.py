@@ -10,6 +10,7 @@ ALLOWED_SUBAGENT_TOOL_IDS = frozenset(
         "artifact_inspect",
         "execute_commands",
         "memory_lookup",
+        "mcp_tools",
         "plan_update",
         "read_files",
         "web_fetch",

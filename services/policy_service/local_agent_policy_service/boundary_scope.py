@@ -142,6 +142,32 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
             scope=scope,
             description=f"Allow {install_mode} installation for skill {skill_id}",
         )
+    if context.operation_type == "mcp.server.connect":
+        metadata = context.metadata or {}
+        transport = str(metadata.get("transport") or "stdio")
+        server_name = str(metadata.get("server_name") or "mcp")
+        if transport == "stdio":
+            return BoundaryDescriptor(
+                boundary_key=f"mcp.server.connect:stdio:{server_name}",
+                scope={
+                    "kind": "mcp.server.connect",
+                    "transport": "stdio",
+                    "server_name": server_name,
+                },
+                description=f"Allow MCP stdio server {server_name} for this run",
+            )
+        target = context.path_scope or ""
+        hostname = urlparse(target).netloc or "unknown-host"
+        return BoundaryDescriptor(
+            boundary_key=f"mcp.server.connect:{transport}:{hostname}",
+            scope={
+                "kind": "mcp.server.connect",
+                "transport": transport,
+                "server_name": server_name,
+                "host": hostname,
+            },
+            description=f"Allow MCP {transport} access for host {hostname} during this run",
+        )
     if context.operation_type in {"web.fetch", "web.search"}:
         target = context.path_scope or ""
         hostname = urlparse(target).netloc or "unknown-host"

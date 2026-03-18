@@ -5,6 +5,7 @@ model_profile: researcher
 tool_scope:
   - read_files
   - memory_lookup
+  - mcp_tools
   - web_fetch
   - web_search
 memory_scope:

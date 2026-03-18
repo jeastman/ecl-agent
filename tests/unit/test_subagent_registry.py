@@ -250,7 +250,9 @@ class FileSystemSubagentRegistryTests(unittest.TestCase):
             "services/subagent_registry/local_agent_subagent_registry/filesystem_subagent_registry.py"
         ).read_text(encoding="utf-8")
 
-        self.assertTrue({"read_files", "write_files"}.issubset(ALLOWED_SUBAGENT_TOOL_IDS))
+        self.assertTrue(
+            {"read_files", "write_files", "mcp_tools"}.issubset(ALLOWED_SUBAGENT_TOOL_IDS)
+        )
         self.assertNotIn("langchain", subagent_source.lower())
         self.assertNotIn("deepagent", subagent_source.lower())
         self.assertNotIn("langchain", registry_source.lower())

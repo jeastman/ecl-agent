@@ -8,6 +8,7 @@ from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain.chat_models import init_chat_model
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, SkillDescriptor
+from packages.config.local_agent_config.models import MCPConfig
 from packages.task_model.local_agent_task_model.models import (
     RecoverableToolRejectionThresholdExceeded,
 )
@@ -21,6 +22,9 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge i
 from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler import (
     SubagentCompilationError,
     SubagentCompiler,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider import (
+    MCPToolProvider,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import SandboxToolBindings
 from services.web_service.local_agent_web_service.ports import WebFetchPort, WebSearchPort
@@ -74,6 +78,7 @@ class LangChainDeepAgentHarness:
         *,
         model_name: str,
         model_provider: str,
+        mcp_config: MCPConfig | None = None,
         web_fetch_port: WebFetchPort | None = None,
         web_search_port: WebSearchPort | None = None,
         prompt_builder: PromptBuilder | None = None,
@@ -82,6 +87,7 @@ class LangChainDeepAgentHarness:
     ) -> None:
         self._model_name = model_name
         self._model_provider = model_provider
+        self._mcp_config = mcp_config or MCPConfig()
         self._web_fetch_port = web_fetch_port
         self._web_search_port = web_search_port
         self._prompt_builder = prompt_builder or PromptBuilder()
@@ -143,7 +149,7 @@ class LangChainDeepAgentHarness:
                     "resumed_before_invoke" if request.resume_from_checkpoint_id else "run_started"
                 )
                 callback("checkpoint.saved", metadata.to_dict())
-            outcome = self._run_agent_task(request, tools, prompt, callback)
+            outcome = self._run_agent_task(request, tools, prompt, callback, interrupt_bridge)
             if outcome.success and request.checkpoint_controller is not None:
                 metadata = request.checkpoint_controller.record_checkpoint("run_completed")
                 callback("checkpoint.saved", metadata.to_dict())
@@ -210,17 +216,28 @@ class LangChainDeepAgentHarness:
         tools: SandboxToolBindings,
         prompt: str,
         callback: EventCallback,
+        interrupt_bridge: InterruptBridge,
     ) -> _CompletedAgentOutcome:
         model = self._model_factory(
             self._model_name,
             model_provider=self._model_provider,
         )
+        mcp_provider = MCPToolProvider(
+            config=self._mcp_config,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=interrupt_bridge.authorize,
+            on_event=callback,
+        )
+        mcp_provider.start()
         compiled_subagents = self._subagent_compiler.compile_subagents(
             resolved_subagents=request.resolved_subagents,
             identity_bundle_text=request.identity_bundle_text,
             delegation_description=_delegation_description(request.objective),
             run_id=request.run_id,
             tool_bindings=tools,
+            mcp_tools_by_role=mcp_provider.tools_for_role,
             on_event=callback,
         )
         subagents_for_agent = cast(
@@ -232,53 +249,57 @@ class LangChainDeepAgentHarness:
             memory_scopes=("project", "run_state", "identity"),
             filesystem_scopes=("workspace",),
         )
-        agent = self._agent_factory(
-            model=model,
-            tools=primary_tools,
-            system_prompt=prompt,
-            subagents=subagents_for_agent,
-            skills=_skill_payloads(request.primary_skills),
-            name="primary",
-            **(
-                request.checkpoint_controller.build_agent_kwargs()
-                if request.checkpoint_controller is not None
-                else {}
-            ),
-        )
-        callback(
-            "plan.updated",
-            {
-                "phase": "executing",
-                "summary": "Executing the primary Deep Agent with compiled project-owned subagents.",
-            },
-        )
-        result = _invoke_agent(
-            agent,
-            {"messages": _conversation_payload(request)},
-            config=(
-                request.checkpoint_controller.build_invoke_config()
-                if request.checkpoint_controller is not None
-                else None
-            ),
-        )
-        summary = _extract_summary(result)
-        artifact_paths = list(tools.written_paths)
-        final_response = _extract_final_assistant_response(result)
-        final_response_artifact_path = _write_final_response_artifact(
-            request=request,
-            final_response=final_response,
-        )
-        if final_response_artifact_path is not None:
-            artifact_paths.append(final_response_artifact_path)
-        success = bool(result.get("success", True))
-        error_message = _extract_error_message(result)
-        return _CompletedAgentOutcome(
-            success=success,
-            summary=summary,
-            artifact_paths=artifact_paths,
-            error_message=error_message if not success else None,
-            final_response=final_response,
-        )
+        primary_tools.extend(mcp_provider.tools_for_role("primary"))
+        try:
+            agent = self._agent_factory(
+                model=model,
+                tools=primary_tools,
+                system_prompt=prompt,
+                subagents=subagents_for_agent,
+                skills=_skill_payloads(request.primary_skills),
+                name="primary",
+                **(
+                    request.checkpoint_controller.build_agent_kwargs()
+                    if request.checkpoint_controller is not None
+                    else {}
+                ),
+            )
+            callback(
+                "plan.updated",
+                {
+                    "phase": "executing",
+                    "summary": "Executing the primary Deep Agent with compiled project-owned subagents.",
+                },
+            )
+            result = _invoke_agent(
+                agent,
+                {"messages": _conversation_payload(request)},
+                config=(
+                    request.checkpoint_controller.build_invoke_config()
+                    if request.checkpoint_controller is not None
+                    else None
+                ),
+            )
+            summary = _extract_summary(result)
+            artifact_paths = list(tools.written_paths)
+            final_response = _extract_final_assistant_response(result)
+            final_response_artifact_path = _write_final_response_artifact(
+                request=request,
+                final_response=final_response,
+            )
+            if final_response_artifact_path is not None:
+                artifact_paths.append(final_response_artifact_path)
+            success = bool(result.get("success", True))
+            error_message = _extract_error_message(result)
+            return _CompletedAgentOutcome(
+                success=success,
+                summary=summary,
+                artifact_paths=artifact_paths,
+                error_message=error_message if not success else None,
+                final_response=final_response,
+            )
+        finally:
+            mcp_provider.close()
 
 
 def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
@@ -331,6 +352,11 @@ def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
         ResolvedToolBinding(
             tool_id="web_search",
             capability_aliases=("web_search", "web.search", "web"),
+            requires_policy=True,
+        ),
+        ResolvedToolBinding(
+            tool_id="mcp_tools",
+            capability_aliases=("mcp_tools", "mcp", "mcp.tools"),
             requires_policy=True,
         ),
     )

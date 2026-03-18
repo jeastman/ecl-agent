@@ -202,6 +202,146 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "metadata_backend must be one of"):
                 load_runtime_config(str(config_path))
 
+    def test_loader_parses_native_mcp_server_config(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp]",
+                        "tool_name_prefix = true",
+                        "",
+                        "[mcp.servers.fixture]",
+                        "command = 'python3'",
+                        "args = ['tests/fixtures/mcp_echo_server.py']",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_runtime_config(str(config_path))
+
+            self.assertTrue(config.mcp.tool_name_prefix)
+            server = config.mcp.servers["fixture"]
+            self.assertEqual(server.transport, "stdio")
+            self.assertEqual(server.command, "python3")
+            self.assertEqual(server.args, ("tests/fixtures/mcp_echo_server.py",))
+            self.assertEqual(server.source, "runtime_toml")
+
+    def test_loader_imports_project_mcp_json_with_runtime_precedence(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            project_root = Path(temp_dir)
+            (project_root / ".git").mkdir()
+            (project_root / ".deepagents").mkdir()
+            (project_root / ".deepagents" / ".mcp.json").write_text(
+                """
+                {
+                  "mcpServers": {
+                    "deepagents-fixture": {
+                      "command": "python3",
+                      "args": ["tests/fixtures/mcp_echo_server.py"]
+                    },
+                    "shared": {
+                      "type": "http",
+                      "url": "https://deepagents.example.com/mcp"
+                    }
+                  }
+                }
+                """.strip(),
+                encoding="utf-8",
+            )
+            (project_root / ".mcp.json").write_text(
+                """
+                {
+                  "mcpServers": {
+                    "root-fixture": {
+                      "command": "python3",
+                      "args": ["tests/fixtures/mcp_echo_server.py"]
+                    },
+                    "shared": {
+                      "type": "http",
+                      "url": "https://root.example.com/mcp"
+                    }
+                  }
+                }
+                """.strip(),
+                encoding="utf-8",
+            )
+            config_path = project_root / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.shared]",
+                        "transport = 'http'",
+                        "url = 'https://runtime.example.com/mcp'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            config = load_runtime_config(str(config_path))
+
+            self.assertIn("deepagents-fixture", config.mcp.servers)
+            self.assertIn("root-fixture", config.mcp.servers)
+            self.assertEqual(config.mcp.servers["shared"].url, "https://runtime.example.com/mcp")
+            self.assertEqual(config.mcp.servers["shared"].source, "runtime_toml")
+
+    def test_loader_rejects_invalid_mcp_server_shapes(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.broken]",
+                        "command = 'python3'",
+                        "url = 'https://example.com/mcp'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "cannot define both command and url"):
+                load_runtime_config(str(config_path))
+
 
 if __name__ == "__main__":
     unittest.main()

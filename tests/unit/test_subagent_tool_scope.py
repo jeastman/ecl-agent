@@ -45,12 +45,15 @@ class RoleToolScopeResolverTests(unittest.TestCase):
 
     def test_researcher_resolves_expected_tools(self) -> None:
         tools = self.resolver.resolve_tools(
-            _role("researcher", ("read_files", "memory_lookup", "web_fetch", "web_search"))
+            _role(
+                "researcher",
+                ("read_files", "memory_lookup", "mcp_tools", "web_fetch", "web_search"),
+            )
         )
 
         self.assertEqual(
             [tool.tool_id for tool in tools],
-            ["read_files", "memory_lookup", "web_fetch", "web_search"],
+            ["read_files", "memory_lookup", "mcp_tools", "web_fetch", "web_search"],
         )
 
     def test_librarian_resolves_expected_tools(self) -> None:
@@ -80,6 +83,13 @@ class RoleToolScopeResolverTests(unittest.TestCase):
                 "execute_commands": True,
             },
         )
+
+    def test_mcp_tools_require_policy_and_resolve_capability_aliases(self) -> None:
+        tools = self.resolver.resolve_tools(_role("researcher", ("mcp_tools",)))
+
+        self.assertEqual([tool.tool_id for tool in tools], ["mcp_tools"])
+        self.assertEqual(tools[0].capability_aliases, ("mcp_tools", "mcp", "mcp.tools"))
+        self.assertTrue(tools[0].requires_policy)
 
 
 def _role(role_id: str, tool_scope: tuple[str, ...]) -> SubagentDefinition:

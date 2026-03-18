@@ -13,6 +13,7 @@ _TOOL_CAPABILITY_ALIASES: dict[str, tuple[str, ...]] = {
     "memory_lookup": ("memory_lookup", "memory", "memory.read"),
     "plan_update": ("plan_update", "planning", "plan.write"),
     "artifact_inspect": ("artifact_inspect", "artifacts", "artifacts.read"),
+    "mcp_tools": ("mcp_tools", "mcp", "mcp.tools"),
     "web_fetch": ("web_fetch", "web.fetch", "web"),
     "web_search": ("web_search", "web.search", "web"),
 }
@@ -39,7 +40,14 @@ class RoleToolScopeResolver:
                     tool_id=tool_id,
                     capability_aliases=aliases,
                     requires_policy=tool_id
-                    in {"read_files", "write_files", "execute_commands", "web_fetch", "web_search"},
+                    in {
+                        "read_files",
+                        "write_files",
+                        "execute_commands",
+                        "web_fetch",
+                        "web_search",
+                        "mcp_tools",
+                    },
                 )
             )
         return tuple(bindings)

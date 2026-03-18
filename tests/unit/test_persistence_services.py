@@ -641,6 +641,60 @@ class ApprovalAndPolicyTests(unittest.TestCase):
             self.assertEqual(require.boundary_key, "web.fetch:example.com")
             self.assertEqual(deny.decision, "DENY")
 
+    def test_runtime_policy_engine_governs_imported_mcp_servers(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            approval_engine = RuntimePolicyEngine(
+                policy_config={"web_access_mode": "require_approval"},
+                boundary_grants=grants,
+            )
+
+            stdio = approval_engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="mcp.server.connect",
+                    path_scope="python3",
+                    metadata={
+                        "server_name": "fixture",
+                        "transport": "stdio",
+                        "source": "project_root_mcp_json",
+                    },
+                )
+            )
+            remote = approval_engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="mcp.server.connect",
+                    path_scope="https://api.example.com/mcp",
+                    metadata={
+                        "server_name": "remote",
+                        "transport": "http",
+                        "source": "project_root_mcp_json",
+                    },
+                )
+            )
+            trusted = approval_engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="mcp.server.connect",
+                    path_scope="python3",
+                    metadata={
+                        "server_name": "trusted",
+                        "transport": "stdio",
+                        "source": "runtime_toml",
+                    },
+                )
+            )
+
+            self.assertEqual(stdio.decision, "REQUIRE_APPROVAL")
+            self.assertEqual(stdio.boundary_key, "mcp.server.connect:stdio:fixture")
+            self.assertEqual(remote.decision, "REQUIRE_APPROVAL")
+            self.assertEqual(remote.boundary_key, "mcp.server.connect:http:api.example.com")
+            self.assertEqual(trusted.decision, "ALLOW")
+
 
 if __name__ == "__main__":
     unittest.main()

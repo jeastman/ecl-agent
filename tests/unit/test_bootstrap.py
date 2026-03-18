@@ -56,7 +56,7 @@ class BootstrapTests(unittest.TestCase):
             self.assertEqual(default_model.model, "gpt-5-nano")
             self.assertEqual(
                 [binding.tool_id for binding in researcher.tool_bindings],
-                ["read_files", "memory_lookup", "web_fetch", "web_search"],
+                ["read_files", "memory_lookup", "mcp_tools", "web_fetch", "web_search"],
             )
             self.assertEqual(researcher.skills, ())
             self.assertIn(
@@ -75,10 +75,11 @@ class BootstrapTests(unittest.TestCase):
             self,
             runtime_root: str | Path,
             governed_workspace_root: str | Path,
+            virtual_workspace_root: str = "/workspace",
         ) -> None:
             captured["runtime_root"] = Path(runtime_root)
             captured["governed_workspace_root"] = Path(governed_workspace_root)
-            original_init(self, runtime_root, governed_workspace_root)
+            original_init(self, runtime_root, governed_workspace_root, virtual_workspace_root)
 
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             runtime_root = Path(temp_dir) / "runtime"
@@ -107,9 +108,10 @@ class BootstrapTests(unittest.TestCase):
             self,
             runtime_root: str | Path,
             governed_workspace_root: str | Path,
+            virtual_workspace_root: str = "/workspace",
         ) -> None:
             captured["governed_workspace_root"] = Path(governed_workspace_root)
-            original_init(self, runtime_root, governed_workspace_root)
+            original_init(self, runtime_root, governed_workspace_root, virtual_workspace_root)
 
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             runtime_root = Path(temp_dir) / "runtime"

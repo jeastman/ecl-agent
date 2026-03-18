@@ -3,6 +3,27 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 
+@dataclass(frozen=True, slots=True)
+class MCPServerConfig:
+    name: str
+    transport: str
+    enabled: bool = True
+    description: str | None = None
+    command: str | None = None
+    args: tuple[str, ...] = ()
+    env: dict[str, str] = field(default_factory=dict)
+    url: str | None = None
+    headers: dict[str, str] = field(default_factory=dict)
+    source: str = "runtime_toml"
+    source_path: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class MCPConfig:
+    tool_name_prefix: bool = True
+    servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+
+
 @dataclass(slots=True)
 class TransportConfig:
     mode: str
@@ -45,3 +66,4 @@ class RuntimeConfig:
     default_model: ModelConfig | None = None
     subagent_model_overrides: dict[str, ModelConfig] = field(default_factory=dict)
     policy: dict[str, object] = field(default_factory=dict)
+    mcp: MCPConfig = field(default_factory=MCPConfig)

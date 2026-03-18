@@ -87,6 +87,7 @@ def create_runtime_server(
         or LangChainDeepAgentHarness(
             model_name=primary_model_route.model,
             model_provider=primary_model_route.provider,
+            mcp_config=config.mcp,
             web_fetch_port=SimpleMarkdownWebFetchAdapter(),
             web_search_port=DuckDuckGoSearchAdapter(),
         ),

@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from deepagents.middleware.subagents import SubAgent
 from langchain.agents.middleware.types import AgentMiddleware, ModelRequest, ModelResponse
+from langchain_core.tools import BaseTool
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedSubagentConfiguration
 from packages.protocol.local_agent_protocol.models import utc_now_timestamp
@@ -40,17 +41,25 @@ class SubagentCompiler:
         delegation_description: str,
         run_id: str,
         tool_bindings: SandboxToolBindings,
+        mcp_tools_by_role: Callable[[str], list[BaseTool]] | None = None,
         on_event: EventCallback | None = None,
     ) -> list[SubAgent]:
         compiled: list[SubAgent] = []
         for resolved in resolved_subagents:
             definition = resolved.asset_bundle.definition
+            static_bindings = tuple(
+                binding for binding in resolved.tool_bindings if binding.tool_id != "mcp_tools"
+            )
             role_tools = tool_bindings.as_langchain_tools(
-                resolved.tool_bindings,
+                static_bindings,
                 memory_scopes=_normalize_memory_scopes(definition.memory_scope),
                 filesystem_scopes=definition.filesystem_scope,
             )
-            if not role_tools and resolved.tool_bindings:
+            if any(binding.tool_id == "mcp_tools" for binding in resolved.tool_bindings):
+                role_tools.extend(
+                    list(mcp_tools_by_role(definition.role_id)) if mcp_tools_by_role else []
+                )
+            if not role_tools and static_bindings:
                 raise SubagentCompilationError(
                     f"Subagent {definition.role_id} resolved tools but none were realizable"
                 )

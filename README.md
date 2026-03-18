@@ -189,6 +189,21 @@ approval_mode = "boundary"
 sandbox_mode = "governed"
 safe_command_classes = ["safe_read", "safe_exec"]
 deny_command_classes = ["network", "destructive", "secrets"]
+
+[mcp]
+tool_name_prefix = true
+
+[mcp.servers.fixture_stdio]
+enabled = false
+description = "Example local stdio MCP server."
+command = "python3"
+args = ["tests/fixtures/mcp_echo_server.py"]
+
+[mcp.servers.fixture_remote]
+enabled = false
+description = "Example remote MCP server."
+transport = "http"
+url = "https://example.com/mcp"
 ```
 
 Settings:
@@ -205,14 +220,243 @@ Settings:
 - `persistence.event_backend`: currently only `sqlite` is supported.
 - `persistence.diagnostic_backend`: currently only `sqlite` is supported.
 - `cli.default_workspace_root`: default workspace root for client-submitted runs and the governed workspace boundary.
+- `cli.virtual_workspace_root`: virtual mount point exposed to the agent. Defaults to `/workspace`.
 - `policy`: open-ended runtime policy table preserved and exposed through `config.get` with redaction for secret-like values.
+- `mcp.tool_name_prefix`: when `true`, MCP tools are exposed as `<server>_<tool>` to avoid collisions. Defaults to `true`.
+- `mcp.servers.<name>`: native MCP server definitions. Each server supports:
+  - stdio servers: `command`, optional `args`, optional `env`
+  - remote servers: `transport` or `type` plus `url`, optional `headers`
+  - shared fields: `enabled`, optional `description`
 
 Notes:
 
 - If `models.default` is omitted, the primary model acts as the default fallback.
 - Agent-facing filesystem tools use a virtual filesystem rooted at `/`.
-- The governed workspace is mounted at `/`, scratch space at `/tmp`, and runtime memory-backed files at `/.memory`.
+- The governed workspace is mounted at `/workspace` by default, scratch space at `/tmp`, and runtime memory-backed files at `/.memory`.
 - Host filesystem paths such as `/Users/...` are not exposed directly to the agent.
+- Project MCP compatibility files are imported automatically from:
+  - `<project>/.deepagents/.mcp.json`
+  - `<project>/.mcp.json`
+- Merge precedence is:
+  1. `.deepagents/.mcp.json`
+  2. `.mcp.json`
+  3. native runtime TOML under `[mcp]`
+- User-level `~/.deepagents/.mcp.json` is intentionally not imported by this runtime.
+
+## MCP Configuration
+
+The runtime can load MCP tools through LangChain MCP adapters and expose them to the primary agent and selected subagents. This repository currently supports MCP tools only. MCP prompts and resources are not wired into the runtime.
+
+### What MCP support does
+
+- loads MCP server definitions from runtime TOML and compatible project `.mcp.json` files
+- exposes all enabled MCP tools to the primary agent
+- exposes MCP tools to a subagent only when that role declares `mcp_tools` in its manifest
+- emits runtime `tool.called` events for MCP tool invocations with server metadata
+- governs MCP server startup and remote access through the same runtime approval boundary system
+
+### Native runtime TOML format
+
+Define MCP servers in the runtime config under `[mcp]`.
+
+Example stdio server:
+
+```toml
+[mcp]
+tool_name_prefix = true
+
+[mcp.servers.docs]
+enabled = true
+description = "Local MCP docs helper"
+command = "python3"
+args = ["scripts/my_docs_mcp.py"]
+env = { DOCS_MODE = "local" }
+```
+
+Example remote HTTP server:
+
+```toml
+[mcp.servers.github]
+enabled = true
+description = "Remote GitHub MCP endpoint"
+transport = "http"
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ${GITHUB_TOKEN}" }
+```
+
+Rules:
+
+- A server must define either `command` or `url`, never both.
+- `command` implies `stdio` transport.
+- `url` requires `transport` or `type`; supported values are `http`, `streamable_http`, and `sse`.
+- `enabled = false` keeps the definition in config without exposing the tools.
+- `tool_name_prefix = true` is recommended and is the runtime default.
+
+### Claude/Deep Agents compatible `.mcp.json` import
+
+The runtime imports project MCP config files that follow the common `mcpServers` JSON shape.
+
+Project root `.mcp.json`:
+
+```json
+{
+  "mcpServers": {
+    "filesystem": {
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    },
+    "remote-api": {
+      "type": "http",
+      "url": "https://example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer TOKEN"
+      }
+    }
+  }
+}
+```
+
+The runtime searches only within the current project root:
+
+- `<project>/.deepagents/.mcp.json`
+- `<project>/.mcp.json`
+
+If the same server name appears in more than one source, higher-precedence config replaces the lower-precedence definition entirely.
+
+### Approval and trust model
+
+MCP server connection is a governed runtime operation.
+
+- Native runtime TOML MCP servers are treated as operator-managed configuration and are allowed by default.
+- Imported project stdio MCP servers require approval before they can be launched for a run.
+- Imported remote MCP servers follow the runtime web access policy:
+  - `web_access_mode = "allow"` allows them
+  - `web_access_mode = "require_approval"` pauses for approval
+  - `web_access_mode = "deny"` rejects them
+
+Approval boundaries are run-scoped. Approving an MCP server for one run does not persist that approval to unrelated runs.
+
+### Primary agent MCP behavior
+
+The primary agent automatically receives all enabled MCP tools for the run when MCP is allowed by `allowed_capabilities`.
+
+By default, an MCP tool named `echo_text` from server `fixture` is exposed to the model as:
+
+```text
+fixture_echo_text
+```
+
+This avoids collisions between two MCP servers that export the same tool name.
+
+The primary agent does not need any extra manifest or role configuration. If MCP is enabled in config, the primary agent sees the tools.
+
+### Subagent MCP behavior
+
+Subagents do not automatically inherit MCP tools. A role must explicitly opt in by adding `mcp_tools` to its manifest `tool_scope`.
+
+Example:
+
+```yaml
+role_id: researcher
+name: Researcher
+description: Gather relevant implementation context.
+tool_scope:
+  - read_files
+  - memory_lookup
+  - mcp_tools
+  - web_fetch
+  - web_search
+memory_scope:
+  - run
+  - project
+filesystem_scope:
+  - workspace
+  - memory
+```
+
+Current behavior:
+
+- the primary agent always gets enabled MCP tools
+- a subagent gets MCP tools only if its `tool_scope` contains `mcp_tools`
+- subagent MCP exposure is still filtered by run `allowed_capabilities`
+- adding `mcp_tools` does not remove the need for the role’s existing filesystem, memory, or web scopes
+
+The repository baseline currently enables `mcp_tools` for the `researcher` subagent only.
+
+### `allowed_capabilities` interaction
+
+MCP tools participate in runtime capability filtering the same way built-in tools do.
+
+The MCP capability aliases are:
+
+- `mcp_tools`
+- `mcp`
+- `mcp.tools`
+
+If a run supplies a non-empty `allowed_capabilities` set and none of those aliases are present, MCP tools are not exposed even when MCP is configured.
+
+### Events and observability
+
+Each MCP tool call emits a standard `tool.called` runtime event with extra metadata:
+
+- `server_name`
+- `transport`
+- `raw_tool_name`
+- `exposed_tool_name`
+- `tool_source = "mcp"`
+- `agent_role`
+
+The MCP adapter also surfaces:
+
+- `mcp.log`
+- `mcp.progress`
+- `mcp.elicitation.unsupported`
+
+The runtime does not currently support MCP elicitation prompts. If a server requests elicitation, the tool call fails and the runtime emits an unsupported event.
+
+### End-to-end setup example
+
+1. Add an MCP server to the runtime config:
+
+```toml
+[mcp]
+tool_name_prefix = true
+
+[mcp.servers.fixture_stdio]
+enabled = true
+command = "python3"
+args = ["tests/fixtures/mcp_echo_server.py"]
+```
+
+2. Boot the runtime or use the CLI with that config:
+
+```bash
+python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.example.toml health
+```
+
+3. If a subagent should use MCP tools, add `mcp_tools` to that role’s `tool_scope` in `agents/subagents/<role>/manifest.yaml`.
+
+4. Submit a run. The primary agent will see the MCP tools automatically. An opted-in subagent will also see them.
+
+5. If the MCP server came from project `.mcp.json` and uses stdio, approve the startup request when the runtime pauses for approval.
+
+### Troubleshooting
+
+- MCP tools do not appear:
+  - confirm the server is `enabled = true`
+  - confirm the run did not restrict `allowed_capabilities` to a set that excludes `mcp`, `mcp.tools`, or `mcp_tools`
+  - for subagents, confirm the role manifest includes `mcp_tools`
+- stdio MCP server fails to launch:
+  - run the configured command directly in the shell first
+  - verify paths are correct relative to the executable, not relative to the config file unless your command expects that
+- remote MCP server fails:
+  - verify `transport` and `url`
+  - verify required headers
+  - check whether runtime `web_access_mode` is requiring approval or denying the connection
+- tool name collisions:
+  - keep `mcp.tool_name_prefix = true`
+- elicitation errors:
+  - expected for now; the runtime does not implement MCP elicitation workflows yet
 
 ## CLI Surface
 

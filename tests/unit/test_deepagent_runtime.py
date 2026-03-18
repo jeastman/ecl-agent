@@ -3,9 +3,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+import sys
 from typing import Any, cast
 
 from langchain_core.messages import AIMessage
+from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
     ResolvedSubagentConfiguration,
@@ -846,6 +848,174 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             "AIMessage response body\n",
         )
 
+    def test_harness_loads_mcp_tools_for_primary_and_opted_in_subagents(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[
+                _resolved_subagent_with_options(
+                    role_id="researcher",
+                    skill_path=None,
+                    tool_scope=("read_files", "mcp_tools"),
+                    model_name="gpt-5-mini",
+                ),
+                _resolved_subagent_with_options(
+                    role_id="coder",
+                    skill_path=None,
+                    tool_scope=("read_files",),
+                    model_name="gpt-5-coder",
+                ),
+            ],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            mcp_config=_fixture_mcp_config(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertIn("fixture_echo_text", _tool_names(captures["agent_kwargs"]["tools"]))
+        researcher = next(
+            subagent
+            for subagent in captures["agent_kwargs"]["subagents"]
+            if subagent["name"] == "Researcher"
+        )
+        coder = next(
+            subagent
+            for subagent in captures["agent_kwargs"]["subagents"]
+            if subagent["name"] == "Coder"
+        )
+        self.assertIn("fixture_echo_text", _tool_names(researcher["tools"]))
+        self.assertNotIn("fixture_echo_text", _tool_names(coder["tools"]))
+
+    def test_harness_suppresses_mcp_tools_when_capability_not_allowed(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[
+                _resolved_subagent_with_options(
+                    role_id="researcher",
+                    skill_path=None,
+                    tool_scope=("read_files", "mcp_tools"),
+                    model_name="gpt-5-mini",
+                )
+            ],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=["read_file", "list_files", "write_file"],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            mcp_config=_fixture_mcp_config(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertNotIn("fixture_echo_text", _tool_names(captures["agent_kwargs"]["tools"]))
+        researcher = captures["agent_kwargs"]["subagents"][0]
+        self.assertNotIn("fixture_echo_text", _tool_names(researcher["tools"]))
+
+    def test_harness_pauses_for_imported_project_stdio_mcp_server(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+            governed_operation=lambda context: (
+                None
+                if context.operation_type != "mcp.server.connect"
+                else (_ for _ in ()).throw(
+                    ApprovalRequiredInterrupt(
+                        approval_id="approval_mcp_1",
+                        summary="Allow MCP stdio server fixture for this run",
+                    )
+                )
+            ),
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            mcp_config=_fixture_mcp_config(source="project_root_mcp_json"),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: MCPPrimaryAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.paused)
+        self.assertTrue(result.awaiting_approval)
+        self.assertEqual(result.pause_reason, "awaiting approval")
+
+    def test_harness_emits_mcp_tool_called_event_metadata(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+            governed_operation=lambda context: None,
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            mcp_config=_fixture_mcp_config(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: MCPPrimaryAgent(kwargs, {}),
+        ).execute(
+            request,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
+            "fixture:primary-call\n",
+        )
+        tool_event = next(
+            payload
+            for event_type, payload in events
+            if event_type == "tool.called" and payload.get("tool_source") == "mcp"
+        )
+        self.assertEqual(tool_event["server_name"], "fixture")
+        self.assertEqual(tool_event["transport"], "stdio")
+        self.assertEqual(tool_event["raw_tool_name"], "echo_text")
+        self.assertEqual(tool_event["exposed_tool_name"], "fixture_echo_text")
+
 
 class FakeCompiledAgent:
     def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
@@ -979,6 +1149,20 @@ class AIMessageAgent:
         return {"messages": [AIMessage(content="AIMessage response body")]}
 
 
+class MCPPrimaryAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        tool = next(tool for tool in self._tools if tool.name == "fixture_echo_text")
+        text = _tool_result_text(tool.invoke({"text": "primary-call"}))
+        return {"messages": [{"role": "assistant", "content": text}]}
+
+
 class FakeCheckpointController:
     def __init__(self) -> None:
         self._index = 0
@@ -1107,6 +1291,7 @@ def _resolved_tool_binding(tool_id: str) -> ResolvedToolBinding:
         "memory_lookup": ("memory_lookup", "/.memory"),
         "plan_update": ("plan_update", "planning"),
         "artifact_inspect": ("artifact_inspect", "artifacts"),
+        "mcp_tools": ("mcp_tools", "mcp", "mcp.tools"),
         "web_fetch": ("web_fetch", "web.fetch", "web"),
         "web_search": ("web_search", "web.search", "web"),
     }[tool_id]
@@ -1114,8 +1299,46 @@ def _resolved_tool_binding(tool_id: str) -> ResolvedToolBinding:
         tool_id=tool_id,
         capability_aliases=aliases,
         requires_policy=tool_id
-        in {"read_files", "write_files", "execute_commands", "web_fetch", "web_search"},
+        in {
+            "read_files",
+            "write_files",
+            "execute_commands",
+            "web_fetch",
+            "web_search",
+            "mcp_tools",
+        },
     )
+
+
+def _fixture_mcp_config(source: str = "runtime_toml") -> MCPConfig:
+    return MCPConfig(
+        tool_name_prefix=True,
+        servers={
+            "fixture": MCPServerConfig(
+                name="fixture",
+                transport="stdio",
+                command=sys.executable,
+                args=(str(Path("tests/fixtures/mcp_echo_server.py").resolve()),),
+                source=source,
+                source_path=str(Path("tests/fixtures/mcp_echo_server.py").resolve()),
+            )
+        },
+    )
+
+
+def _tool_result_text(value: Any) -> str:
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = item.get("text")
+                if isinstance(text, str) and text.strip():
+                    parts.append(text.strip())
+        if parts:
+            return "\n".join(parts)
+    return str(value)
 
 
 class _StaticWebFetchPort:

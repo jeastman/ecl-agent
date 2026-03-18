@@ -35,3 +35,18 @@ sandbox_mode = "governed"
 safe_command_classes = ["safe_read", "safe_exec"]
 deny_command_classes = ["network", "destructive", "secrets"]
 web_access_mode = "allow"
+
+[mcp]
+tool_name_prefix = true
+
+[mcp.servers.fixture_stdio]
+enabled = false
+description = "Example local stdio MCP server."
+command = "python3"
+args = ["tests/fixtures/mcp_echo_server.py"]
+
+[mcp.servers.fixture_remote]
+enabled = false
+description = "Example remote MCP server."
+transport = "http"
+url = "https://example.com/mcp"
