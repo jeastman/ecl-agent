@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.app_state import AppState
 from ..store.selectors import diagnostics_items, footer_hints, selected_diagnostics_detail
@@ -51,22 +52,24 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
         items = diagnostics_items(state)
         list_panel = self.query_one("#diagnostics-screen-list", Static)
         list_panel.border_title = "Diagnostics"
-        list_panel.update(
-            "\n".join(
-                (
-                    "\n".join(
-                        [
-                            f"{'>' if item.is_selected else ' '} {escape(item.kind)}  {escape(item.created_at)}",
-                            f"  {escape(item.message)}",
-                        ]
-                    )
-                )
-                for item in items
-            )
-            or "No diagnostics."
-        )
+        if items:
+            list_panel.update(Group(*(_render_diagnostic_list_item(item) for item in items)))
+        else:
+            list_panel.update("No diagnostics.")
         detail = selected_diagnostics_detail(state)
         detail_panel = self.query_one("#diagnostics-screen-detail", Static)
-        detail_panel.border_title = escape(detail.title)
-        detail_panel.update(f"{escape(detail.summary)}\n\n{escape(detail.body)}".strip())
+        detail_panel.border_title = detail.title
+        detail_panel.update(_render_diagnostic_detail(detail.title, detail.summary, detail.body))
         self.query_one("#diagnostics-screen-footer", Static).update("   ".join(footer_hints(state)))
+
+
+def _render_diagnostic_list_item(item: Any) -> Text:
+    rendered = Text()
+    rendered.append(f"{'>' if item.is_selected else ' '} {item.kind}  {item.created_at}")
+    rendered.append("\n")
+    rendered.append(f"  {item.message}")
+    return rendered
+
+
+def _render_diagnostic_detail(title: str, summary: str, body: str) -> Group:
+    return Group(Text(summary), Text(""), Text(body))

@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.selectors import ArtifactPreviewViewModel
 
@@ -37,16 +38,14 @@ class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
     def update_preview(self, model: ArtifactPreviewViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        self.border_title = escape(model.title)
+        self.border_title = model.title
         self.query_one("#artifact-preview-meta", Static).update(
-            "\n".join(
-                [
-                    f"Status: {escape(model.status)}",
-                    f"Type: {escape(model.content_type) if model.content_type else 'unknown'}",
-                    f"Action: {escape(model.open_label)}",
-                    f"External Open: {'yes' if model.external_open_supported else 'no'}",
-                    "",
-                ]
+            Group(
+                Text(f"Status: {model.status}"),
+                Text(f"Type: {model.content_type or 'unknown'}"),
+                Text(f"Action: {model.open_label}"),
+                Text(f"External Open: {'yes' if model.external_open_supported else 'no'}"),
+                Text(""),
             )
         )
         body = model.body if model.render_as_markdown else _as_markdown_code_block(model.body)

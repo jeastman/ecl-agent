@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.selectors import ApprovalQueueItemViewModel
 from ..theme.colors import DANGER, WARNING
@@ -37,24 +38,21 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
         if not items:
             self.update("No pending approvals.")
             return
-        rendered_items: list[str] = [
-            "Task        Type             Policy              Status",
-            "----------- ---------------- ------------------- ----------",
+        rendered_items: list[Text] = [
+            Text("Task        Type             Policy              Status"),
+            Text("----------- ---------------- ------------------- ----------"),
         ]
         for item in items:
             marker = ">" if item.is_selected else " "
             urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
-            prefix = "[reverse]" if item.is_highlighted else ""
-            suffix = "[/reverse]" if item.is_highlighted else ""
-            rendered_items.append(
-                (
-                    f"{prefix}{marker} {escape(item.task_id)[:10]:<10} "
-                    f"{escape(item.request_type)[:16]:<16} "
-                    f"{escape(item.policy_context)[:19]:<19} "
-                    f"[{urgency}]{escape(item.status.upper())[:10]:<10}[/]{suffix}"
-                )
-            )
+            row = Text()
+            if item.is_highlighted:
+                row.stylize("reverse")
+            row.append(f"{marker} {item.task_id[:10]:<10} {item.request_type[:16]:<16} ")
+            row.append(f"{item.policy_context[:19]:<19} ")
+            row.append(f"{item.status.upper()[:10]:<10}", style=urgency)
+            rendered_items.append(row)
             if inbox_mode:
-                rendered_items.append(f"  Action: {escape(item.requested_action)}")
-            rendered_items.append(f"  {escape(item.description)}")
-        self.update("\n".join(rendered_items))
+                rendered_items.append(Text(f"  Action: {item.requested_action}"))
+            rendered_items.append(Text(f"  {item.description}"))
+        self.update(Group(*rendered_items))

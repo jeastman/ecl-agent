@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.selectors import ApprovalDetailViewModel
 from ..theme.colors import DANGER, WARNING
@@ -29,20 +30,26 @@ class ApprovalDetailWidget(Static):  # type: ignore[misc]
         if detail is None:
             self.update("Select an approval to inspect its details.")
             return
-        lines = [
-            f"Task: {escape(detail.task_id)}",
-            f"Run: {escape(detail.run_id)}",
-            f"Approval: {escape(detail.approval_id)}",
-            f"Type: {escape(detail.request_type)}",
-            f"Policy: {escape(detail.policy_context)}",
-            f"Action: {escape(detail.requested_action)}",
-            f"Status: [{DANGER if detail.status in {'pending', 'waiting'} else WARNING}]{escape(detail.status)}[/]",
-            f"Created: {escape(detail.created_at)}",
-            "",
-            "Description",
-            escape(detail.description),
-            "",
-            "Scope",
-            escape(detail.scope_summary),
-        ]
-        self.update("\n".join(lines))
+        status = Text("Status: ")
+        status.append(
+            detail.status,
+            style=DANGER if detail.status in {"pending", "waiting"} else WARNING,
+        )
+        self.update(
+            Group(
+                Text(f"Task: {detail.task_id}"),
+                Text(f"Run: {detail.run_id}"),
+                Text(f"Approval: {detail.approval_id}"),
+                Text(f"Type: {detail.request_type}"),
+                Text(f"Policy: {detail.policy_context}"),
+                Text(f"Action: {detail.requested_action}"),
+                status,
+                Text(f"Created: {detail.created_at}"),
+                Text(""),
+                Text("Description"),
+                Text(detail.description),
+                Text(""),
+                Text("Scope"),
+                Text(detail.scope_summary),
+            )
+        )

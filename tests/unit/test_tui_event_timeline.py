@@ -23,7 +23,8 @@ class EventTimelineWidgetTests(unittest.TestCase):
             highlight_label="FAILED[hard]",
         )
 
-        self.assertIn(r"call\[search]", rendered)
-        self.assertIn(r"task-runner\[worker]", rendered)
-        self.assertIn(r"FAILED\[hard]", rendered)
-        self.assertIn(r"\[type=less_than_equal, input_value=100, input_type=int]", rendered)
+        plain = rendered.plain
+        self.assertIn("call[search]", plain)
+        self.assertIn("task-runner[worker]", plain)
+        self.assertIn("FAILED[hard]", plain)
+        self.assertIn("[type=less_than_equal, input_value=100, input_type=int]", plain)

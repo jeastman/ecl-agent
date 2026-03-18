@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.text import Text
 
 from ..store.selectors import TaskListItemViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
@@ -28,21 +28,26 @@ class TaskListRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: TaskListItemViewModel) -> None:
         self.task_id = item.task_id
         self.run_id = item.run_id
-        status_bits = [_status_markup(item.status)]
-        if item.awaiting_approval:
-            status_bits.append(f"[{WARNING}]APPROVAL[/]")
-        if item.artifact_count:
-            status_bits.append(f"[{ACCENT}]ART {item.artifact_count}[/]")
-        title = f"{escape(_compact_id(item.task_id))}  {' | '.join(status_bits)}"
-        objective_preview = _objective_preview(item.objective)
-        metadata = (
-            f"[{TEXT_MUTED}]Updated {_compact_timestamp(item.updated_at)}"
-            f"   {escape(_compact_id(item.run_id))}[/]"
-        )
-        text = f"{title}\n{objective_preview}\n{metadata}"
+        content = Text()
         if item.is_highlighted:
-            text = f"[reverse]{text}[/reverse]"
-        super().__init__(Label(text, classes="task-list-row-content"), classes="task-list-row")
+            content.stylize("reverse")
+        content.append(_compact_id(item.task_id))
+        content.append("  ")
+        content.append_text(_status_text(item.status))
+        if item.awaiting_approval:
+            content.append(" | ")
+            content.append("APPROVAL", style=WARNING)
+        if item.artifact_count:
+            content.append(" | ")
+            content.append(f"ART {item.artifact_count}", style=ACCENT)
+        content.append("\n")
+        content.append(_objective_preview(item.objective))
+        content.append("\n")
+        content.append(
+            f"Updated {_compact_timestamp(item.updated_at)}   {_compact_id(item.run_id)}",
+            style=TEXT_MUTED,
+        )
+        super().__init__(Label(content, classes="task-list-row-content"), classes="task-list-row")
 
 
 class TaskListWidget(ListView):  # type: ignore[misc]
@@ -62,7 +67,7 @@ class TaskListWidget(ListView):  # type: ignore[misc]
         self.set_class(focused, "-focused-pane")
 
 
-def _status_markup(status: str) -> str:
+def _status_text(status: str) -> Text:
     color = {
         "executing": ACCENT,
         "planning": ACCENT,
@@ -72,24 +77,24 @@ def _status_markup(status: str) -> str:
         "awaiting_approval": WARNING,
         "accepted": ACCENT,
     }.get(status.lower(), ACCENT)
-    return f"[{color}]{escape(status.upper())}[/]"
+    return Text(status.upper(), style=color)
 
 
 def _objective_preview(objective: str) -> str:
     normalized = re.sub(r"[*_`>#-]+", " ", objective)
     normalized = " ".join(normalized.split())
     if not normalized:
-        return f"[{TEXT_MUTED}]No objective provided.[/]"
+        return "No objective provided."
     if len(normalized) <= 84:
-        return escape(normalized)
-    return escape(f"{normalized[:81].rstrip()}...")
+        return normalized
+    return f"{normalized[:81].rstrip()}..."
 
 
 def _compact_timestamp(timestamp: str) -> str:
     if "T" not in timestamp:
-        return escape(timestamp or "unknown")
+        return timestamp or "unknown"
     date_part, time_part = timestamp.split("T", 1)
-    return escape(f"{date_part} {time_part[:5]}")
+    return f"{date_part} {time_part[:5]}"
 
 
 def _compact_id(value: str) -> str:

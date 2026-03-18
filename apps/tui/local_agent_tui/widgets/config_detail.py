@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.selectors import ConfigDetailViewModel
 
@@ -31,16 +32,6 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
         signature = (model.title, model.status, model.summary, model.body)
         if self._last_signature == signature:
             return
-        self.border_title = escape(model.title)
-        self.update(
-            "\n".join(
-                [
-                    f"Status: {escape(model.status)}",
-                    "",
-                    escape(model.summary),
-                    "",
-                    escape(model.body),
-                ]
-            ).strip()
-        )
+        self.border_title = model.title
+        self.update(Group(Text(f"Status: {model.status}"), Text(""), Text(model.summary), Text(""), Text(model.body)))
         self._last_signature = signature

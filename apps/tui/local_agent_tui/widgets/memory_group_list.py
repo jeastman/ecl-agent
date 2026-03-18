@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.text import Text
 
 from ..store.selectors import MemoryGroupItemViewModel
 
@@ -25,7 +25,7 @@ else:  # pragma: no cover
 class MemoryGroupRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: MemoryGroupItemViewModel) -> None:
         self.group_id = item.group_id
-        text = f"{escape(item.title)} ({item.count})\n{escape(item.description)}"
+        text = Text(f"{item.title} ({item.count})\n{item.description}")
         super().__init__(Label(text))
 
 

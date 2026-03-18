@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Group
 from rich.markup import escape
+from rich.text import Text
 
 from ..store.selectors import TimelineGroupViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
@@ -26,26 +28,28 @@ class EventTimelineWidget(Static):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Event Timeline"
-        subtitle = f"Filter: {model.filter_label}"
+        subtitle = f"Filter: {escape(model.filter_label)}"
         if model.search_query:
-            subtitle = f"{subtitle} | Search: {model.search_query}"
+            subtitle = f"{subtitle} | Search: {escape(model.search_query)}"
         self.border_subtitle = subtitle
         if not model.events:
             self.update("No events yet.")
             return
         self.update(
-            "\n".join(
-                _render_event_line(
-                    timestamp=event.timestamp,
-                    event_type=event.event_type,
-                    severity=event.severity,
-                    summary=event.summary,
-                    repeat_count=event.repeat_count,
-                    source_name=event.source_name,
-                    highlight=event.highlight,
-                    highlight_label=event.highlight_label,
+            Group(
+                *(
+                    _render_event_line(
+                        timestamp=event.timestamp,
+                        event_type=event.event_type,
+                        severity=event.severity,
+                        summary=event.summary,
+                        repeat_count=event.repeat_count,
+                        source_name=event.source_name,
+                        highlight=event.highlight,
+                        highlight_label=event.highlight_label,
+                    )
+                    for event in model.events
                 )
-                for event in model.events
             )
         )
 
@@ -60,26 +64,24 @@ def _render_event_line(
     source_name: str | None,
     highlight: bool,
     highlight_label: str | None,
-) -> str:
+) -> Text:
     marker, color = {
         "error": ("ERR", DANGER),
         "attention": ("ATTN", WARNING),
         "success": ("OK", SUCCESS),
     }.get(severity, ("INFO", ACCENT))
-    safe_timestamp = escape(timestamp)
-    safe_event_type = escape(event_type)
-    safe_source_name = escape(source_name) if source_name else None
-    safe_summary = escape(summary)
-    safe_highlight_label = escape(highlight_label) if highlight_label else None
-    source = f" {safe_source_name}" if safe_source_name else ""
+    source = f" {source_name}" if source_name else ""
     collapsed = (
-        f"{safe_event_type}{source} (x{repeat_count})"
+        f"{event_type}{source} (x{repeat_count})"
         if repeat_count > 1
-        else f"{safe_event_type}{source}"
+        else f"{event_type}{source}"
     )
-    prefix = (
-        f"[reverse]{safe_highlight_label}[/reverse] "
-        if highlight and safe_highlight_label
-        else ""
-    )
-    return f"{prefix}[{color}]{safe_timestamp} [{marker}][/] {collapsed}  {safe_summary}"
+    line = Text()
+    if highlight and highlight_label:
+        line.append(f"{highlight_label} ", style="reverse")
+    line.append(timestamp, style=color)
+    line.append(f" [{marker}] ")
+    line.append(collapsed)
+    line.append("  ")
+    line.append(summary)
+    return line

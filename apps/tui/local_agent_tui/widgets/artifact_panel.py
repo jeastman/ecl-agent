@@ -2,7 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
 from ..store.selectors import ArtifactPanelItemViewModel
 
@@ -29,9 +30,13 @@ class ArtifactPanelWidget(Static):  # type: ignore[misc]
             self.update("No artifacts for this task.")
             return
         self.update(
-            "\n".join(
-                f"{'>' if item.is_selected else ' '} {escape(item.display_name)}\n"
-                f"{escape(item.content_type)}  {escape(item.logical_path)}"
-                for item in items
+            Group(
+                *(
+                    Text.assemble(
+                        f"{'>' if item.is_selected else ' '} {item.display_name}\n"
+                        f"{item.content_type}  {item.logical_path}"
+                    )
+                    for item in items
+                )
             )
         )
