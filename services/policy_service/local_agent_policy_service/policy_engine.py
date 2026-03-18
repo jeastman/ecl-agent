@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import posixpath
 from dataclasses import dataclass
+from pathlib import PurePosixPath
 from typing import Protocol
 
 from services.policy_service.local_agent_policy_service.boundary_scope import (
@@ -82,6 +84,8 @@ class RuntimePolicyEngine:
             )
 
         if context.operation_type == "command.execute":
+            if _is_scratch_only_destructive_command(context):
+                return False
             return (context.command_class or "unknown") not in _safe_command_classes(
                 self.policy_config
             )
@@ -108,6 +112,8 @@ class RuntimePolicyEngine:
 
         if context.operation_type == "command.execute":
             command_class = context.command_class or "unknown"
+            if command_class == "destructive" and _is_scratch_only_destructive_command(context):
+                return False
             return command_class in _deny_command_classes(self.policy_config)
 
         if context.operation_type == "memory.write":
@@ -164,3 +170,49 @@ def _web_access_mode(policy_config: dict[str, object]) -> str:
     if normalized in {"allow", "require_approval", "deny"}:
         return normalized
     return "allow"
+
+
+def _is_scratch_only_destructive_command(context: OperationContext) -> bool:
+    if (context.command_class or "unknown") != "destructive":
+        return False
+    metadata = context.metadata or {}
+    command = metadata.get("command")
+    if not isinstance(command, list) or not all(isinstance(part, str) and part for part in command):
+        return False
+    head = command[0].rsplit("/", 1)[-1]
+    if head != "rm":
+        return False
+    targets = _extract_rm_targets(command[1:])
+    if not targets:
+        return False
+    cwd = context.path_scope or "/"
+    return all(_is_virtual_scratch_path(_resolve_command_target_path(target, cwd)) for target in targets)
+
+
+def _extract_rm_targets(arguments: list[str]) -> list[str]:
+    targets: list[str] = []
+    literal_mode = False
+    for argument in arguments:
+        if not argument:
+            continue
+        if literal_mode:
+            targets.append(argument)
+            continue
+        if argument == "--":
+            literal_mode = True
+            continue
+        if argument.startswith("-"):
+            continue
+        targets.append(argument)
+    return targets
+
+
+def _resolve_command_target_path(target: str, cwd: str) -> str:
+    if target.startswith("/"):
+        return posixpath.normpath(target)
+    base = cwd if cwd.startswith("/") else "/"
+    return posixpath.normpath(PurePosixPath(base).joinpath(target).as_posix())
+
+
+def _is_virtual_scratch_path(path: str) -> bool:
+    return path == "/tmp" or path.startswith("/tmp/")

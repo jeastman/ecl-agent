@@ -530,6 +530,46 @@ class ApprovalAndPolicyTests(unittest.TestCase):
             self.assertEqual(require.decision, "REQUIRE_APPROVAL")
             self.assertEqual(deny.decision, "DENY")
 
+    def test_runtime_policy_engine_allows_scratch_only_rm_commands(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
+            engine = RuntimePolicyEngine(policy_config={}, boundary_grants=grants)
+
+            allow_absolute = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="command.execute",
+                    command_class="destructive",
+                    path_scope="/workspace",
+                    metadata={"command": ["rm", "-f", "/tmp/ecl/*~"]},
+                )
+            )
+            allow_relative = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="command.execute",
+                    command_class="destructive",
+                    path_scope="/tmp/ecl",
+                    metadata={"command": ["rm", "-f", "cache.txt"]},
+                )
+            )
+            deny_workspace = engine.evaluate(
+                OperationContext(
+                    task_id="task_1",
+                    run_id="run_1",
+                    operation_type="command.execute",
+                    command_class="destructive",
+                    path_scope="/workspace",
+                    metadata={"command": ["rm", "-f", "/workspace/tmp/cache.txt"]},
+                )
+            )
+
+            self.assertEqual(allow_absolute.decision, "ALLOW")
+            self.assertEqual(allow_relative.decision, "ALLOW")
+            self.assertEqual(deny_workspace.decision, "DENY")
+
     def test_runtime_policy_engine_classifies_memory_operations(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             grants = SQLiteBoundaryGrantStore(str(Path(temp_dir) / "runtime.db"))
