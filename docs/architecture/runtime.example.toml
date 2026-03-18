@@ -44,9 +44,20 @@ enabled = false
 description = "Example local stdio MCP server."
 command = "python3"
 args = ["tests/fixtures/mcp_echo_server.py"]
+env = { DEMO_MODE = "fixture", DEMO_TOKEN = "${DEMO_TOKEN}" }
+env_from_host = ["DEMO_TOKEN"]
 
 [mcp.servers.fixture_remote]
 enabled = false
 description = "Example remote MCP server."
 transport = "http"
 url = "https://example.com/mcp"
+headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
+
+[mcp.servers.mcp_atlassian]
+enabled = false
+description = "Example Atlassian MCP server using mixed literal and host-provided env vars."
+command = "uvx"
+args = ["mcp-atlassian"]
+env = { JIRA_URL = "https://your-company.atlassian.net", JIRA_USERNAME = "your.email@company.com", JIRA_API_TOKEN = "${JIRA_API_TOKEN}", CONFLUENCE_URL = "https://your-company.atlassian.net/wiki", CONFLUENCE_USERNAME = "your.email@company.com", CONFLUENCE_API_TOKEN = "${CONFLUENCE_API_TOKEN}" }
+env_from_host = ["JIRA_API_TOKEN", "CONFLUENCE_API_TOKEN"]

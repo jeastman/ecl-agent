@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -223,8 +224,11 @@ def _connection_payload(server: MCPServerConfig) -> dict[str, Any]:
         }
         if server.args:
             payload["args"] = list(server.args)
-        if server.env:
-            payload["env"] = dict(server.env)
+        env_payload = dict(server.env)
+        for variable_name in server.env_from_host:
+            env_payload.setdefault(variable_name, os.environ[variable_name])
+        if env_payload:
+            payload["env"] = env_payload
         return payload
     payload = {
         "transport": server.transport,

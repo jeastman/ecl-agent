@@ -12,6 +12,7 @@ class MCPServerConfig:
     command: str | None = None
     args: tuple[str, ...] = ()
     env: dict[str, str] = field(default_factory=dict)
+    env_from_host: tuple[str, ...] = ()
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     source: str = "runtime_toml"

@@ -224,7 +224,7 @@ Settings:
 - `policy`: open-ended runtime policy table preserved and exposed through `config.get` with redaction for secret-like values.
 - `mcp.tool_name_prefix`: when `true`, MCP tools are exposed as `<server>_<tool>` to avoid collisions. Defaults to `true`.
 - `mcp.servers.<name>`: native MCP server definitions. Each server supports:
-  - stdio servers: `command`, optional `args`, optional `env`
+  - stdio servers: `command`, optional `args`, optional `env`, optional `env_from_host`
   - remote servers: `transport` or `type` plus `url`, optional `headers`
   - shared fields: `enabled`, optional `description`
 
@@ -270,7 +270,8 @@ enabled = true
 description = "Local MCP docs helper"
 command = "python3"
 args = ["scripts/my_docs_mcp.py"]
-env = { DOCS_MODE = "local" }
+env = { DOCS_MODE = "local", DOCS_TOKEN = "${DOCS_TOKEN}" }
+env_from_host = ["DOCS_TOKEN"]
 ```
 
 Example remote HTTP server:
@@ -291,6 +292,22 @@ Rules:
 - `url` requires `transport` or `type`; supported values are `http`, `streamable_http`, and `sse`.
 - `enabled = false` keeps the definition in config without exposing the tools.
 - `tool_name_prefix = true` is recommended and is the runtime default.
+- `env` values support `${VAR}` interpolation from the runtime process environment.
+- `env_from_host` copies selected host environment variables into stdio MCP subprocesses.
+- `headers` values for remote MCP servers also support `${VAR}` interpolation.
+- Missing interpolated or passthrough variables fail config loading immediately.
+
+Example Atlassian MCP configuration:
+
+```toml
+[mcp.servers.mcp_atlassian]
+enabled = true
+description = "Atlassian Jira and Confluence MCP"
+command = "uvx"
+args = ["mcp-atlassian"]
+env = { JIRA_URL = "https://your-company.atlassian.net", JIRA_USERNAME = "your.email@company.com", JIRA_API_TOKEN = "${JIRA_API_TOKEN}", CONFLUENCE_URL = "https://your-company.atlassian.net/wiki", CONFLUENCE_USERNAME = "your.email@company.com", CONFLUENCE_API_TOKEN = "${CONFLUENCE_API_TOKEN}" }
+env_from_host = ["JIRA_API_TOKEN", "CONFLUENCE_API_TOKEN"]
+```
 
 ### Claude/Deep Agents compatible `.mcp.json` import
 
@@ -304,6 +321,19 @@ Project root `.mcp.json`:
     "filesystem": {
       "command": "npx",
       "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+    },
+    "mcp-atlassian": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://your-company.atlassian.net",
+        "JIRA_USERNAME": "your.email@company.com",
+        "JIRA_API_TOKEN": "${JIRA_API_TOKEN}",
+        "CONFLUENCE_URL": "https://your-company.atlassian.net/wiki",
+        "CONFLUENCE_USERNAME": "your.email@company.com",
+        "CONFLUENCE_API_TOKEN": "${CONFLUENCE_API_TOKEN}"
+      },
+      "envFromHost": ["JIRA_API_TOKEN", "CONFLUENCE_API_TOKEN"]
     },
     "remote-api": {
       "type": "http",
@@ -323,6 +353,20 @@ The runtime searches only within the current project root:
 
 If the same server name appears in more than one source, higher-precedence config replaces the lower-precedence definition entirely.
 
+Supported environment-variable patterns:
+
+- literal values:
+  - `"JIRA_URL": "https://your-company.atlassian.net"`
+- interpolated values:
+  - `"JIRA_API_TOKEN": "${JIRA_API_TOKEN}"`
+- explicit host passthrough:
+  - `"envFromHost": ["JIRA_API_TOKEN"]`
+
+Precedence within one stdio MCP server definition:
+
+1. interpolated literal `env` entries
+2. `env_from_host` / `envFromHost` passthrough keys that are not already explicitly set
+
 ### Approval and trust model
 
 MCP server connection is a governed runtime operation.
@@ -333,6 +377,7 @@ MCP server connection is a governed runtime operation.
   - `web_access_mode = "allow"` allows them
   - `web_access_mode = "require_approval"` pauses for approval
   - `web_access_mode = "deny"` rejects them
+- Missing host environment variables are treated as configuration errors, not approval events.
 
 Approval boundaries are run-scoped. Approving an MCP server for one run does not persist that approval to unrelated runs.
 
@@ -449,9 +494,12 @@ python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.exampl
 - stdio MCP server fails to launch:
   - run the configured command directly in the shell first
   - verify paths are correct relative to the executable, not relative to the config file unless your command expects that
+  - verify every `${VAR}` used in `env` is present in the runtime process environment
+  - verify every `env_from_host` / `envFromHost` key exists in the runtime process environment
 - remote MCP server fails:
   - verify `transport` and `url`
   - verify required headers
+  - verify every `${VAR}` used in `headers` is present in the runtime process environment
   - check whether runtime `web_access_mode` is requiring approval or denying the connection
 - tool name collisions:
   - keep `mcp.tool_name_prefix = true`

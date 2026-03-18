@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import re
 import tomllib
 from pathlib import Path, PurePosixPath
 
@@ -14,6 +16,8 @@ from packages.config.local_agent_config.models import (
     RuntimeSettings,
     TransportConfig,
 )
+
+_HOST_ENV_PATTERN = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
 def _required_table(payload: dict, key: str) -> dict:
@@ -90,6 +94,19 @@ def _optional_string_map(payload: object, key: str) -> dict[str, str]:
     return resolved
 
 
+def _optional_string_sequence(payload: object, key: str) -> tuple[str, ...]:
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        raise ValueError(f"{key} must be a list")
+    resolved: list[str] = []
+    for item in payload:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError(f"{key} must contain non-empty strings")
+        resolved.append(item.strip())
+    return tuple(resolved)
+
+
 def _optional_string_list(payload: object, key: str) -> tuple[str, ...]:
     if payload is None:
         return ()
@@ -114,6 +131,36 @@ def _normalize_mcp_transport(raw_transport: str | None) -> str | None:
     raise ValueError(
         "MCP transport must be one of: stdio, sse, http, streamable_http, streamable-http"
     )
+
+
+def _resolve_host_env_string(value: str, *, key: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        variable_name = match.group(1)
+        resolved = os.environ.get(variable_name)
+        if resolved is None:
+            raise ValueError(f"{key} references missing host environment variable {variable_name}")
+        return resolved
+
+    return _HOST_ENV_PATTERN.sub(_replace, value)
+
+
+def _resolve_host_env_map(payload: dict[str, str], *, key: str) -> dict[str, str]:
+    return {
+        item_key: _resolve_host_env_string(item_value, key=f"{key}.{item_key}")
+        for item_key, item_value in payload.items()
+    }
+
+
+def _resolve_env_from_host(
+    payload: object,
+    *,
+    key: str,
+) -> tuple[str, ...]:
+    names = _optional_string_sequence(payload, key)
+    for name in names:
+        if os.environ.get(name) is None:
+            raise ValueError(f"{key} references missing host environment variable {name}")
+    return names
 
 
 def _parse_mcp_server_config(
@@ -157,6 +204,10 @@ def _parse_mcp_server_config(
             transport = "stdio"
         if transport != "stdio":
             raise ValueError(f"MCP server {name} command-based entries must use stdio transport")
+        env_from_host = _resolve_env_from_host(
+            payload.get("env_from_host", payload.get("envFromHost")),
+            key=f"mcp.servers.{name}.env_from_host",
+        )
         return MCPServerConfig(
             name=name,
             transport=transport,
@@ -164,7 +215,11 @@ def _parse_mcp_server_config(
             description=description,
             command=command_value,
             args=_optional_string_list(payload.get("args"), f"mcp.servers.{name}.args"),
-            env=_optional_string_map(payload.get("env"), f"mcp.servers.{name}.env"),
+            env=_resolve_host_env_map(
+                _optional_string_map(payload.get("env"), f"mcp.servers.{name}.env"),
+                key=f"mcp.servers.{name}.env",
+            ),
+            env_from_host=env_from_host,
             source=source,
             source_path=source_path,
         )
@@ -173,6 +228,8 @@ def _parse_mcp_server_config(
         raise ValueError(f"MCP server {name} remote entries must define transport or type")
     if transport == "stdio":
         raise ValueError(f"MCP server {name} url-based entries cannot use stdio transport")
+    if payload.get("env_from_host", payload.get("envFromHost")) is not None:
+        raise ValueError(f"MCP server {name} env_from_host is supported only for stdio servers")
 
     return MCPServerConfig(
         name=name,
@@ -180,7 +237,10 @@ def _parse_mcp_server_config(
         enabled=enabled,
         description=description,
         url=url_value,
-        headers=_optional_string_map(payload.get("headers"), f"mcp.servers.{name}.headers"),
+        headers=_resolve_host_env_map(
+            _optional_string_map(payload.get("headers"), f"mcp.servers.{name}.headers"),
+            key=f"mcp.servers.{name}.headers",
+        ),
         source=source,
         source_path=source_path,
     )

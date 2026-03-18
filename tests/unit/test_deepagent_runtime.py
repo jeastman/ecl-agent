@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 import sys
 from typing import Any, cast
+from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
 from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
@@ -31,6 +32,9 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder imp
 from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler import (
     SubagentCompilationError,
     SubagentCompiler,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider import (
+    _connection_payload,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
@@ -242,6 +246,62 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(fetch_payload["final_url"], "https://example.com/final")
         self.assertEqual(search_payload[0]["source"], "duckduckgo")
         self.assertEqual([event[1]["tool"] for event in events], ["web_fetch", "web_search"])
+
+
+class MCPProviderTests(unittest.TestCase):
+    def test_connection_payload_merges_env_and_env_from_host(self) -> None:
+        server = MCPServerConfig(
+            name="mcp-atlassian",
+            transport="stdio",
+            command="uvx",
+            args=("mcp-atlassian",),
+            env={
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_API_TOKEN": "explicit-secret",
+            },
+            env_from_host=("JIRA_API_TOKEN", "CONFLUENCE_API_TOKEN"),
+        )
+
+        with patch.dict(
+            "os.environ",
+            {
+                "JIRA_API_TOKEN": "host-secret",
+                "CONFLUENCE_API_TOKEN": "conf-secret",
+            },
+            clear=False,
+        ):
+            payload = _connection_payload(server)
+
+        self.assertEqual(payload["transport"], "stdio")
+        self.assertEqual(payload["command"], "uvx")
+        self.assertEqual(payload["args"], ["mcp-atlassian"])
+        self.assertEqual(
+            payload["env"],
+            {
+                "JIRA_URL": "https://company.atlassian.net",
+                "JIRA_API_TOKEN": "explicit-secret",
+                "CONFLUENCE_API_TOKEN": "conf-secret",
+            },
+        )
+
+    def test_connection_payload_preserves_remote_headers(self) -> None:
+        server = MCPServerConfig(
+            name="remote",
+            transport="http",
+            url="https://example.com/mcp",
+            headers={"Authorization": "Bearer secret"},
+        )
+
+        payload = _connection_payload(server)
+
+        self.assertEqual(
+            payload,
+            {
+                "transport": "http",
+                "url": "https://example.com/mcp",
+                "headers": {"Authorization": "Bearer secret"},
+            },
+        )
 
 
 class SubagentCompilerTests(unittest.TestCase):

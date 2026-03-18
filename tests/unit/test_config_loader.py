@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from packages.config.local_agent_config.loader import load_runtime_config
 
@@ -240,6 +241,7 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
             self.assertEqual(server.command, "python3")
             self.assertEqual(server.args, ("tests/fixtures/mcp_echo_server.py",))
             self.assertEqual(server.source, "runtime_toml")
+            self.assertEqual(server.env_from_host, ())
 
     def test_loader_imports_project_mcp_json_with_runtime_precedence(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -341,6 +343,236 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
 
             with self.assertRaisesRegex(ValueError, "cannot define both command and url"):
                 load_runtime_config(str(config_path))
+
+    def test_loader_parses_stdio_env_from_host_and_interpolated_env(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.atlassian]",
+                        "command = 'uvx'",
+                        "args = ['mcp-atlassian']",
+                        "env_from_host = ['JIRA_API_TOKEN']",
+                        "env = { JIRA_URL = 'https://company.atlassian.net', JIRA_API_TOKEN = '${JIRA_API_TOKEN}', CONFLUENCE_API_TOKEN = '${CONFLUENCE_API_TOKEN}' }",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"JIRA_API_TOKEN": "jira-secret", "CONFLUENCE_API_TOKEN": "conf-secret"},
+                clear=False,
+            ):
+                config = load_runtime_config(str(config_path))
+
+            server = config.mcp.servers["atlassian"]
+            self.assertEqual(server.env_from_host, ("JIRA_API_TOKEN",))
+            self.assertEqual(server.env["JIRA_URL"], "https://company.atlassian.net")
+            self.assertEqual(server.env["JIRA_API_TOKEN"], "jira-secret")
+            self.assertEqual(server.env["CONFLUENCE_API_TOKEN"], "conf-secret")
+
+    def test_loader_parses_env_from_host_from_project_mcp_json(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            project_root = Path(temp_dir)
+            (project_root / ".git").mkdir()
+            (project_root / ".mcp.json").write_text(
+                """
+                {
+                  "mcpServers": {
+                    "mcp-atlassian": {
+                      "command": "uvx",
+                      "args": ["mcp-atlassian"],
+                      "envFromHost": ["JIRA_API_TOKEN"]
+                    }
+                  }
+                }
+                """.strip(),
+                encoding="utf-8",
+            )
+            config_path = project_root / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {"JIRA_API_TOKEN": "jira-secret"}, clear=False):
+                config = load_runtime_config(str(config_path))
+
+            self.assertEqual(
+                config.mcp.servers["mcp-atlassian"].env_from_host,
+                ("JIRA_API_TOKEN",),
+            )
+
+    def test_loader_interpolates_remote_mcp_headers(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.remote]",
+                        "transport = 'http'",
+                        "url = 'https://example.com/mcp'",
+                        "headers = { Authorization = 'Bearer ${ATLASSIAN_TOKEN}' }",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {"ATLASSIAN_TOKEN": "top-secret"}, clear=False):
+                config = load_runtime_config(str(config_path))
+
+            self.assertEqual(
+                config.mcp.servers["remote"].headers,
+                {"Authorization": "Bearer top-secret"},
+            )
+
+    def test_loader_fails_when_interpolated_env_variable_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.atlassian]",
+                        "command = 'uvx'",
+                        "args = ['mcp-atlassian']",
+                        "env = { JIRA_API_TOKEN = '${JIRA_API_TOKEN}' }",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "mcp.servers.atlassian.env.JIRA_API_TOKEN references missing host environment variable JIRA_API_TOKEN",
+                ):
+                    load_runtime_config(str(config_path))
+
+    def test_loader_fails_when_env_from_host_variable_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.atlassian]",
+                        "command = 'uvx'",
+                        "args = ['mcp-atlassian']",
+                        "env_from_host = ['JIRA_API_TOKEN']",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {}, clear=True):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "mcp.servers.atlassian.env_from_host references missing host environment variable JIRA_API_TOKEN",
+                ):
+                    load_runtime_config(str(config_path))
+
+    def test_loader_rejects_env_from_host_for_remote_servers(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.servers.remote]",
+                        "transport = 'http'",
+                        "url = 'https://example.com/mcp'",
+                        "env_from_host = ['ATLASSIAN_TOKEN']",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict("os.environ", {"ATLASSIAN_TOKEN": "top-secret"}, clear=False):
+                with self.assertRaisesRegex(
+                    ValueError,
+                    "MCP server remote env_from_host is supported only for stdio servers",
+                ):
+                    load_runtime_config(str(config_path))
 
 
 if __name__ == "__main__":
