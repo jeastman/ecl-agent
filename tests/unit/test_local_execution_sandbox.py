@@ -24,18 +24,18 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
         )
 
     def test_read_write_only_inside_governed_zones(self) -> None:
         self.sandbox.write_text("/tmp/output.md", "# generated\n")
         self.assertEqual(self.sandbox.read_text("/tmp/output.md"), "# generated\n")
-        self.assertEqual(self.sandbox.read_text("/README.md"), "hello\n")
+        self.assertEqual(self.sandbox.read_text("/workspace/README.md"), "hello\n")
         with self.assertRaisesRegex(ValueError, "cannot traverse"):
-            self.sandbox.write_text("/../escape.txt", "bad")
+            self.sandbox.write_text("/workspace/../escape.txt", "bad")
 
     def test_command_execution_allows_governed_cwd(self) -> None:
-        result = self.sandbox.execute_command(["pwd"], cwd="/")
+        result = self.sandbox.execute_command(["pwd"], cwd="/workspace")
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(Path(result.cwd), self.workspace_root.resolve())
 
@@ -43,13 +43,15 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "absolute virtual path"):
             self.sandbox.execute_command(["pwd"], cwd="workspace")
 
-    def test_host_workspace_paths_translate_back_to_virtual_paths(self) -> None:
+    def test_host_workspace_paths_are_rejected(self) -> None:
         host_path = self.workspace_root / "README.md"
-        self.assertEqual(self.sandbox.normalize_path(str(host_path)), "/README.md")
-        self.assertEqual(self.sandbox.read_text(str(host_path)), "hello\n")
+        with self.assertRaisesRegex(ValueError, "host-native path"):
+            self.sandbox.normalize_path(str(host_path))
+        with self.assertRaisesRegex(ValueError, "host-native path"):
+            self.sandbox.read_text(str(host_path))
 
     def test_virtual_root_getters_do_not_expose_host_paths(self) -> None:
-        self.assertEqual(self.sandbox.get_workspace_root(), "/")
+        self.assertEqual(self.sandbox.get_workspace_root(), "/workspace")
         self.assertEqual(self.sandbox.get_scratch_root(), "/tmp")
         self.assertEqual(self.sandbox.get_memory_root(), "/.memory")
 
@@ -57,9 +59,9 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         nested = self.workspace_root / "src"
         nested.mkdir()
         (nested / "main.py").write_text("print('hi')\n", encoding="utf-8")
-        files = self.sandbox.list_files("/")
-        self.assertIn("/README.md", files)
-        self.assertIn("/src/main.py", files)
+        files = self.sandbox.list_files("/workspace")
+        self.assertIn("/workspace/README.md", files)
+        self.assertIn("/workspace/src/main.py", files)
 
 
 if __name__ == "__main__":

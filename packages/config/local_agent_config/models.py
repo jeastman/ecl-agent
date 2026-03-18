@@ -31,6 +31,7 @@ class PersistenceConfig:
 @dataclass(slots=True)
 class CliConfig:
     default_workspace_root: str | None = None
+    virtual_workspace_root: str = "/workspace"
 
 
 @dataclass(slots=True)

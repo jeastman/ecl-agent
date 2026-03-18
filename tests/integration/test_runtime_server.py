@@ -104,6 +104,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root.mkdir()
             (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -117,7 +118,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Inspect the repo",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="1",
@@ -152,7 +153,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(len(artifact_payload), 2)
             self.assertTrue(
                 any(
-                    artifact["logical_path"] == "/artifacts/repo_summary.md"
+                    artifact["logical_path"] == "/workspace/artifacts/repo_summary.md"
                     for artifact in artifact_payload
                 )
             )
@@ -165,7 +166,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     "artifact_id": next(
                         artifact["artifact_id"]
                         for artifact in artifact_payload
-                        if artifact["logical_path"] == "/artifacts/repo_summary.md"
+                        if artifact["logical_path"] == "/workspace/artifacts/repo_summary.md"
                     ),
                 },
                 id="3b",
@@ -203,7 +204,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             self.assertEqual(
                 artifact_event.event.payload["artifact"]["logical_path"],
-                "/artifacts/repo_summary.md",
+                "/workspace/artifacts/repo_summary.md",
             )
             self.assertEqual(
                 artifact_event.event.payload["artifact"]["persistence_class"],
@@ -215,6 +216,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -229,7 +231,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     params=TaskCreateParams(
                         task=TaskCreateRequest(
                             objective=objective,
-                            workspace_roots=[str(workspace_root)],
+                            workspace_roots=["/workspace"],
                         )
                     ).to_dict(),
                     id=request_id,
@@ -254,6 +256,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -271,7 +274,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     params=TaskCreateParams(
                         task=TaskCreateRequest(
                             objective="Inspect the repo",
-                            workspace_roots=[str(workspace_root)],
+                            workspace_roots=["/workspace"],
                         )
                     ).to_dict(),
                     id="1",
@@ -367,7 +370,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                     params=TaskCreateParams(
                         task=TaskCreateRequest(
                             objective="Inspect the repo",
-                            workspace_roots=[str(workspace_root)],
+                            workspace_roots=["/workspace"],
                         )
                     ).to_dict(),
                     id="cwd-mismatch",
@@ -387,6 +390,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root.mkdir()
             (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             captures: dict[str, Any] = {}
             harness = LangChainDeepAgentHarness(
@@ -409,7 +413,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Inspect the repo",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="phase3",
@@ -477,6 +481,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             harness = _SkillCaptureHarness()
             server = create_runtime_server(
@@ -490,7 +495,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Seed runtime context",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="skill-create-1",
@@ -504,7 +509,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/repo-map",
+                    "source_path": "/workspace/repo-map",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Needed for recurring repository mapping work.",
@@ -525,7 +530,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Use current primary skills",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="skill-create-2",
@@ -553,6 +558,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             (existing_skill / "SKILL.md").write_text("# Existing\n", encoding="utf-8")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -565,7 +571,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Prepare install approval context",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="replace-create",
@@ -579,7 +585,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/repo-map",
+                    "source_path": "/workspace/repo-map",
                     "target_scope": "primary_agent",
                     "install_mode": "replace",
                     "reason": "Upgrade existing repo-map skill.",
@@ -621,6 +627,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -634,7 +641,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/planner-kit",
+                    "source_path": "/workspace/planner-kit",
                     "target_scope": "subagent",
                     "target_role": "planner",
                     "install_mode": "fail_if_exists",
@@ -661,6 +668,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -674,7 +682,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/broken-skill",
+                    "source_path": "/workspace/broken-skill",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Try invalid skill.",
@@ -703,6 +711,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -716,7 +725,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/repo-map",
+                    "source_path": "/workspace/repo-map",
                     "target_scope": "subagent",
                     "target_role": "missing-role",
                     "install_mode": "fail_if_exists",
@@ -738,6 +747,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             agent_root = _create_minimal_agent_tree(Path(temp_dir) / "agents")
             config = load_runtime_config(CONFIG_PATH)
             config.identity_path = str(agent_root / "primary-agent" / "IDENTITY.md")
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -751,7 +761,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params={
                     "task_id": created["task_id"],
                     "run_id": created["run_id"],
-                    "source_path": "/../escape",
+                    "source_path": "/workspace/../escape",
                     "target_scope": "primary_agent",
                     "install_mode": "fail_if_exists",
                     "reason": "Try traversal.",
@@ -771,6 +781,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root.mkdir()
             (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             captures: dict[str, Any] = {}
             harness = LangChainDeepAgentHarness(
@@ -793,7 +804,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Inspect the repo",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="phase3-failed",
@@ -842,6 +853,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -855,7 +867,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Inspect the repo",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="1",
@@ -884,6 +896,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -897,7 +910,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Inspect the repo",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="1",
@@ -972,6 +985,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -1033,6 +1047,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -1075,6 +1090,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             server = create_runtime_server(
                 config=config,
@@ -1183,6 +1199,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             runtime_root = str(Path(temp_dir) / "runtime")
             correlation_id = new_correlation_id()
@@ -1198,7 +1215,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Attempt denied network access",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="8",
@@ -1235,6 +1252,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             runtime_root = str(Path(temp_dir) / "runtime")
             correlation_id = new_correlation_id()
@@ -1250,7 +1268,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Pause and resume the repo task",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="1",
@@ -1364,6 +1382,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             workspace_root = Path(temp_dir) / "workspace"
             workspace_root.mkdir()
             config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
             identity = load_identity_bundle(config.identity_path)
             runtime_root = str(Path(temp_dir) / "runtime")
             correlation_id = new_correlation_id()
@@ -1379,7 +1398,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 params=TaskCreateParams(
                     task=TaskCreateRequest(
                         objective="Edit governed files",
-                        workspace_roots=[str(workspace_root)],
+                        workspace_roots=["/workspace"],
                     )
                 ).to_dict(),
                 id="1",
@@ -1500,12 +1519,12 @@ class _FakeCompiledAgent:
         input: dict[str, Any],
         config: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
-        listing = self._invoke("list_files", {"root": "/"})
-        readme = self._invoke("read_file", {"path": "/README.md"})
+        listing = self._invoke("list_files", {"root": "/workspace"})
+        readme = self._invoke("read_file", {"path": "/workspace/README.md"})
         self._invoke(
             "write_file",
             {
-                "path": "/artifacts/repo_summary.md",
+                "path": "/workspace/artifacts/repo_summary.md",
                 "content": "\n".join(
                     [
                         "# Repository Architecture Summary",
@@ -1546,11 +1565,11 @@ class _PauseThenResumeHarness:
         metadata = controller.record_checkpoint("resumed")
         if on_event is not None:
             on_event("checkpoint.saved", metadata.to_dict())
-        request.sandbox.write_text("/artifacts/resumed.md", "# Recovered\n")
+        request.sandbox.write_text("/workspace/artifacts/resumed.md", "# Recovered\n")
         return AgentExecutionResult(
             success=True,
             summary="Recovered run completed.",
-            output_artifacts=["/artifacts/resumed.md"],
+            output_artifacts=["/workspace/artifacts/resumed.md"],
             error_message=None,
             paused=False,
             pause_reason=None,
@@ -1578,7 +1597,7 @@ class _ApprovalHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.write_file("/apps/runtime/guarded.txt", "content\n")
+        bindings.write_file("/workspace/apps/runtime/guarded.txt", "content\n")
         return AgentExecutionResult(
             success=True,
             summary="Governed write completed after approval.",
@@ -1607,7 +1626,7 @@ class _NetworkDeniedHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.execute_command(["curl", "https://example.com"], cwd="/")
+        bindings.execute_command(["curl", "https://example.com"], cwd="/workspace")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 
@@ -1633,7 +1652,7 @@ class _CapturingCompiledAgent:
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         write_tool.invoke(
             {
-                "path": "/artifacts/phase3-result.md",
+                "path": "/workspace/artifacts/phase3-result.md",
                 "content": "# Phase 3\n",
             }
         )
@@ -1796,7 +1815,7 @@ def _create_task(server, workspace_root: Path) -> dict[str, Any]:
         params=TaskCreateParams(
             task=TaskCreateRequest(
                 objective="Create context",
-                workspace_roots=[str(workspace_root)],
+                workspace_roots=["/workspace"],
             )
         ).to_dict(),
         id="helper-create",

@@ -87,7 +87,7 @@ class BoundaryDescriptor:
 
 def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
     if context.operation_type == "file.write" and context.path_scope is not None:
-        if context.path_scope.startswith("/artifacts/"):
+        if context.path_scope.startswith("/workspace/artifacts/"):
             return None
         if context.path_scope == "/tmp" or context.path_scope.startswith("/tmp/"):
             return None

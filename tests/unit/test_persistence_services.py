@@ -366,7 +366,7 @@ class RuntimeStateTests(unittest.TestCase):
             task_id, run_id, _ = runner.start_run(
                 correlation_id="corr_1",
                 objective="Inspect the repo",
-                workspace_roots=[str(workspace_root)],
+                workspace_roots=["/workspace"],
                 identity_bundle_text="identity",
             )
 
@@ -505,7 +505,7 @@ class ApprovalAndPolicyTests(unittest.TestCase):
                     task_id="task_1",
                     run_id="run_1",
                     operation_type="file.write",
-                    path_scope="/artifacts/out.md",
+                    path_scope="/workspace/artifacts/out.md",
                 )
             )
             require = engine.evaluate(

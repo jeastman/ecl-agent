@@ -26,7 +26,7 @@ class CliIntegrationTests(unittest.TestCase):
                 )
 
             with patch.object(cli, "make_client", side_effect=fake_make_client):
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(["--config", "ignored.toml", "run", "Inspect repo"]), 0
@@ -36,7 +36,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("task_123", output)
                 self.assertIn("agent logs task_123", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -56,7 +56,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("completed", output)
                 self.assertIn("Summary created.", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -79,7 +79,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("researcher status=success duration=0.42", output)
                 self.assertIn("artifacts/repo_summary.md", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -99,7 +99,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("artifact_1", output)
                 self.assertIn("text/markdown", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(["--config", "ignored.toml", "approvals", "task_123"]), 0
@@ -108,7 +108,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("Approvals", output)
                 self.assertIn("approval_1", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(["--config", "ignored.toml", "diagnostics", "task_123"]), 0
@@ -117,7 +117,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("Diagnostics", output)
                 self.assertIn("diag_1", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -137,7 +137,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("True", output)
                 self.assertIn("completed", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -158,7 +158,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("completed", output)
                 self.assertIn("Run resumed and completed.", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(
                             cli.main(
@@ -176,7 +176,7 @@ class CliIntegrationTests(unittest.TestCase):
                 self.assertIn("Memory Entries", output)
                 self.assertIn("mem_1", output)
 
-                with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+                with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                     with patch("sys.stdout", new=io.StringIO()) as stdout:
                         self.assertEqual(cli.main(["--config", "ignored.toml", "config"]), 0)
                         output = stdout.getvalue()
@@ -290,7 +290,7 @@ def _fake_runtime_script() -> str:
                         "event": {
                             "event_type": "artifact.created",
                             "payload": {
-                                "artifact": {"logical_path": "/artifacts/repo_summary.md"}
+                                "artifact": {"logical_path": "/workspace/artifacts/repo_summary.md"}
                             },
                         },
                     }
@@ -305,7 +305,7 @@ def _fake_runtime_script() -> str:
                     "artifacts": [
                         {
                             "artifact_id": "artifact_1",
-                            "logical_path": "/artifacts/repo_summary.md",
+                            "logical_path": "/workspace/artifacts/repo_summary.md",
                             "content_type": "text/markdown",
                             "persistence_class": "run",
                             "display_name": "repo_summary.md",

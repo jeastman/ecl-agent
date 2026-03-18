@@ -50,18 +50,27 @@ class ProtocolModelTests(unittest.TestCase):
         params = TaskCreateParams(
             task=TaskCreateRequest(
                 objective="Inspect the repo",
-                workspace_roots=["."],
+                workspace_roots=["/workspace"],
                 constraints=["stay in repo"],
                 success_criteria=["return a summary"],
             )
         )
         parsed = TaskCreateParams.from_dict(params.to_dict())
         self.assertEqual(parsed.task.objective, "Inspect the repo")
-        self.assertEqual(parsed.task.workspace_roots, ["."])
+        self.assertEqual(parsed.task.workspace_roots, ["/workspace"])
 
     def test_task_create_requires_workspace_roots(self) -> None:
         with self.assertRaisesRegex(ValueError, "task.create requires task.workspace_roots"):
             TaskCreateParams.from_dict({"task": {"objective": "Inspect the repo"}})
+        with self.assertRaisesRegex(ValueError, "task.workspace_roots must be under /workspace"):
+            TaskCreateParams.from_dict(
+                {
+                    "task": {
+                        "objective": "Inspect the repo",
+                        "workspace_roots": ["/Users/example/project"],
+                    }
+                }
+            )
 
     def test_task_snapshot_serialization_omits_none(self) -> None:
         snapshot = TaskSnapshot(

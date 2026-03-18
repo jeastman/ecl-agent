@@ -230,7 +230,7 @@ def handle_run(
 
 def _default_workspace_root(config_path: str) -> str:
     config = load_runtime_config(config_path)
-    return config.cli.default_workspace_root or str(Path.cwd())
+    return config.cli.virtual_workspace_root
 
 
 def handle_status(config_path: str, task_id: str, run_id: str | None) -> int:

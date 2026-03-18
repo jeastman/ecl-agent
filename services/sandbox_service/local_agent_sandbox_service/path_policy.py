@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 ZONE_WORKSPACE = "workspace"
 ZONE_SCRATCH = "scratch"
 ZONE_MEMORY = "memory"
+WORKSPACE_MOUNT = PurePosixPath("/workspace")
 SCRATCH_MOUNT = PurePosixPath("/tmp")
 MEMORY_MOUNT = PurePosixPath("/.memory")
 
@@ -20,8 +21,8 @@ class NormalizedSandboxPath:
     def logical_path(self) -> str:
         if self.zone == ZONE_WORKSPACE:
             if self.relative_path == PurePosixPath("."):
-                return "/"
-            return f"/{self.relative_path.as_posix()}"
+                return WORKSPACE_MOUNT.as_posix()
+            return f"{WORKSPACE_MOUNT.as_posix()}/{self.relative_path.as_posix()}"
         mount = SCRATCH_MOUNT if self.zone == ZONE_SCRATCH else MEMORY_MOUNT
         if self.relative_path == PurePosixPath("."):
             return mount.as_posix()
@@ -41,18 +42,27 @@ def normalize_sandbox_path(path: str) -> NormalizedSandboxPath:
         if part == "..":
             raise ValueError("sandbox path cannot traverse outside its virtual root")
 
-    if logical_path == SCRATCH_MOUNT or _is_relative_to(logical_path, SCRATCH_MOUNT):
+    if logical_path == WORKSPACE_MOUNT or _is_relative_to(logical_path, WORKSPACE_MOUNT):
+        zone = ZONE_WORKSPACE
+        relative_path = logical_path.relative_to(WORKSPACE_MOUNT)
+    elif logical_path == SCRATCH_MOUNT or _is_relative_to(logical_path, SCRATCH_MOUNT):
         zone = ZONE_SCRATCH
         relative_path = logical_path.relative_to(SCRATCH_MOUNT)
     elif logical_path == MEMORY_MOUNT or _is_relative_to(logical_path, MEMORY_MOUNT):
         zone = ZONE_MEMORY
         relative_path = logical_path.relative_to(MEMORY_MOUNT)
     else:
-        zone = ZONE_WORKSPACE
-        relative_path = logical_path.relative_to(PurePosixPath("/"))
+        raise ValueError("sandbox path must be under /workspace, /tmp, or /.memory")
 
     relative_path = relative_path if relative_path != PurePosixPath(".") else PurePosixPath(".")
     return NormalizedSandboxPath(zone=zone, relative_path=relative_path)
+
+
+def normalize_workspace_virtual_root(path: str) -> str:
+    normalized = normalize_sandbox_path(path)
+    if normalized.zone != ZONE_WORKSPACE:
+        raise ValueError("virtual workspace root must be under /workspace")
+    return normalized.logical_path
 
 
 def _is_relative_to(path: PurePosixPath, root: PurePosixPath) -> bool:

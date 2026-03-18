@@ -47,7 +47,7 @@ class PromptBuilderTests(unittest.TestCase):
     def test_primary_prompt_includes_objective_and_subagent_roles(self) -> None:
         prompt = PromptBuilder().build_primary_prompt(
             identity_bundle_text="Operate carefully.",
-            workspace_roots=["/tmp/workspace"],
+            workspace_roots=["/workspace"],
             objective="Inspect the repository",
             constraints=["Stay inside the workspace."],
             success_criteria=["Produce a useful result."],
@@ -58,9 +58,9 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("planner", prompt)
         self.assertIn("researcher", prompt)
         self.assertIn("native subagents", prompt.lower())
-        self.assertIn("The governed workspace is mounted at /.", prompt)
-        self.assertIn("/people.csv", prompt)
-        self.assertNotIn("/tmp/workspace", prompt)
+        self.assertIn("The governed workspace is mounted at /workspace.", prompt)
+        self.assertIn("/workspace/people.csv", prompt)
+        self.assertNotIn("/Users/john.eastman", prompt)
 
     def test_subagent_prompt_includes_role_identity_overlay_and_scope_summary(self) -> None:
         resolved = _resolved_subagent(role_id="researcher")
@@ -88,7 +88,7 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
         )
         self.artifact_store = InMemoryArtifactStore(path_mapper=self.factory)
         self.memory_store = SQLiteMemoryStore(str(Path(self._temp_dir.name) / "memory.sqlite"))
@@ -160,15 +160,15 @@ class SandboxToolBindingsTests(unittest.TestCase):
             artifact_store=self.artifact_store,
             memory_store=self.memory_store,
         )
-        bindings.write_file("/artifacts/report.md", "# Report\n")
+        bindings.write_file("/workspace/artifacts/report.md", "# Report\n")
         self.artifact_store.register_artifact(
             task_id="task_1",
             run_id="run_1",
-            sandbox_path="/artifacts/report.md",
+            sandbox_path="/workspace/artifacts/report.md",
         )
         artifacts = bindings.artifact_inspect()
         self.assertEqual(len(artifacts), 1)
-        self.assertEqual(artifacts[0]["logical_path"], "/artifacts/report.md")
+        self.assertEqual(artifacts[0]["logical_path"], "/workspace/artifacts/report.md")
         self.assertEqual(artifacts[0]["preview"], "# Report\n")
 
     def test_filesystem_scope_denies_workspace_access_when_only_memory_is_allowed(self) -> None:
@@ -189,7 +189,7 @@ class SandboxToolBindingsTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(FilesystemScopeError, "allowed filesystem scopes are memory"):
-            read_tool.invoke({"path": "/README.md"})
+            read_tool.invoke({"path": "/workspace/README.md"})
 
     def test_web_tools_return_normalized_payloads_and_emit_events(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
@@ -239,7 +239,7 @@ class SubagentCompilerTests(unittest.TestCase):
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(workspace_root)],
+            workspace_roots=["/workspace"],
         )
         bindings = SandboxToolBindings(
             sandbox=sandbox,
@@ -283,7 +283,7 @@ class SubagentCompilerTests(unittest.TestCase):
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(workspace_root)],
+            workspace_roots=["/workspace"],
         )
         bindings = SandboxToolBindings(
             sandbox=sandbox,
@@ -338,7 +338,7 @@ class SubagentCompilerTests(unittest.TestCase):
         sandbox = factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(workspace_root)],
+            workspace_roots=["/workspace"],
         )
         bindings = SandboxToolBindings(
             sandbox=sandbox,
@@ -376,7 +376,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_1",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
         )
         self.artifact_store = InMemoryArtifactStore(path_mapper=self.factory)
         self.memory_store = SQLiteMemoryStore(str(Path(self._temp_dir.name) / "memory.sqlite"))
@@ -390,7 +390,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[_resolved_subagent(role_id="researcher", skill_path=skill_path)],
@@ -423,8 +423,8 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(
             result.output_artifacts,
             [
-                "/artifacts/result.md",
-                "/artifacts/task_1/run_1/final_response.md",
+                "/workspace/artifacts/result.md",
+                "/workspace/artifacts/task_1/run_1/final_response.md",
             ],
         )
         self.assertEqual(captures["agent_kwargs"]["name"], "primary")
@@ -433,7 +433,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(captures["agent_kwargs"]["subagents"][0]["name"], "Researcher")
         self.assertNotIn("repo_summary.md", captures["invoke_payload"]["messages"][0]["content"])
         self.assertEqual(
-            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
             "Delegated execution started and completed successfully.\n",
         )
         self.assertIn("subagent.started", [event_type for event_type, _ in events])
@@ -464,7 +464,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[_resolved_subagent(role_id="researcher")],
@@ -509,7 +509,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -530,10 +530,10 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(result.error_message, "model reported failure")
         self.assertEqual(
             result.output_artifacts,
-            ["/artifacts/task_1/run_1/final_response.md"],
+            ["/workspace/artifacts/task_1/run_1/final_response.md"],
         )
         self.assertEqual(
-            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
             "Model produced a final response before failing.\n",
         )
 
@@ -542,7 +542,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -582,7 +582,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -625,7 +625,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -662,7 +662,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -689,7 +689,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -708,7 +708,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(result.output_artifacts, [])
-        self.assertFalse(self.sandbox.exists("/artifacts/task_1/run_1/final_response.md"))
+        self.assertFalse(self.sandbox.exists("/workspace/artifacts/task_1/run_1/final_response.md"))
 
     def test_harness_writes_run_specific_final_response_paths(self) -> None:
         harness = LangChainDeepAgentHarness(
@@ -721,7 +721,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -733,13 +733,13 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         second_sandbox = self.factory.for_run(
             task_id="task_1",
             run_id="run_2",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
         )
         second_request = AgentExecutionRequest(
             task_id="task_1",
             run_id="run_2",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=second_sandbox,
             resolved_subagents=[],
@@ -752,17 +752,23 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         first_result = harness.execute(first_request, on_event=lambda *_: None)
         second_result = harness.execute(second_request, on_event=lambda *_: None)
 
-        self.assertIn("/artifacts/task_1/run_1/final_response.md", first_result.output_artifacts)
-        self.assertIn("/artifacts/task_1/run_2/final_response.md", second_result.output_artifacts)
-        self.assertTrue(self.sandbox.exists("/artifacts/task_1/run_1/final_response.md"))
-        self.assertTrue(second_sandbox.exists("/artifacts/task_1/run_2/final_response.md"))
+        self.assertIn(
+            "/workspace/artifacts/task_1/run_1/final_response.md", first_result.output_artifacts
+        )
+        self.assertIn(
+            "/workspace/artifacts/task_1/run_2/final_response.md", second_result.output_artifacts
+        )
+        self.assertTrue(self.sandbox.exists("/workspace/artifacts/task_1/run_1/final_response.md"))
+        self.assertTrue(
+            second_sandbox.exists("/workspace/artifacts/task_1/run_2/final_response.md")
+        )
 
     def test_harness_captures_block_based_assistant_content(self) -> None:
         request = AgentExecutionRequest(
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -780,9 +786,11 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         ).execute(request, on_event=lambda *_: None)
 
         self.assertTrue(result.success)
-        self.assertIn("/artifacts/task_1/run_1/final_response.md", result.output_artifacts)
+        self.assertIn(
+            "/workspace/artifacts/task_1/run_1/final_response.md", result.output_artifacts
+        )
         self.assertEqual(
-            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
             "First block\nSecond block\n",
         )
 
@@ -791,7 +799,7 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
             task_id="task_1",
             run_id="run_1",
             objective="Inspect the repository",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="Operate carefully.",
             sandbox=self.sandbox,
             resolved_subagents=[],
@@ -809,9 +817,11 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         ).execute(request, on_event=lambda *_: None)
 
         self.assertTrue(result.success)
-        self.assertIn("/artifacts/task_1/run_1/final_response.md", result.output_artifacts)
+        self.assertIn(
+            "/workspace/artifacts/task_1/run_1/final_response.md", result.output_artifacts
+        )
         self.assertEqual(
-            self.sandbox.read_text("/artifacts/task_1/run_1/final_response.md"),
+            self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md"),
             "AIMessage response body\n",
         )
 
@@ -829,12 +839,12 @@ class FakeCompiledAgent:
         for subagent in self._subagents:
             for middleware in subagent.get("middleware", []):
                 middleware.wrap_model_call(FakeModelRequest(), lambda request: {"ok": True})
-        self._invoke_tool("list_files", {"root": "/"})
-        self._invoke_tool("read_file", {"path": "/README.md"})
+        self._invoke_tool("list_files", {"root": "/workspace"})
+        self._invoke_tool("read_file", {"path": "/workspace/README.md"})
         self._invoke_tool(
             "write_file",
             {
-                "path": "/artifacts/result.md",
+                "path": "/workspace/artifacts/result.md",
                 "content": "# Result\nDeep Agent execution complete.\n",
             },
         )
@@ -1101,7 +1111,9 @@ class _StaticWebFetchPort:
 
 
 class _StaticWebSearchPort:
-    def search(self, query: str, *, limit: int = 5, locale: str | None = None) -> list[WebSearchResult]:
+    def search(
+        self, query: str, *, limit: int = 5, locale: str | None = None
+    ) -> list[WebSearchResult]:
         return [
             WebSearchResult(
                 title=f"Result for {query}",

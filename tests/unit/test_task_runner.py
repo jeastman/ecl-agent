@@ -51,7 +51,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
@@ -72,7 +72,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         snapshot = runner.get_task_snapshot(task_id, run_id)
@@ -103,7 +103,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         snapshot = runner.get_task_snapshot(task_id, run_id)
@@ -123,7 +123,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
@@ -141,7 +141,7 @@ class TaskRunnerTests(unittest.TestCase):
             ],
         )
         artifact = runner.list_artifacts(task_id, run_id)[0]
-        self.assertEqual(artifact.logical_path, "/artifacts/repo_summary.md")
+        self.assertEqual(artifact.logical_path, "/workspace/artifacts/repo_summary.md")
         snapshot = runner.get_task_snapshot(task_id, run_id)
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
@@ -160,7 +160,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         snapshot = runner.get_task_snapshot(task_id, run_id)
@@ -184,7 +184,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -192,10 +192,12 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(len(artifacts), 1)
         self.assertEqual(
             artifacts[0].logical_path,
-            f"/artifacts/{task_id}/{run_id}/final_response.md",
+            f"/workspace/artifacts/{task_id}/{run_id}/final_response.md",
         )
         artifact, preview = runner.get_artifact_preview(task_id, artifacts[0].artifact_id, run_id)
-        self.assertEqual(artifact.logical_path, f"/artifacts/{task_id}/{run_id}/final_response.md")
+        self.assertEqual(
+            artifact.logical_path, f"/workspace/artifacts/{task_id}/{run_id}/final_response.md"
+        )
         self.assertEqual(preview.kind, "markdown")
         self.assertEqual(preview.text, "# Final Response\nImportant execution detail.\n")
 
@@ -212,7 +214,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -223,7 +225,7 @@ class TaskRunnerTests(unittest.TestCase):
         artifacts = runner.list_artifacts(task_id, run_id)
         self.assertEqual(
             artifacts[0].logical_path,
-            f"/artifacts/{task_id}/{run_id}/final_response.md",
+            f"/workspace/artifacts/{task_id}/{run_id}/final_response.md",
         )
         event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
         self.assertEqual(
@@ -249,7 +251,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -309,7 +311,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -361,7 +363,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Edit governed files",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -408,7 +410,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Edit governed files",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
         awaiting = runner.get_task_snapshot(task_id, run_id)
@@ -446,7 +448,7 @@ class TaskRunnerTests(unittest.TestCase):
         task_id, run_id, _ = runner.start_run(
             correlation_id="corr_1",
             objective="Attempt network access",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -483,7 +485,7 @@ class TaskRunnerTests(unittest.TestCase):
         runner.start_run(
             correlation_id="corr_1",
             objective="Inspect the repo",
-            workspace_roots=[str(self.workspace_root)],
+            workspace_roots=["/workspace"],
             identity_bundle_text="identity",
         )
 
@@ -518,13 +520,13 @@ class EventingHarness:
             )
             on_event(
                 "tool.called",
-                {"tool": "write_file", "path": "/artifacts/repo_summary.md"},
+                {"tool": "write_file", "path": "/workspace/artifacts/repo_summary.md"},
             )
-        request.sandbox.write_text("/artifacts/repo_summary.md", "# Summary\n")
+        request.sandbox.write_text("/workspace/artifacts/repo_summary.md", "# Summary\n")
         return AgentExecutionResult(
             success=True,
             summary="Generated the repository summary artifact.",
-            output_artifacts=["/artifacts/repo_summary.md"],
+            output_artifacts=["/workspace/artifacts/repo_summary.md"],
         )
 
 
@@ -535,7 +537,7 @@ class RaisingHarness:
 
 class FinalResponseHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
-        path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+        path = f"/workspace/artifacts/{request.task_id}/{request.run_id}/final_response.md"
         request.sandbox.write_text(path, "# Final Response\nImportant execution detail.\n")
         return AgentExecutionResult(
             success=True,
@@ -546,7 +548,7 @@ class FinalResponseHarness:
 
 class FailureWithArtifactHarness:
     def execute(self, request, on_event=None) -> AgentExecutionResult:
-        path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+        path = f"/workspace/artifacts/{request.task_id}/{request.run_id}/final_response.md"
         request.sandbox.write_text(path, "Model produced a final response before failing.\n")
         return AgentExecutionResult(
             success=False,
@@ -575,11 +577,11 @@ class PauseThenResumeHarness:
         metadata = controller.record_checkpoint("resumed")
         if on_event is not None:
             on_event("checkpoint.saved", metadata.to_dict())
-        request.sandbox.write_text("/artifacts/resumed.md", "# Resumed\n")
+        request.sandbox.write_text("/workspace/artifacts/resumed.md", "# Resumed\n")
         return AgentExecutionResult(
             success=True,
             summary="Completed after resume.",
-            output_artifacts=["/artifacts/resumed.md"],
+            output_artifacts=["/workspace/artifacts/resumed.md"],
         )
 
 
@@ -619,7 +621,7 @@ class ApprovalThenResumeHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.write_file("/apps/runtime/guarded.txt", "content\n")
+        bindings.write_file("/workspace/apps/runtime/guarded.txt", "content\n")
         return AgentExecutionResult(
             success=True,
             summary="Governed write completed after approval.",
@@ -644,7 +646,7 @@ class NetworkDeniedHarness:
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=bridge.authorize,
         )
-        bindings.execute_command(["curl", "https://example.com"], cwd="/")
+        bindings.execute_command(["curl", "https://example.com"], cwd="/workspace")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 

@@ -206,6 +206,9 @@ class TaskRunner:
         success_criteria: list[str] | None = None,
         background: bool = False,
     ) -> tuple[str, str, str]:
+        normalized_workspace_roots = self._sandbox_factory.normalize_workspace_roots(
+            workspace_roots
+        )
         task_id = new_task_id()
         run_id = new_run_id()
         accepted_at = utc_now_timestamp()
@@ -217,7 +220,7 @@ class TaskRunner:
             created_at=accepted_at,
             updated_at=accepted_at,
             accepted_at=accepted_at,
-            workspace_roots=list(workspace_roots),
+            workspace_roots=list(normalized_workspace_roots),
             allowed_capabilities=list(allowed_capabilities or []),
             metadata=dict(metadata or {}),
             constraints=list(constraints or []),
@@ -254,7 +257,7 @@ class TaskRunner:
             payload={
                 "status": TaskStatus.CREATED.value,
                 "objective": objective,
-                "workspace_roots": list(workspace_roots),
+                "workspace_roots": list(normalized_workspace_roots),
                 "allowed_capabilities": list(allowed_capabilities or []),
                 "metadata": dict(metadata or {}),
                 "constraints": list(constraints or []),

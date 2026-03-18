@@ -404,7 +404,7 @@ def _write_final_response_artifact(
 ) -> str | None:
     if final_response is None:
         return None
-    sandbox_path = f"/artifacts/{request.task_id}/{request.run_id}/final_response.md"
+    sandbox_path = f"/workspace/artifacts/{request.task_id}/{request.run_id}/final_response.md"
     request.sandbox.write_text(sandbox_path, f"{final_response}\n")
     return request.sandbox.normalize_path(sandbox_path)
 

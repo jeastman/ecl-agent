@@ -347,7 +347,7 @@ class MethodHandlers:
                     "diagnostic_backend": self.config.persistence.diagnostic_backend,
                 },
                 "cli": {
-                    "default_workspace_root": self.config.cli.default_workspace_root,
+                    "virtual_workspace_root": self.config.cli.virtual_workspace_root,
                 },
                 "subagents": resolved_subagents,
                 "policy": dict(self.config.policy),

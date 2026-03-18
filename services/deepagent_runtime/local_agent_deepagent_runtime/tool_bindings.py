@@ -119,7 +119,7 @@ class SandboxToolBindings:
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any]:
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
-        normalized_cwd = self.sandbox.normalize_path(cwd or "/")
+        normalized_cwd = self.sandbox.normalize_path(cwd or self.sandbox.get_workspace_root())
         self._govern(
             OperationContext(
                 task_id=self.task_id,
@@ -329,13 +329,13 @@ class SandboxToolBindings:
 
             @tool
             def read_file(path: str) -> str:
-                """Read a UTF-8 text file from a virtual sandbox path such as /README.md."""
+                """Read a UTF-8 text file from a virtual sandbox path such as /workspace/README.md."""
                 self._ensure_filesystem_scope(path, filesystem_scopes, operation="read_file")
                 return self.read_file(path)
 
             @tool
-            def list_files(root: str = "/") -> list[str]:
-                """List governed files rooted at a virtual sandbox path such as / or /tmp."""
+            def list_files(root: str = "/workspace") -> list[str]:
+                """List governed files rooted at a virtual sandbox path such as /workspace or /tmp."""
                 self._ensure_filesystem_scope(root, filesystem_scopes, operation="list_files")
                 return self.list_files(root)
 
@@ -345,7 +345,7 @@ class SandboxToolBindings:
 
             @tool
             def write_file(path: str, content: str) -> str:
-                """Write UTF-8 text content to a virtual sandbox path such as /artifacts/out.md."""
+                """Write UTF-8 text content to a virtual sandbox path such as /workspace/artifacts/out.md."""
                 self._ensure_filesystem_scope(path, filesystem_scopes, operation="write_file")
                 return self.write_file(path, content)
 
@@ -357,7 +357,7 @@ class SandboxToolBindings:
             def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
                 """Execute a command inside the virtual sandbox filesystem and return structured output."""
                 self._ensure_filesystem_scope(
-                    cwd or "/",
+                    cwd or self.sandbox.get_workspace_root(),
                     filesystem_scopes,
                     operation="execute_command",
                 )

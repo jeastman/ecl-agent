@@ -71,6 +71,7 @@ def create_runtime_server(
     sandbox_factory = LocalExecutionSandboxFactory(
         runtime_root=resolved_runtime_root,
         governed_workspace_root=governed_workspace_root,
+        virtual_workspace_root=config.cli.virtual_workspace_root,
     )
     artifact_store = InMemoryArtifactStore(path_mapper=sandbox_factory)
     task_runner = TaskRunner(

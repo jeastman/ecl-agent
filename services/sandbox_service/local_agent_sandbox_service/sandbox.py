@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 from typing import Protocol
 
 from services.sandbox_service.local_agent_sandbox_service.command_executor import CommandExecutor
@@ -8,6 +8,7 @@ from services.sandbox_service.local_agent_sandbox_service.models import CommandR
 from services.sandbox_service.local_agent_sandbox_service.path_policy import (
     MEMORY_MOUNT,
     SCRATCH_MOUNT,
+    WORKSPACE_MOUNT,
     ZONE_MEMORY,
     ZONE_SCRATCH,
     ZONE_WORKSPACE,
@@ -58,13 +59,21 @@ class LocalExecutionSandboxFactory(SandboxPathMapper):
         self,
         runtime_root: str | Path,
         governed_workspace_root: str | Path,
+        virtual_workspace_root: str = WORKSPACE_MOUNT.as_posix(),
     ) -> None:
         self._workspace_manager = WorkspaceManager(
             Path(runtime_root),
             Path(governed_workspace_root),
+            virtual_workspace_root,
         )
         self._roots_by_run: dict[tuple[str, str], SandboxRoots] = {}
         Path(runtime_root).mkdir(parents=True, exist_ok=True)
+
+    def normalize_workspace_roots(self, workspace_roots: list[str]) -> list[str]:
+        return [
+            root.as_posix()
+            for root in self._workspace_manager.normalize_workspace_roots(workspace_roots)
+        ]
 
     def for_run(
         self, *, task_id: str, run_id: str, workspace_roots: list[str]
@@ -106,7 +115,7 @@ class LocalExecutionSandbox:
         self._executor = CommandExecutor()
 
     def get_workspace_root(self) -> str:
-        return "/"
+        return WORKSPACE_MOUNT.as_posix()
 
     def get_scratch_root(self) -> str:
         return SCRATCH_MOUNT.as_posix()
@@ -148,7 +157,7 @@ class LocalExecutionSandbox:
         return files
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> CommandResult:
-        normalized = _normalize_input_path(self._roots, cwd or "/")
+        normalized = _normalize_input_path(self._roots, cwd or WORKSPACE_MOUNT.as_posix())
         resolved_cwd = _resolve_host_path(self._roots, normalized)
         if normalized.zone == ZONE_WORKSPACE:
             resolved_cwd = _ensure_allowed_workspace_root(self._roots, resolved_cwd)
@@ -176,38 +185,24 @@ def _normalize_input_path(roots: SandboxRoots, path: str) -> NormalizedSandboxPa
     raw = str(path).strip()
     if not raw:
         raise ValueError("sandbox path must be a non-empty string")
-    translated = _translate_host_path(roots, raw)
-    if translated is not None:
-        return translated
+    if _looks_like_host_path(raw):
+        raise ValueError("sandbox path must be a sandbox virtual path, not a host-native path")
     return normalize_sandbox_path(raw)
 
 
-def _translate_host_path(roots: SandboxRoots, raw: str) -> NormalizedSandboxPath | None:
+def _looks_like_host_path(raw: str) -> bool:
+    if raw.startswith("~") or raw.startswith("$"):
+        return True
+    if len(raw) >= 3 and raw[1] == ":" and raw[2] in {"\\", "/"}:
+        return True
     candidate = Path(raw)
-    if not candidate.is_absolute():
-        return None
-    resolved_candidate = candidate.resolve(strict=False)
-    for workspace_root in roots.allowed_workspace_roots:
-        relative = _relative_host_path(resolved_candidate, workspace_root)
-        if relative is not None:
-            return NormalizedSandboxPath(zone=ZONE_WORKSPACE, relative_path=relative)
-    scratch_relative = _relative_host_path(resolved_candidate, roots.scratch_root)
-    if scratch_relative is not None:
-        return NormalizedSandboxPath(zone=ZONE_SCRATCH, relative_path=scratch_relative)
-    memory_relative = _relative_host_path(resolved_candidate, roots.memory_root)
-    if memory_relative is not None:
-        return NormalizedSandboxPath(zone=ZONE_MEMORY, relative_path=memory_relative)
-    return None
-
-
-def _relative_host_path(candidate: Path, root: Path) -> PurePosixPath | None:
-    try:
-        relative = candidate.relative_to(root.resolve())
-    except ValueError:
-        return None
-    if relative == Path("."):
-        return PurePosixPath(".")
-    return PurePosixPath(relative.as_posix())
+    return candidate.is_absolute() and not raw.startswith(
+        (
+            WORKSPACE_MOUNT.as_posix(),
+            SCRATCH_MOUNT.as_posix(),
+            MEMORY_MOUNT.as_posix(),
+        )
+    )
 
 
 def _ensure_allowed_workspace_root(roots: SandboxRoots, candidate: Path) -> Path:

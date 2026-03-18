@@ -7,6 +7,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from apps.tui.local_agent_tui.app import _TEXTUAL_IMPORT_ERROR
+from apps.tui.local_agent_tui.protocol.protocol_client import ProtocolClientError
 from apps.tui.local_agent_tui.store.selectors import pending_approvals
 
 
@@ -230,7 +231,7 @@ class _FakeProtocolClient:
                         "event_backend": "sqlite",
                         "diagnostic_backend": "sqlite",
                     },
-                    "cli": {"default_workspace_root": "/workspace"},
+                    "cli": {"virtual_workspace_root": "/workspace"},
                     "subagents": {
                         "reviewer": {
                             "role_id": "reviewer",
@@ -318,7 +319,7 @@ class _FakeProtocolClient:
                     "artifact_id": "artifact_1",
                     "task_id": "task_1",
                     "run_id": "run_1",
-                    "logical_path": "/artifacts/report.md",
+                    "logical_path": "/workspace/artifacts/report.md",
                     "display_name": "report.md",
                     "content_type": "text/markdown",
                     "created_at": "2026-03-12T00:00:02Z",
@@ -327,7 +328,7 @@ class _FakeProtocolClient:
                     "artifact_id": "artifact_2",
                     "task_id": "task_1",
                     "run_id": "run_1",
-                    "logical_path": "/artifacts/report.html",
+                    "logical_path": "/workspace/artifacts/report.html",
                     "display_name": "report.html",
                     "content_type": "text/html",
                     "created_at": "2026-03-12T00:00:03Z",
@@ -348,7 +349,7 @@ class _FakeProtocolClient:
                         "artifact_id": artifact_id,
                         "task_id": task_id,
                         "run_id": run_id,
-                        "logical_path": "/artifacts/report.html",
+                        "logical_path": "/workspace/artifacts/report.html",
                         "display_name": "report.html",
                         "content_type": "text/html",
                         "created_at": "2026-03-12T00:00:03Z",
@@ -367,7 +368,7 @@ class _FakeProtocolClient:
                     "artifact_id": artifact_id,
                     "task_id": task_id,
                     "run_id": run_id,
-                    "logical_path": "/artifacts/report.md",
+                    "logical_path": "/workspace/artifacts/report.md",
                     "display_name": "report.md",
                     "content_type": "text/markdown",
                     "created_at": "2026-03-12T00:00:02Z",
@@ -471,6 +472,15 @@ class _DelayedArtifactProtocolClient(_FakeProtocolClient):
         return await super().task_artifact_get(task_id, artifact_id, run_id)
 
 
+class _ArtifactListErrorProtocolClient(_FakeProtocolClient):
+    async def task_artifacts_list(self, task_id: str, run_id: str | None = None) -> dict:
+        if task_id == "task_2":
+            raise ProtocolClientError(
+                "{'code': -32602, 'message': 'sandbox path must be under /workspace, /tmp, or /.memory'}"
+            )
+        return await super().task_artifacts_list(task_id, run_id)
+
+
 @unittest.skipIf(_TEXTUAL_IMPORT_ERROR is not None, "textual is not installed")
 class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_dispatch_and_render_uses_direct_render_on_app_thread(self) -> None:
@@ -556,6 +566,32 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("down")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
+
+    async def test_dashboard_task_selection_surfaces_artifact_list_errors_without_crashing(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch(
+                "apps.tui.local_agent_tui.app.ProtocolClient",
+                _ArtifactListErrorProtocolClient,
+            ),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_2")  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().connection_status, "error")  # type: ignore[attr-defined]
+                self.assertIn(  # type: ignore[attr-defined]
+                    "sandbox path must be under /workspace, /tmp, or /.memory",
+                    app._store.snapshot().last_error or "",
+                )
 
     async def test_open_task_and_approvals_routes_from_dashboard(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1218,7 +1254,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("e")
                 await pilot.pause()
                 footer = app.screen.query_one("#artifacts-screen-footer", Static)
-                self.assertIn("Opened /artifacts/report.html.", str(footer.visual))
+                self.assertIn("Opened /workspace/artifacts/report.html.", str(footer.visual))
                 open_mock.assert_awaited()
                 table = app.screen.query_one(ArtifactTableWidget)
                 self.assertEqual(len(table.children), 2)

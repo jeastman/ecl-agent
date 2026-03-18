@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import io
 import unittest
-from pathlib import Path
 from typing import cast
 from unittest.mock import patch
 
@@ -52,11 +51,11 @@ class _FakeClient:
 
 
 class CliTests(unittest.TestCase):
-    def test_handle_run_defaults_workspace_root_to_cwd(self) -> None:
+    def test_handle_run_defaults_workspace_root_to_virtual_workspace(self) -> None:
         fake_client = _FakeClient()
 
         with patch.object(cli, "make_client", return_value=fake_client):
-            with patch.object(cli, "_default_workspace_root", return_value=str(Path.cwd())):
+            with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     exit_code = cli.handle_run(
                         config_path="docs/architecture/runtime.example.toml",
@@ -69,7 +68,7 @@ class CliTests(unittest.TestCase):
         request = fake_client.requests[0]
         self.assertEqual(
             request.params["task"]["workspace_roots"],  # type: ignore[attr-defined]
-            [str(Path.cwd())],
+            ["/workspace"],
         )
         self.assertIn("Task Accepted", stdout.getvalue())
         self.assertIn("corr_1", stdout.getvalue())
@@ -79,9 +78,7 @@ class CliTests(unittest.TestCase):
         fake_client = _FakeClient()
 
         with patch.object(cli, "make_client", return_value=fake_client):
-            with patch.object(
-                cli, "_default_workspace_root", return_value="/tmp/configured-workspace"
-            ):
+            with patch.object(cli, "_default_workspace_root", return_value="/workspace"):
                 with patch("sys.stdout", new=io.StringIO()) as stdout:
                     exit_code = cli.handle_run(
                         config_path="docs/architecture/runtime.example.toml",
@@ -94,7 +91,7 @@ class CliTests(unittest.TestCase):
         request = fake_client.requests[0]
         self.assertEqual(
             request.params["task"]["workspace_roots"],  # type: ignore[attr-defined]
-            ["/tmp/configured-workspace"],
+            ["/workspace"],
         )
         self.assertIn("Task Accepted", stdout.getvalue())
         self.assertIn("corr_1", stdout.getvalue())
@@ -175,7 +172,9 @@ class CliTests(unittest.TestCase):
                     "type": "runtime.event",
                     "event": {
                         "event_type": "artifact.created",
-                        "payload": {"artifact": {"logical_path": "/artifacts/repo_summary.md"}},
+                        "payload": {
+                            "artifact": {"logical_path": "/workspace/artifacts/repo_summary.md"}
+                        },
                     },
                 },
             ],
@@ -205,7 +204,7 @@ class CliTests(unittest.TestCase):
                 "artifacts": [
                     {
                         "artifact_id": "artifact_1",
-                        "logical_path": "/artifacts/repo_summary.md",
+                        "logical_path": "/workspace/artifacts/repo_summary.md",
                         "content_type": "text/markdown",
                         "persistence_class": "run",
                         "display_name": "repo_summary.md",
@@ -243,7 +242,7 @@ class CliTests(unittest.TestCase):
                     "total_bytes": 20,
                     "file_count": 1,
                 },
-                "artifacts": ["/artifacts/skill-installs/repo-map/install-summary.json"],
+                "artifacts": ["/workspace/artifacts/skill-installs/repo-map/install-summary.json"],
             }
         }
 

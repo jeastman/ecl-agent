@@ -170,7 +170,7 @@ class SkillInstallationService:
 
     def artifact_payloads(self, prepared: PreparedSkillInstall) -> dict[str, str]:
         skill_id = prepared.validation.skill_id or prepared.source_host_path.name
-        base = f"/artifacts/skill-installs/{skill_id}"
+        base = f"/workspace/artifacts/skill-installs/{skill_id}"
         validation_payload = (
             json.dumps(prepared.validation.to_dict(), sort_keys=True, indent=2) + "\n"
         )

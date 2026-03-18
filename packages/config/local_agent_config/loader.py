@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import tomllib
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 
 from packages.config.local_agent_config.models import (
     CliConfig,
@@ -48,6 +48,21 @@ def _resolve_backend(
     if resolved not in allowed:
         raise ValueError(f"{key} must be one of: {', '.join(sorted(allowed))}")
     return resolved
+
+
+def _resolve_virtual_workspace_root(payload: dict) -> str:
+    raw = payload.get("virtual_workspace_root", "/workspace")
+    if not isinstance(raw, str) or not raw.strip():
+        raise ValueError("virtual_workspace_root must be a non-empty string")
+    candidate = PurePosixPath(raw.strip())
+    if not candidate.is_absolute():
+        raise ValueError("virtual_workspace_root must be an absolute virtual path")
+    for part in candidate.parts:
+        if part in {"", "."}:
+            continue
+        if part == "..":
+            raise ValueError("virtual_workspace_root cannot traverse outside its virtual root")
+    return candidate.as_posix()
 
 
 def load_runtime_config(path: str) -> RuntimeConfig:
@@ -140,7 +155,8 @@ def load_runtime_config(path: str) -> RuntimeConfig:
                         _required_str(cli_payload, "default_workspace_root"),
                     )
                 )
-            )
+            ),
+            virtual_workspace_root=_resolve_virtual_workspace_root(cli_payload),
         ),
         subagent_model_overrides={
             role: ModelConfig(

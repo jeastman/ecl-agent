@@ -45,7 +45,6 @@ from .store.selectors import (
     task_action_bar,
     timeline_filter_options,
 )
-from .widgets.status_bar import StatusBar
 from .widgets.input_box import InputBoxWidget
 from .widgets.log_view import LogViewWidget
 
@@ -210,7 +209,11 @@ class AgentTUI(App):  # type: ignore[misc]
             if task is None:
                 continue
             run_id = str(task.get("run_id", "")) or None
-            artifacts = await self._client.task_artifacts_list(task_id, run_id)
+            try:
+                artifacts = await self._client.task_artifacts_list(task_id, run_id)
+            except ProtocolClientError as exc:
+                self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+                continue
             self._store.dispatch(
                 {"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts}
             )
@@ -234,7 +237,11 @@ class AgentTUI(App):  # type: ignore[misc]
     async def _load_task_related(self, *, task_id: str, run_id: str | None) -> None:
         approvals = await self._client.task_approvals_list(task_id, run_id)
         self._store.dispatch({"kind": "rpc", "name": "task.approvals.list", "payload": approvals})
-        artifacts = await self._client.task_artifacts_list(task_id, run_id)
+        try:
+            artifacts = await self._client.task_artifacts_list(task_id, run_id)
+        except ProtocolClientError as exc:
+            self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+            return
         self._store.dispatch({"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts})
 
     async def _sync_selected_task(self) -> None:
@@ -1431,7 +1438,7 @@ class AgentTUI(App):  # type: ignore[misc]
     async def _create_task(self, *, objective: str) -> None:
         try:
             state = self._store.snapshot()
-            workspace_root = _default_workspace_root(state.config_snapshot) or os.getcwd()
+            workspace_root = _default_workspace_root(state.config_snapshot) or "/workspace"
             payload = await self._client.task_create(
                 objective=objective,
                 workspace_roots=[workspace_root],
@@ -1588,7 +1595,7 @@ def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:
     cli = config_snapshot.get("cli")
     if not isinstance(cli, dict):
         return None
-    workspace_root = cli.get("default_workspace_root")
+    workspace_root = cli.get("virtual_workspace_root")
     if not isinstance(workspace_root, str) or not workspace_root.strip():
         return None
     return workspace_root

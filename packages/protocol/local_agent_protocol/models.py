@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, field
 from datetime import UTC, datetime
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Any
 
 from packages.task_model.local_agent_task_model.models import FailureInfo, TaskStatus
@@ -32,6 +33,28 @@ def utc_now_timestamp() -> str:
 
 def _strip_none(payload: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in payload.items() if value is not None}
+
+
+def _validate_workspace_roots(workspace_roots: list[str]) -> list[str]:
+    validated: list[str] = []
+    for item in workspace_roots:
+        raw = item.strip()
+        if raw.startswith("~") or raw.startswith("$"):
+            raise ValueError("task.workspace_roots must use sandbox virtual paths")
+        if len(raw) >= 3 and raw[1] == ":" and raw[2] in {"\\", "/"}:
+            raise ValueError("task.workspace_roots must use sandbox virtual paths")
+        candidate = PurePosixPath(raw)
+        if not candidate.is_absolute():
+            raise ValueError("task.workspace_roots must be absolute virtual paths")
+        for part in candidate.parts:
+            if part in {"", "."}:
+                continue
+            if part == "..":
+                raise ValueError("task.workspace_roots cannot traverse outside the sandbox")
+        if raw == "/" or not (raw == "/workspace" or raw.startswith("/workspace/")):
+            raise ValueError("task.workspace_roots must be under /workspace")
+        validated.append(candidate.as_posix())
+    return validated
 
 
 class EventSourceKind(StrEnum):
@@ -183,7 +206,7 @@ class TaskCreateRequest:
             raise ValueError("task.metadata must be an object")
         return cls(
             objective=objective,
-            workspace_roots=workspace_roots,
+            workspace_roots=_validate_workspace_roots(workspace_roots),
             scope=scope,
             success_criteria=success_criteria,
             constraints=constraints,
