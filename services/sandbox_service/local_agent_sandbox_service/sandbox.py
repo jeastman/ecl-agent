@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from packages.task_model.local_agent_task_model.models import RecoverableToolRejection
@@ -162,7 +162,18 @@ class LocalExecutionSandbox:
         resolved_cwd = _resolve_host_path(self._roots, normalized)
         if normalized.zone == ZONE_WORKSPACE:
             resolved_cwd = _ensure_allowed_workspace_root(self._roots, resolved_cwd)
-        return self._executor.execute(command, resolved_cwd)
+        translated_command = _translate_command_arguments(
+            self._roots,
+            command,
+            cwd=normalized,
+        )
+        result = self._executor.execute(translated_command, resolved_cwd)
+        return CommandResult(
+            exit_code=result.exit_code,
+            stdout=_sanitize_command_output(self._roots, result.stdout),
+            stderr=_sanitize_command_output(self._roots, result.stderr),
+            cwd=normalized.logical_path,
+        )
 
     def _resolve(self, path: str) -> Path:
         normalized = _normalize_input_path(self._roots, path)
@@ -236,6 +247,81 @@ def _ensure_allowed_workspace_root(roots: SandboxRoots, candidate: Path) -> Path
         category="scope_denied",
         details={},
     )
+
+
+def _translate_command_arguments(
+    roots: SandboxRoots,
+    command: list[str],
+    *,
+    cwd: NormalizedSandboxPath,
+) -> list[str]:
+    translated: list[str] = []
+    cwd_root = _zone_root_path(roots, cwd.zone, cwd.relative_path)
+    for index, part in enumerate(command):
+        if index == 0:
+            translated.append(part)
+            continue
+        translated.append(_translate_command_argument(roots, part, cwd_root=cwd_root))
+    return translated
+
+
+def _translate_command_argument(roots: SandboxRoots, argument: str, *, cwd_root: Path) -> str:
+    raw = str(argument)
+    if raw == "/":
+        return str(cwd_root)
+    if not raw.startswith("/"):
+        return raw
+    if _looks_like_host_path(raw):
+        raise RecoverableToolRejection(
+            code="path_validation",
+            message="command arguments must use sandbox virtual paths, not host-native paths",
+            category="path_validation",
+            details={"path": raw},
+        )
+    normalized = normalize_sandbox_path(raw)
+    resolved = _resolve_host_path(roots, normalized)
+    if normalized.zone == ZONE_WORKSPACE:
+        resolved = _ensure_allowed_workspace_root(roots, resolved)
+    return str(resolved)
+
+
+def _zone_root_path(roots: SandboxRoots, zone: str, relative_path: Path | PurePosixPath) -> Path:
+    if zone == ZONE_WORKSPACE:
+        base_root = roots.workspace_root
+    elif zone == ZONE_SCRATCH:
+        base_root = roots.scratch_root
+    elif zone == ZONE_MEMORY:
+        base_root = roots.memory_root
+    else:  # pragma: no cover
+        raise ValueError(f"unsupported sandbox zone: {zone}")
+    relative = Path(str(relative_path))
+    if str(relative) == ".":
+        return base_root
+    return ensure_within_root(base_root, base_root / relative)
+
+
+def _sanitize_command_output(roots: SandboxRoots, text: str) -> str:
+    sanitized = text
+    for host_path, virtual_path in _host_to_virtual_replacements(roots):
+        sanitized = sanitized.replace(host_path, virtual_path)
+    return sanitized
+
+
+def _host_to_virtual_replacements(roots: SandboxRoots) -> list[tuple[str, str]]:
+    replacements: list[tuple[str, str]] = []
+    for host_root, virtual_root in zip(
+        roots.allowed_workspace_roots,
+        roots.allowed_virtual_workspace_roots,
+        strict=False,
+    ):
+        replacements.append((str(host_root), virtual_root.as_posix()))
+    replacements.extend(
+        [
+            (str(roots.scratch_root), SCRATCH_MOUNT.as_posix()),
+            (str(roots.memory_root), MEMORY_MOUNT.as_posix()),
+        ]
+    )
+    return sorted(replacements, key=lambda item: len(item[0]), reverse=True)
 
 
 def _default_persistence_class(zone: str) -> str:

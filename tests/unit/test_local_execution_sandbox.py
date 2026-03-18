@@ -38,11 +38,32 @@ class LocalExecutionSandboxTests(unittest.TestCase):
     def test_command_execution_allows_governed_cwd(self) -> None:
         result = self.sandbox.execute_command(["pwd"], cwd="/workspace")
         self.assertEqual(result.exit_code, 0)
-        self.assertEqual(Path(result.cwd), self.workspace_root.resolve())
+        self.assertEqual(result.cwd, "/workspace")
+        self.assertEqual(result.stdout.strip(), "/workspace")
+
+    def test_command_execution_translates_virtual_paths(self) -> None:
+        result = self.sandbox.execute_command(["cat", "/workspace/README.md"], cwd="/workspace")
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout, "hello\n")
+
+    def test_command_execution_maps_root_search_to_governed_root(self) -> None:
+        nested = self.workspace_root / "packages" / "ecl-agent"
+        nested.mkdir(parents=True)
+        result = self.sandbox.execute_command(
+            ["find", "/", "-type", "d", "-name", "*ecl*"],
+            cwd="/workspace",
+        )
+        self.assertEqual(result.exit_code, 0)
+        self.assertIn("/workspace/packages/ecl-agent", result.stdout)
+        self.assertNotIn(str(self.workspace_root), result.stdout)
 
     def test_command_execution_rejects_invalid_working_directory(self) -> None:
         with self.assertRaisesRegex(RecoverableToolRejection, "absolute virtual path"):
             self.sandbox.execute_command(["pwd"], cwd="workspace")
+
+    def test_command_execution_rejects_host_native_argument_paths(self) -> None:
+        with self.assertRaisesRegex(RecoverableToolRejection, "command arguments must use sandbox"):
+            self.sandbox.execute_command(["cat", "/etc/hosts"], cwd="/workspace")
 
     def test_host_workspace_paths_are_rejected(self) -> None:
         host_path = self.workspace_root / "README.md"
