@@ -263,8 +263,10 @@ class TaskSnapshot:
     latest_checkpoint_id: str | None = None
     active_subagent: str | None = None
     artifact_count: int | None = None
+    recoverable_rejection_count: int | None = None
     last_event_at: str | None = None
     failure: FailureInfo | None = None
+    last_recoverable_rejection: FailureInfo | None = None
     links: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -272,6 +274,8 @@ class TaskSnapshot:
         payload["status"] = self.status.value
         if self.failure is not None:
             payload["failure"] = self.failure.to_dict()
+        if self.last_recoverable_rejection is not None:
+            payload["last_recoverable_rejection"] = self.last_recoverable_rejection.to_dict()
         return _strip_none(payload)
 
 

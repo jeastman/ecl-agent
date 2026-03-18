@@ -7,6 +7,7 @@ from langchain_core.tools import BaseTool, tool
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding
 from packages.protocol.local_agent_protocol.models import ArtifactReference
+from packages.task_model.local_agent_task_model.models import RecoverableToolRejection
 from services.artifact_service.local_agent_artifact_service.store import ArtifactStore
 from services.memory_service.local_agent_memory_service.memory_store import MemoryStore
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
@@ -28,10 +29,6 @@ _WEB_FETCH_CAPABILITIES = {"web_fetch", "web.fetch", "web"}
 _WEB_SEARCH_CAPABILITIES = {"web_search", "web.search", "web"}
 
 
-class FilesystemScopeError(PermissionError):
-    pass
-
-
 @dataclass(slots=True)
 class SandboxToolBindings:
     sandbox: ExecutionSandbox
@@ -50,102 +47,126 @@ class SandboxToolBindings:
 
     def read_file(self, path: str) -> str:
         self._ensure_allowed("read_file", _READ_CAPABILITIES)
-        normalized_path = self.sandbox.normalize_path(path)
-        self._govern(
-            OperationContext(
-                task_id=self.task_id,
-                run_id=self.run_id,
-                operation_type="file.read",
-                path_scope=normalized_path,
+        try:
+            normalized_path = self.sandbox.normalize_path(path)
+            self._govern(
+                OperationContext(
+                    task_id=self.task_id,
+                    run_id=self.run_id,
+                    operation_type="file.read",
+                    path_scope=normalized_path,
+                )
             )
-        )
-        self._emit(
-            "tool.called",
-            {
-                "tool": "read_file",
-                "arguments": {"path": normalized_path},
-                "path": normalized_path,
-            },
-        )
-        return self.sandbox.read_text(normalized_path)
+            self._emit(
+                "tool.called",
+                {
+                    "tool": "read_file",
+                    "arguments": {"path": normalized_path},
+                    "path": normalized_path,
+                },
+            )
+            return self.sandbox.read_text(normalized_path)
+        except RecoverableToolRejection as exc:
+            return self._handle_recoverable_rejection(
+                "read_file",
+                {"path": path},
+                exc,
+            )
 
     def write_file(self, path: str, content: str) -> str:
         self._ensure_allowed("write_file", _WRITE_CAPABILITIES)
-        normalized_path = self.sandbox.normalize_path(path)
-        self._govern(
-            OperationContext(
-                task_id=self.task_id,
-                run_id=self.run_id,
-                operation_type="file.write",
-                path_scope=normalized_path,
+        try:
+            normalized_path = self.sandbox.normalize_path(path)
+            self._govern(
+                OperationContext(
+                    task_id=self.task_id,
+                    run_id=self.run_id,
+                    operation_type="file.write",
+                    path_scope=normalized_path,
+                )
             )
-        )
-        self._emit(
-            "tool.called",
-            {
-                "tool": "write_file",
-                "arguments": {"path": normalized_path},
-                "path": normalized_path,
-                "bytes_written": len(content.encode("utf-8")),
-            },
-        )
-        self.sandbox.write_text(normalized_path, content)
-        if self._written_paths is None:
-            self._written_paths = []
-        if normalized_path not in self._written_paths:
-            self._written_paths.append(normalized_path)
-        return normalized_path
+            self._emit(
+                "tool.called",
+                {
+                    "tool": "write_file",
+                    "arguments": {"path": normalized_path},
+                    "path": normalized_path,
+                    "bytes_written": len(content.encode("utf-8")),
+                },
+            )
+            self.sandbox.write_text(normalized_path, content)
+            if self._written_paths is None:
+                self._written_paths = []
+            if normalized_path not in self._written_paths:
+                self._written_paths.append(normalized_path)
+            return normalized_path
+        except RecoverableToolRejection as exc:
+            return self._handle_recoverable_rejection(
+                "write_file",
+                {"path": path},
+                exc,
+            )
 
     def list_files(self, root: str) -> list[str]:
         self._ensure_allowed("list_files", _LIST_CAPABILITIES)
-        normalized_root = self.sandbox.normalize_path(root)
-        self._govern(
-            OperationContext(
-                task_id=self.task_id,
-                run_id=self.run_id,
-                operation_type="file.list",
-                path_scope=normalized_root,
+        try:
+            normalized_root = self.sandbox.normalize_path(root)
+            self._govern(
+                OperationContext(
+                    task_id=self.task_id,
+                    run_id=self.run_id,
+                    operation_type="file.list",
+                    path_scope=normalized_root,
+                )
             )
-        )
-        self._emit(
-            "tool.called",
-            {
-                "tool": "list_files",
-                "arguments": {"root": normalized_root},
-                "path": normalized_root,
-            },
-        )
-        return self.sandbox.list_files(normalized_root)
+            self._emit(
+                "tool.called",
+                {
+                    "tool": "list_files",
+                    "arguments": {"root": normalized_root},
+                    "path": normalized_root,
+                },
+            )
+            return self.sandbox.list_files(normalized_root)
+        except RecoverableToolRejection as exc:
+            return [self._handle_recoverable_rejection("list_files", {"root": root}, exc)]
 
-    def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any]:
+    def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any] | str:
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
-        normalized_cwd = self.sandbox.normalize_path(cwd or self.sandbox.get_workspace_root())
-        self._govern(
-            OperationContext(
-                task_id=self.task_id,
-                run_id=self.run_id,
-                operation_type="command.execute",
-                path_scope=normalized_cwd,
-                command_class=_classify_command(command),
-                metadata={"command": list(command)},
+        try:
+            normalized_cwd = self.sandbox.normalize_path(cwd or self.sandbox.get_workspace_root())
+            self._govern(
+                OperationContext(
+                    task_id=self.task_id,
+                    run_id=self.run_id,
+                    operation_type="command.execute",
+                    path_scope=normalized_cwd,
+                    command_class=_classify_command(command),
+                    metadata={"command": list(command)},
+                )
             )
-        )
-        self._emit(
-            "tool.called",
-            {
-                "tool": "execute_command",
-                "arguments": {"command": list(command), "cwd": normalized_cwd},
-                "command": list(command),
-                "cwd": normalized_cwd,
-            },
-        )
-        result = self.sandbox.execute_command(command, normalized_cwd)
-        return {
-            "exit_code": result.exit_code,
-            "stdout": result.stdout,
-            "stderr": result.stderr,
-            "cwd": result.cwd,
-        }
+            self._emit(
+                "tool.called",
+                {
+                    "tool": "execute_command",
+                    "arguments": {"command": list(command), "cwd": normalized_cwd},
+                    "command": list(command),
+                    "cwd": normalized_cwd,
+                },
+            )
+            result = self.sandbox.execute_command(command, normalized_cwd)
+            return {
+                "exit_code": result.exit_code,
+                "stdout": result.stdout,
+                "stderr": result.stderr,
+                "cwd": result.cwd,
+            }
+        except RecoverableToolRejection as exc:
+            return self._handle_recoverable_rejection(
+                "execute_command",
+                {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()},
+                exc,
+            )
 
     def memory_lookup(
         self, namespace: str | None = None, scope: str | None = None
@@ -330,14 +351,20 @@ class SandboxToolBindings:
             @tool
             def read_file(path: str) -> str:
                 """Read a UTF-8 text file from a virtual sandbox path such as /workspace/README.md."""
-                self._ensure_filesystem_scope(path, filesystem_scopes, operation="read_file")
-                return self.read_file(path)
+                try:
+                    self._ensure_filesystem_scope(path, filesystem_scopes, operation="read_file")
+                    return self.read_file(path)
+                except RecoverableToolRejection as exc:
+                    return self._handle_recoverable_rejection("read_file", {"path": path}, exc)
 
             @tool
             def list_files(root: str = "/workspace") -> list[str]:
                 """List governed files rooted at a virtual sandbox path such as /workspace or /tmp."""
-                self._ensure_filesystem_scope(root, filesystem_scopes, operation="list_files")
-                return self.list_files(root)
+                try:
+                    self._ensure_filesystem_scope(root, filesystem_scopes, operation="list_files")
+                    return self.list_files(root)
+                except RecoverableToolRejection as exc:
+                    return [self._handle_recoverable_rejection("list_files", {"root": root}, exc)]
 
             tools.extend([read_file, list_files])
 
@@ -346,22 +373,32 @@ class SandboxToolBindings:
             @tool
             def write_file(path: str, content: str) -> str:
                 """Write UTF-8 text content to a virtual sandbox path such as /workspace/artifacts/out.md."""
-                self._ensure_filesystem_scope(path, filesystem_scopes, operation="write_file")
-                return self.write_file(path, content)
+                try:
+                    self._ensure_filesystem_scope(path, filesystem_scopes, operation="write_file")
+                    return self.write_file(path, content)
+                except RecoverableToolRejection as exc:
+                    return self._handle_recoverable_rejection("write_file", {"path": path}, exc)
 
             tools.append(write_file)
 
         if "execute_commands" in allowed_tool_ids:
 
             @tool
-            def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any]:
+            def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any] | str:
                 """Execute a command inside the virtual sandbox filesystem and return structured output."""
-                self._ensure_filesystem_scope(
-                    cwd or self.sandbox.get_workspace_root(),
-                    filesystem_scopes,
-                    operation="execute_command",
-                )
-                return self.execute_command(command, cwd)
+                try:
+                    self._ensure_filesystem_scope(
+                        cwd or self.sandbox.get_workspace_root(),
+                        filesystem_scopes,
+                        operation="execute_command",
+                    )
+                    return self.execute_command(command, cwd)
+                except RecoverableToolRejection as exc:
+                    return self._handle_recoverable_rejection(
+                        "execute_command",
+                        {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()},
+                        exc,
+                    )
 
             tools.append(execute_command)
 
@@ -522,9 +559,34 @@ class SandboxToolBindings:
         )
         if scope not in allowed_scopes:
             allowed = ", ".join(sorted(allowed_scopes))
-            raise FilesystemScopeError(
-                f"{operation} denied for {normalized_path}: allowed filesystem scopes are {allowed}"
+            raise RecoverableToolRejection(
+                code="scope_denied",
+                message=(
+                    f"{operation} denied for {normalized_path}: "
+                    f"allowed filesystem scopes are {allowed}"
+                ),
+                category="scope_denied",
+                details={"path": normalized_path, "allowed_scopes": sorted(allowed_scopes)},
             )
+
+    def _handle_recoverable_rejection(
+        self,
+        tool_name: str,
+        arguments: dict[str, Any],
+        rejection: RecoverableToolRejection,
+    ) -> str:
+        payload = {
+            "tool": tool_name,
+            "arguments": _sanitize_tool_arguments(arguments),
+            "code": rejection.code,
+            "category": rejection.category,
+            "message": rejection.message,
+            "retryable": rejection.retryable,
+            "details": _sanitize_tool_arguments(rejection.details),
+            "summary": f"{tool_name} rejected: {rejection.message}",
+        }
+        self._emit("tool.rejected", payload)
+        return _format_tool_rejection_message(rejection)
 
 
 def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
@@ -548,3 +610,36 @@ def _classify_command(command: list[str]) -> str:
     if head in {"python", "python3"} and len(command) >= 2 and command[1] == "-c":
         return "safe_exec"
     return "safe_exec"
+
+
+def _format_tool_rejection_message(rejection: RecoverableToolRejection) -> str:
+    message = rejection.message
+    rejected_path = rejection.details.get("path")
+    if rejection.category == "path_validation" and isinstance(rejected_path, str) and rejected_path:
+        message = f"Path '{rejected_path}' is invalid for the sandbox. {rejection.message}"
+    guidance = {
+        "path_validation": "Use a virtual path under '/workspace', '/tmp', or '/.memory'.",
+        "scope_denied": "Use a path within the delegated filesystem scope for this tool call.",
+        "policy_denied": "Use a non-destructive or otherwise policy-compliant alternative.",
+    }.get(rejection.category, "Adjust the tool arguments and try again.")
+    return f"TOOL_REJECTED [{rejection.code}]: {message} {guidance}"
+
+
+def _sanitize_tool_arguments(value: Any) -> Any:
+    if isinstance(value, str):
+        return "<host-native-path>" if _looks_like_host_path(value.strip()) else value
+    if isinstance(value, list):
+        return [_sanitize_tool_arguments(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_tool_arguments(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_tool_arguments(item) for key, item in value.items()}
+    return value
+
+
+def _looks_like_host_path(raw: str) -> bool:
+    if raw.startswith("~") or raw.startswith("$"):
+        return True
+    if len(raw) >= 3 and raw[1] == ":" and raw[2] in {"\\", "/"}:
+        return True
+    return raw.startswith("/") and not raw.startswith(("/workspace", "/tmp", "/.memory"))

@@ -19,6 +19,7 @@ class EventType(StrEnum):
     SUBAGENT_STARTED = "subagent.started"
     SUBAGENT_COMPLETED = "subagent.completed"
     TOOL_CALLED = "tool.called"
+    TOOL_REJECTED = "tool.rejected"
     ARTIFACT_CREATED = "artifact.created"
     SKILL_INSTALL_REQUESTED = "skill.install.requested"
     SKILL_INSTALL_VALIDATED = "skill.install.validated"
@@ -53,6 +54,36 @@ class FailureInfo:
 
 
 @dataclass(slots=True)
+class RecoverableToolRejection(Exception):
+    code: str
+    message: str
+    category: str
+    retryable: bool = True
+    details: dict[str, Any] = field(default_factory=dict)
+
+    def __str__(self) -> str:
+        return self.message
+
+
+@dataclass(slots=True)
+class RecoverableToolRejectionThresholdExceeded(Exception):
+    threshold: int
+    rejection_count: int
+    last_rejection: FailureInfo
+
+    @property
+    def summary(self) -> str:
+        return (
+            "Agent exceeded the recoverable tool rejection limit without adapting. "
+            f"Last rejection [{self.last_rejection.code or 'unknown'}]: "
+            f"{self.last_rejection.message}"
+        )
+
+    def __str__(self) -> str:
+        return self.summary
+
+
+@dataclass(slots=True)
 class RunState:
     task_id: str
     run_id: str
@@ -70,8 +101,10 @@ class RunState:
     latest_summary: str | None = None
     active_subagent: str | None = None
     artifact_count: int = 0
+    recoverable_rejection_count: int = 0
     last_event_at: str | None = None
     failure: FailureInfo | None = None
+    last_recoverable_rejection: FailureInfo | None = None
     awaiting_approval: bool = False
     pending_approval_id: str | None = None
     is_resumable: bool = False
@@ -85,4 +118,6 @@ class RunState:
         payload["status"] = self.status.value
         if self.failure is not None:
             payload["failure"] = self.failure.to_dict()
+        if self.last_recoverable_rejection is not None:
+            payload["last_recoverable_rejection"] = self.last_recoverable_rejection.to_dict()
         return payload

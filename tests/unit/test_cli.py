@@ -399,7 +399,7 @@ class CliTests(unittest.TestCase):
                 "diagnostics": [
                     {
                         "diagnostic_id": "diag_1",
-                        "kind": "policy_denied",
+                        "kind": "tool_rejected",
                         "created_at": "2026-03-10T00:00:00Z",
                         "message": "Network access denied",
                         "details": {"phase": "execute"},
@@ -419,7 +419,7 @@ class CliTests(unittest.TestCase):
         output = stdout.getvalue()
         self.assertIn("Diagnostics", output)
         self.assertIn("diag_1", output)
-        self.assertIn("policy_denied", output)
+        self.assertIn("tool_rejected", output)
 
     def test_handle_memory_renders_entries(self) -> None:
         fake_client = _FakeClient()

@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
+from packages.task_model.local_agent_task_model.models import RecoverableToolRejection
 from services.sandbox_service.local_agent_sandbox_service.command_executor import CommandExecutor
 from services.sandbox_service.local_agent_sandbox_service.models import CommandResult
 from services.sandbox_service.local_agent_sandbox_service.path_policy import (
@@ -184,10 +185,28 @@ def _resolve_host_path(roots: SandboxRoots, normalized: NormalizedSandboxPath) -
 def _normalize_input_path(roots: SandboxRoots, path: str) -> NormalizedSandboxPath:
     raw = str(path).strip()
     if not raw:
-        raise ValueError("sandbox path must be a non-empty string")
+        raise RecoverableToolRejection(
+            code="path_validation",
+            message="sandbox path must be a non-empty string",
+            category="path_validation",
+            details={"path": raw},
+        )
     if _looks_like_host_path(raw):
-        raise ValueError("sandbox path must be a sandbox virtual path, not a host-native path")
-    return normalize_sandbox_path(raw)
+        raise RecoverableToolRejection(
+            code="path_validation",
+            message="sandbox path must be a sandbox virtual path, not a host-native path",
+            category="path_validation",
+            details={"path": raw},
+        )
+    try:
+        return normalize_sandbox_path(raw)
+    except ValueError as exc:
+        raise RecoverableToolRejection(
+            code="path_validation",
+            message=str(exc),
+            category="path_validation",
+            details={"path": raw},
+        ) from exc
 
 
 def _looks_like_host_path(raw: str) -> bool:
@@ -211,7 +230,12 @@ def _ensure_allowed_workspace_root(roots: SandboxRoots, candidate: Path) -> Path
             return ensure_within_root(allowed_root, candidate)
         except ValueError:
             continue
-    raise ValueError("command cwd must resolve inside a governed workspace root")
+    raise RecoverableToolRejection(
+        code="scope_denied",
+        message="command cwd must resolve inside a governed workspace root",
+        category="scope_denied",
+        details={},
+    )
 
 
 def _default_persistence_class(zone: str) -> str:

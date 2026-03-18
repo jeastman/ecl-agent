@@ -31,7 +31,6 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
     SubagentCompiler,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
-    FilesystemScopeError,
     SandboxToolBindings,
 )
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
@@ -172,12 +171,14 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(artifacts[0]["preview"], "# Report\n")
 
     def test_filesystem_scope_denies_workspace_access_when_only_memory_is_allowed(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
         bindings = SandboxToolBindings(
             sandbox=self.sandbox,
             task_id="task_1",
             run_id="run_1",
             artifact_store=self.artifact_store,
             memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
         )
         read_tool = next(
             tool
@@ -188,8 +189,28 @@ class SandboxToolBindingsTests(unittest.TestCase):
             if tool.name == "read_file"
         )
 
-        with self.assertRaisesRegex(FilesystemScopeError, "allowed filesystem scopes are memory"):
-            read_tool.invoke({"path": "/workspace/README.md"})
+        message = read_tool.invoke({"path": "/workspace/README.md"})
+        self.assertIn("TOOL_REJECTED [scope_denied]", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["code"], "scope_denied")
+
+    def test_recoverable_path_validation_returns_tool_feedback(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        message = bindings.write_file(str(self.workspace_root / "README.md"), "updated\n")
+
+        self.assertIn("TOOL_REJECTED [path_validation]", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["code"], "path_validation")
+        self.assertEqual(events[-1][1]["arguments"]["path"], "<host-native-path>")
 
     def test_web_tools_return_normalized_payloads_and_emit_events(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []

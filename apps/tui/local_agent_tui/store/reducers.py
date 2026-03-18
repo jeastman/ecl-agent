@@ -538,6 +538,11 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
         if isinstance(payload.get("count"), int):
             return f"{tool} ({payload['count']})"
         return tool
+    if event_type == "tool.rejected":
+        tool = str(payload.get("tool", "tool"))
+        code = str(payload.get("code") or "rejected")
+        message = str(payload.get("message") or "tool rejected")
+        return f"{tool} [{code}] {message}"
     if event_type == "artifact.created":
         artifact = payload.get("artifact", {})
         if isinstance(artifact, dict):
@@ -563,6 +568,8 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
 def _event_severity(event_type: str) -> str:
     if event_type in {"task.failed", "policy.denied", "skill.install.failed"}:
         return "error"
+    if event_type == "tool.rejected":
+        return "attention"
     if event_type in {"approval.requested", "task.paused"}:
         return "attention"
     if event_type in {"artifact.created", "task.completed", "task.resumed", "task.user_input_received"}:

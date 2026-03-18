@@ -42,7 +42,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskSnapshot,
     utc_now_timestamp,
 )
-from packages.task_model.local_agent_task_model.models import EventType, TaskStatus
+from packages.task_model.local_agent_task_model.models import EventType, FailureInfo, TaskStatus
 
 
 class ProtocolModelTests(unittest.TestCase):
@@ -82,6 +82,11 @@ class ProtocolModelTests(unittest.TestCase):
             updated_at=utc_now_timestamp(),
             awaiting_approval=False,
             is_resumable=False,
+            recoverable_rejection_count=1,
+            last_recoverable_rejection=FailureInfo(
+                message="sandbox path must be under /workspace",
+                code="path_validation",
+            ),
             links={"events": METHOD_TASK_LOGS_STREAM},
         )
         payload = snapshot.to_dict()
@@ -90,6 +95,8 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["links"]["events"], METHOD_TASK_LOGS_STREAM)
         self.assertFalse(payload["awaiting_approval"])
         self.assertFalse(payload["is_resumable"])
+        self.assertEqual(payload["recoverable_rejection_count"], 1)
+        self.assertEqual(payload["last_recoverable_rejection"]["code"], "path_validation")
 
     def test_task_query_params_validate(self) -> None:
         self.assertIsNone(TaskListParams.from_dict({}).limit)

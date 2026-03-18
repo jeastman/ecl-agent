@@ -344,7 +344,7 @@ def _fake_runtime_script() -> str:
                             "diagnostic_id": "diag_1",
                             "task_id": "task_123",
                             "run_id": "run_456",
-                            "kind": "policy_denied",
+                            "kind": "tool_rejected",
                             "message": "Network access denied",
                             "created_at": "2026-03-10T00:00:00Z",
                             "details": {"phase": "execute"},

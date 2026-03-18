@@ -8,6 +8,9 @@ from deepagents.middleware.subagents import CompiledSubAgent, SubAgent
 from langchain.chat_models import init_chat_model
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, SkillDescriptor
+from packages.task_model.local_agent_task_model.models import (
+    RecoverableToolRejectionThresholdExceeded,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
@@ -19,10 +22,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
     SubagentCompilationError,
     SubagentCompiler,
 )
-from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
-    FilesystemScopeError,
-    SandboxToolBindings,
-)
+from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import SandboxToolBindings
 from services.web_service.local_agent_web_service.ports import WebFetchPort, WebSearchPort
 
 if TYPE_CHECKING:
@@ -181,13 +181,13 @@ class LangChainDeepAgentHarness:
                 error_message=exc.reason,
                 failure_code="policy_denied",
             )
-        except FilesystemScopeError as exc:
+        except RecoverableToolRejectionThresholdExceeded as exc:
             return AgentExecutionResult(
                 success=False,
-                summary="Agent execution violated a delegated filesystem scope.",
+                summary=exc.summary,
                 output_artifacts=[],
                 error_message=str(exc),
-                failure_code="scope_denied",
+                failure_code="recoverable_rejection_threshold_exceeded",
             )
         except (SubagentCompilationError, PermissionError, ValueError) as exc:
             return AgentExecutionResult(

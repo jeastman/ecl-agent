@@ -1244,8 +1244,8 @@ class RuntimeIntegrationTests(unittest.TestCase):
             )
             payload = diagnostics_response.to_dict()["result"]
             self.assertEqual(payload["count"], 1)
-            self.assertEqual(payload["diagnostics"][0]["kind"], "policy_denied")
-            self.assertIn("context", payload["diagnostics"][0]["details"])
+            self.assertEqual(payload["diagnostics"][0]["kind"], "tool_rejected")
+            self.assertIn("details", payload["diagnostics"][0]["details"])
 
     def test_runtime_restart_recovers_paused_run_and_resumes_it(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

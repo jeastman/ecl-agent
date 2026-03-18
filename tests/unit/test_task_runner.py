@@ -453,17 +453,59 @@ class TaskRunnerTests(unittest.TestCase):
         )
 
         snapshot = runner.get_task_snapshot(task_id, run_id)
-        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         metrics = durable_services.run_metrics_store.read_metrics(task_id, run_id)
         assert metrics is not None
         self.assertEqual(metrics.deny_count, 1)
         self.assertFalse(snapshot.is_resumable)
-        assert snapshot.latest_summary is not None
-        self.assertIn("network access", snapshot.latest_summary.lower())
+        self.assertEqual(snapshot.recoverable_rejection_count, 1)
+        self.assertIsNotNone(snapshot.last_recoverable_rejection)
+        assert snapshot.last_recoverable_rejection is not None
+        self.assertIn("network access", snapshot.last_recoverable_rejection.message.lower())
         self.assertIn(
-            "policy.denied",
+            "tool.rejected",
             [event.event.event_type for event in bus.list_events(task_id, run_id)],
         )
+
+    def test_task_runner_fails_after_recoverable_rejection_threshold(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=RepeatedNetworkDeniedHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Attempt repeated network access",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.FAILED)
+        self.assertEqual(snapshot.recoverable_rejection_count, 4)
+        self.assertIsNotNone(snapshot.failure)
+        assert snapshot.failure is not None
+        self.assertEqual(snapshot.failure.code, "recoverable_rejection_threshold_exceeded")
+        self.assertIsNotNone(snapshot.last_recoverable_rejection)
+        assert snapshot.last_recoverable_rejection is not None
+        self.assertEqual(snapshot.last_recoverable_rejection.code, "policy_denied")
+        self.assertIn(
+            "recoverable_rejection_threshold_exceeded",
+            [
+                entry.kind
+                for entry in durable_services.diagnostic_store.list_diagnostics(task_id, run_id)
+            ],
+        )
+        self.assertEqual(bus.list_events(task_id, run_id)[-1].event.event_type, "task.failed")
 
     def test_task_runner_passes_phase3_runtime_context_into_harness_request(self) -> None:
         store = InMemoryRunStateStore()
@@ -647,6 +689,28 @@ class NetworkDeniedHarness:
             governed_operation=bridge.authorize,
         )
         bindings.execute_command(["curl", "https://example.com"], cwd="/workspace")
+        return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
+
+
+class RepeatedNetworkDeniedHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        for _ in range(4):
+            bindings.execute_command(["curl", "https://example.com"], cwd="/workspace")
         return AgentExecutionResult(success=True, summary="unexpected", output_artifacts=[])
 
 

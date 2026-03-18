@@ -154,6 +154,11 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
         if arguments:
             return f" {tool} {json.dumps(arguments, sort_keys=True)}"
         return f" {tool}"
+    if event_type == "tool.rejected":
+        tool = payload.get("tool") or "unknown-tool"
+        code = payload.get("code") or "rejected"
+        message = payload.get("message") or payload.get("summary") or "tool rejected"
+        return f" {tool} [{code}] {message}"
     if event_type == "artifact.created":
         artifact = payload.get("artifact", {})
         return f" {artifact.get('logical_path') or '<unknown-artifact>'}"

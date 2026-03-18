@@ -24,6 +24,8 @@ from packages.task_model.local_agent_task_model.ids import new_event_id, new_run
 from packages.task_model.local_agent_task_model.models import (
     EventType,
     FailureInfo,
+    RecoverableToolRejection,
+    RecoverableToolRejectionThresholdExceeded,
     RunState,
     TaskStatus,
 )
@@ -96,6 +98,9 @@ class AgentExecutionResult:
     failure_code: str | None = None
     requested_user_input: str | None = None
     assistant_response: str | None = None
+
+
+_RECOVERABLE_TOOL_REJECTION_THRESHOLD = 3
 
 
 class AgentHarness(Protocol):
@@ -539,8 +544,10 @@ class TaskRunner:
             latest_checkpoint_id=state.latest_checkpoint_id,
             active_subagent=state.active_subagent,
             artifact_count=state.artifact_count,
+            recoverable_rejection_count=state.recoverable_rejection_count,
             last_event_at=state.last_event_at,
             failure=state.failure,
+            last_recoverable_rejection=state.last_recoverable_rejection,
             links=state.links or None,
         )
 
@@ -786,6 +793,14 @@ class TaskRunner:
                 error_message=exc.reason,
                 failure_code="policy_denied",
             )
+        except RecoverableToolRejectionThresholdExceeded as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary=exc.summary,
+                output_artifacts=[],
+                error_message=str(exc),
+                failure_code="recoverable_rejection_threshold_exceeded",
+            )
         except Exception as exc:
             self._append_diagnostic(
                 task_id=task_id,
@@ -962,7 +977,10 @@ class TaskRunner:
             latest_summary=result.summary,
             artifact_count=artifact_count,
             last_event_at=failed_at,
-            failure=FailureInfo(message=result.error_message or result.summary),
+            failure=FailureInfo(
+                message=result.error_message or result.summary,
+                code=result.failure_code,
+            ),
             awaiting_approval=False,
             pending_approval_id=None,
             is_resumable=False,
@@ -1023,6 +1041,15 @@ class TaskRunner:
         payload: dict[str, Any],
     ) -> None:
         timestamp = utc_now_timestamp()
+        if event_type == EventType.TOOL_REJECTED.value:
+            self._record_recoverable_tool_rejection(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                timestamp=timestamp,
+                payload=payload,
+            )
+            return
         updates: dict[str, Any] = {
             "updated_at": timestamp,
             "last_event_at": timestamp,
@@ -1094,29 +1121,12 @@ class TaskRunner:
         if decision.decision == "ALLOW":
             return
         if decision.decision == "DENY":
-            denied_at = utc_now_timestamp()
-            self._append_diagnostic(
-                task_id=context.task_id,
-                run_id=context.run_id,
-                kind="policy_denied",
+            raise RecoverableToolRejection(
+                code="policy_denied",
                 message=decision.reason,
+                category="policy_denied",
                 details={"context": context.to_dict()},
             )
-            self._publish(
-                task_id=context.task_id,
-                run_id=context.run_id,
-                correlation_id=correlation_id,
-                event_type=EventType.POLICY_DENIED.value,
-                timestamp=denied_at,
-                source=EventSource(kind=EventSourceKind.POLICY, component="policy-engine"),
-                payload={
-                    "status": TaskStatus.FAILED.value,
-                    "reason": decision.reason,
-                    "context": context.to_dict(),
-                },
-            )
-            self._write_metrics(context.task_id, context.run_id, deny_count_increment=1)
-            raise PolicyDeniedInterrupt(decision.reason)
         approval = self._create_approval_request(
             correlation_id=correlation_id,
             context=context,
@@ -1126,6 +1136,78 @@ class TaskRunner:
             approval_id=approval.approval_id,
             summary=approval.description,
         )
+
+    def _record_recoverable_tool_rejection(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        correlation_id: str | None,
+        timestamp: str,
+        payload: dict[str, Any],
+    ) -> None:
+        state = self._run_state_store.get(task_id, run_id)
+        rejection_count = state.recoverable_rejection_count + 1
+        code = _str_or_none(payload.get("code"))
+        message = _str_or_none(payload.get("message")) or "Tool rejected by runtime."
+        tool_name = _str_or_none(payload.get("tool")) or "tool"
+        summary = _str_or_none(payload.get("summary")) or f"{tool_name} rejected: {message}"
+        payload["rejection_count"] = rejection_count
+        payload["threshold"] = _RECOVERABLE_TOOL_REJECTION_THRESHOLD
+        payload["summary"] = summary
+
+        self._append_diagnostic(
+            task_id=task_id,
+            run_id=run_id,
+            kind="tool_rejected",
+            message=message,
+            details={
+                "tool": tool_name,
+                "code": code,
+                "category": payload.get("category"),
+                "retryable": payload.get("retryable", True),
+                "arguments": payload.get("arguments", {}),
+                "details": payload.get("details", {}),
+            },
+        )
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            updated_at=timestamp,
+            last_event_at=timestamp,
+            latest_summary=summary,
+            recoverable_rejection_count=rejection_count,
+            last_recoverable_rejection=FailureInfo(message=message, code=code),
+        )
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.TOOL_REJECTED.value,
+            timestamp=timestamp,
+            source=_source_for_harness_event(EventType.TOOL_REJECTED.value, payload),
+            payload=payload,
+        )
+        if payload.get("category") == "policy_denied":
+            self._write_metrics(task_id, run_id, deny_count_increment=1)
+        if rejection_count > _RECOVERABLE_TOOL_REJECTION_THRESHOLD:
+            self._append_diagnostic(
+                task_id=task_id,
+                run_id=run_id,
+                kind="recoverable_rejection_threshold_exceeded",
+                message=summary,
+                details={
+                    "rejection_count": rejection_count,
+                    "threshold": _RECOVERABLE_TOOL_REJECTION_THRESHOLD,
+                    "tool": tool_name,
+                    "code": code,
+                },
+            )
+            raise RecoverableToolRejectionThresholdExceeded(
+                threshold=_RECOVERABLE_TOOL_REJECTION_THRESHOLD,
+                rejection_count=rejection_count,
+                last_rejection=FailureInfo(message=message, code=code),
+            )
 
     def _create_approval_request(
         self,
@@ -1277,7 +1359,7 @@ class TaskRunner:
                 install_mode=install_mode,
                 reason=reason,
             )
-        except ValueError as exc:
+        except (RecoverableToolRejection, ValueError) as exc:
             return self._failed_skill_install_outcome(
                 task_id=task_id,
                 run_id=run_id,
@@ -1352,7 +1434,7 @@ class TaskRunner:
                 install_mode=install_mode,
                 reason=reason,
             )
-        except ValueError as exc:
+        except (RecoverableToolRejection, ValueError) as exc:
             return self._failed_skill_install_outcome(
                 task_id=task_id,
                 run_id=run_id,
@@ -1842,7 +1924,7 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
             name=role,
             component="langchain-deepagent-harness",
         )
-    if event_type == EventType.TOOL_CALLED.value:
+    if event_type in {EventType.TOOL_CALLED.value, EventType.TOOL_REJECTED.value}:
         return EventSource(
             kind=EventSourceKind.TOOL,
             name=str(payload.get("tool", "sandbox-tool")),

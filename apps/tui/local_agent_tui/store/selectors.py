@@ -1474,7 +1474,13 @@ def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
 
 
 def _should_collapse_timeline_event(event_type: str) -> bool:
-    return event_type in {"tool.called", "plan.updated", "subagent.started", "subagent.completed"}
+    return event_type in {
+        "tool.called",
+        "tool.rejected",
+        "plan.updated",
+        "subagent.started",
+        "subagent.completed",
+    }
 
 
 def _timeline_filter_label(filter_mode: str) -> str:
@@ -1488,7 +1494,7 @@ def _event_matches_filter(event: TaskEventRecord, filter_mode: str) -> bool:
     if filter_mode == "important":
         return event.severity in {"attention", "error", "success"}
     if filter_mode == "tools":
-        return event.event_type == "tool.called"
+        return event.event_type in {"tool.called", "tool.rejected"}
     if filter_mode == "plans":
         return event.event_type == "plan.updated"
     if filter_mode == "approvals":
@@ -1498,7 +1504,7 @@ def _event_matches_filter(event: TaskEventRecord, filter_mode: str) -> bool:
     if filter_mode == "subagents":
         return event.event_type.startswith("subagent.")
     if filter_mode == "errors":
-        return event.severity == "error" or event.event_type == "task.failed"
+        return event.severity == "error" or event.event_type in {"task.failed", "tool.rejected"}
     return True
 
 
