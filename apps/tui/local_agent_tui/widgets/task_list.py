@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.selectors import TaskListItemViewModel
-from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -30,12 +31,16 @@ class TaskListRow(ListItem):  # type: ignore[misc]
             status_bits.append(f"[{WARNING}]APPROVAL[/]")
         if item.artifact_count:
             status_bits.append(f"[{ACCENT}]ART {item.artifact_count}[/]")
-        text = f"{item.task_id}  {' | '.join(status_bits)}"
-        if item.objective:
-            text = f"{text}\n{item.objective}"
+        title = f"{_compact_id(item.task_id)}  {' | '.join(status_bits)}"
+        objective_preview = _objective_preview(item.objective)
+        metadata = (
+            f"[{TEXT_MUTED}]Updated {_compact_timestamp(item.updated_at)}"
+            f"   {_compact_id(item.run_id)}[/]"
+        )
+        text = f"{title}\n{objective_preview}\n{metadata}"
         if item.is_highlighted:
             text = f"[reverse]{text}[/reverse]"
-        super().__init__(Label(text))
+        super().__init__(Label(text, classes="task-list-row-content"), classes="task-list-row")
 
 
 class TaskListWidget(ListView):  # type: ignore[misc]
@@ -66,3 +71,29 @@ def _status_markup(status: str) -> str:
         "accepted": ACCENT,
     }.get(status.lower(), ACCENT)
     return f"[{color}]{status.upper()}[/]"
+
+
+def _objective_preview(objective: str) -> str:
+    normalized = re.sub(r"[*_`>#-]+", " ", objective)
+    normalized = " ".join(normalized.split())
+    if not normalized:
+        return f"[{TEXT_MUTED}]No objective provided.[/]"
+    if len(normalized) <= 84:
+        return normalized
+    return f"{normalized[:81].rstrip()}..."
+
+
+def _compact_timestamp(timestamp: str) -> str:
+    if "T" not in timestamp:
+        return timestamp or "unknown"
+    date_part, time_part = timestamp.split("T", 1)
+    return f"{date_part} {time_part[:5]}"
+
+
+def _compact_id(value: str) -> str:
+    if len(value) <= 18:
+        return value
+    prefix, separator, remainder = value.partition("_")
+    if not separator:
+        return f"{value[:8]}...{value[-4:]}"
+    return f"{prefix}_{remainder[:6]}...{remainder[-4:]}"

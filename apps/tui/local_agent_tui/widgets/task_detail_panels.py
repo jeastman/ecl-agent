@@ -12,24 +12,37 @@ from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
+    from textual.app import ComposeResult
+    from textual.containers import VerticalScroll
     from textual.widgets import Static
 else:  # pragma: no cover
     try:
+        from textual.app import ComposeResult
+        from textual.containers import VerticalScroll
         from textual.widgets import Static
     except ModuleNotFoundError as exc:
+        ComposeResult = cast(Any, object)
+        VerticalScroll = cast(Any, object)
         Static = cast(Any, object)
         _TEXTUAL_IMPORT_ERROR = exc
     else:
         _TEXTUAL_IMPORT_ERROR = None
 
 
-class TaskHeaderWidget(Static):  # type: ignore[misc]
+class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
+    can_focus = True
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="task-detail-header-body")
+
     def update_header(self, model: TaskDetailHeaderViewModel | None) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Task Header"
+        body = self.query_one("#task-detail-header-body", Static)
         if model is None:
-            self.update("No task selected.")
+            body.update("No task selected.")
+            self.scroll_to(y=0, animate=False, immediate=True)
             return
         status = _status_markup(model.status)
         lines = [
@@ -41,7 +54,18 @@ class TaskHeaderWidget(Static):  # type: ignore[misc]
             lines[-1] = f"{lines[-1]}   Active: {model.active_subagent}"
         lines.append(f"Objective: {model.objective or 'No objective available.'}")
         lines.append(model.actionable_hint)
-        self.update("\n".join(lines))
+        body.update("\n".join(lines))
+        self.scroll_to(y=0, animate=False, immediate=True)
+
+    def scroll_line(self, delta: int) -> None:
+        next_y = max(0.0, min(self.max_scroll_y, self.scroll_y + delta))
+        self.scroll_to(y=next_y, animate=False, immediate=True)
+
+    def scroll_to_home(self) -> None:
+        self.scroll_to(y=0, animate=False, immediate=True)
+
+    def scroll_to_end(self) -> None:
+        self.scroll_to(y=self.max_scroll_y, animate=False, immediate=True)
 
 
 class SubagentActivityWidget(Static):  # type: ignore[misc]

@@ -535,6 +535,37 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("report.md", str(artifacts.visual))
                 self.assertIn("tool permission", str(approvals.visual))
 
+    async def test_status_bar_keeps_connected_runtime_label_concise_on_narrow_width(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(90, 28)) as pilot:
+                await pilot.pause()
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "connection",
+                        "status": "connected",
+                        "error": "{'code': -32602, 'message': 'sandbox path must be under /workspace'}",
+                    }
+                )
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                header = app.screen.query_one("#status-bar", Static)
+                header_text = str(header.visual)
+                self.assertIn("Runtime: connected", header_text)
+                self.assertNotIn("-32602", header_text)
+                self.assertNotIn("sandbox path must be under", header_text)
+                self.assertIn("...", header_text)
+
     async def test_dashboard_keyboard_navigation_updates_selection_and_focus(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import Static
@@ -566,6 +597,51 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("down")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
+
+    async def test_dashboard_task_list_compacts_long_objectives(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListRow
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_1",
+                                    "run_id": "run_15dbf9c5c1ab",
+                                    "status": "failed",
+                                    "objective": "# OBJECTIVE\n\n"
+                                    "Initialize the Enterprise Context Layer (ECL) from an empty state.\n\n"
+                                    + "\n".join(f"detail line {index}" for index in range(30)),
+                                    "created_at": "2026-03-17T23:52:50Z",
+                                    "updated_at": "2026-03-18T00:15:33Z",
+                                }
+                            }
+                        },
+                    }
+                )
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                rows = list(app.screen.query(TaskListRow))
+                self.assertGreaterEqual(len(rows), 2)
+                self.assertLessEqual(rows[0].region.height, 4)
+                row_text = str(rows[0].children[0].visual)
+                self.assertIn("Initialize the Enterprise Context Layer", row_text)
+                self.assertNotIn("detail line 20", row_text)
+                self.assertIn("run_15dbf9c5c1ab", row_text)
 
     async def test_dashboard_task_selection_surfaces_artifact_list_errors_without_crashing(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1078,6 +1154,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_opens_artifact_browser_and_markdown_viewer(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_detail_panels import TaskHeaderWidget
         from apps.tui.local_agent_tui.widgets.markdown_viewer import MarkdownViewerWidget
         from textual.widgets import Static
 
@@ -1097,11 +1174,11 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
-                header = app.screen.query_one("#task-detail-header", Static)
+                header = app.screen.query_one("#task-detail-header", TaskHeaderWidget)
                 timeline = app.screen.query_one("#task-detail-timeline", Static)
                 plan = app.screen.query_one("#task-detail-plan", Static)
                 artifacts = app.screen.query_one("#task-detail-artifacts", Static)
-                self.assertIn("task_1", str(header.visual))
+                self.assertIn("task_1", str(app.screen.query_one("#task-detail-header-body", Static).visual))
                 self.assertIn("No events yet.", str(timeline.visual))
                 self.assertIn("Scanning repository", str(plan.visual))
                 self.assertIn("report.md", str(artifacts.visual))
@@ -1141,6 +1218,52 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app._client.artifact_get_calls[-1],  # type: ignore[attr-defined]
                     ("task_1", "run_1", "artifact_1"),
                 )
+
+    async def test_task_detail_header_caps_height_and_scrolls_long_content(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_detail_panels import TaskHeaderWidget
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                long_objective = "\n".join(f"line {index}" for index in range(40))
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "status": "executing",
+                                    "objective": long_objective,
+                                    "created_at": "2026-03-12T00:00:00Z",
+                                    "updated_at": "2026-03-12T00:00:00Z",
+                                    "current_phase": "executing",
+                                }
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+                header = app.screen.query_one("#task-detail-header", TaskHeaderWidget)
+                self.assertLessEqual(header.region.height, 12)
+                self.assertGreater(header.max_scroll_y, 0.0)
+                self.assertEqual(header.scroll_y, 0.0)
+                header.scroll_line(3)
+                await pilot.pause()
+                self.assertGreater(header.scroll_y, 0.0)
 
     async def test_task_detail_timeline_and_logs_fill_available_height(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

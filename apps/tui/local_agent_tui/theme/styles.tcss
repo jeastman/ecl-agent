@@ -81,6 +81,18 @@ Screen {
     min-width: 28;
     border: solid $la-border;
     margin-right: 1;
+    padding: 0;
+}
+
+.task-list-row {
+    height: 4;
+    min-height: 4;
+    padding: 0 1;
+    border-bottom: solid $la-border;
+}
+
+.task-list-row-content {
+    width: 1fr;
 }
 
 #task-summary {
@@ -135,6 +147,10 @@ Screen {
 #task-detail-input {
     height: auto;
     padding: 0 1;
+}
+
+#task-detail-header {
+    max-height: 12;
 }
 
 #task-detail-footer {

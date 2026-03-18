@@ -7,6 +7,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     approval_count,
     artifact_browser_rows,
     config_section_items,
+    connection_label,
     diagnostics_count,
     diagnostics_items,
     footer_hints,
@@ -49,6 +50,17 @@ class TuiStoreTests(unittest.TestCase):
         state = store.snapshot()
         self.assertEqual(state.connection_status, "connected")
         self.assertEqual(state.runtime_health["status"], "ok")
+
+    def test_connection_label_hides_last_error_when_runtime_is_connected(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "connection",
+                "status": "connected",
+                "error": "{'code': -32602, 'message': 'sandbox path must be under /workspace'}",
+            }
+        )
+        self.assertEqual(connection_label(store.snapshot()), "connected")
 
     def test_runtime_events_project_task_approval_and_artifact_counts(self) -> None:
         store = AppStateStore()

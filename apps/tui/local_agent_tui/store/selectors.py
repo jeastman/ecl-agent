@@ -316,7 +316,7 @@ class DiagnosticsDetailViewModel:
 
 
 def connection_label(state: AppState) -> str:
-    if state.last_error:
+    if state.connection_status == "error" and state.last_error:
         return f"{state.connection_status} ({state.last_error})"
     return state.connection_status
 

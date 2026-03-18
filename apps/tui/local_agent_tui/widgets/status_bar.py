@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.app_state import AppState
@@ -57,7 +58,47 @@ class StatusBar(Static):  # type: ignore[misc]
             f"Artifacts: [{ACCENT}]{artifact_count(state)}[/]",
             f"Diagnostics: [{DANGER}]{diagnostics_count(state)}[/]",
             f"Memory: {memory_status}",
-            "G Palette",
-            "N New Task",
         ]
-        self.update(" | ".join(segment for segment in segments if segment))
+        self.update(_fit_status_bar(segments, self.size.width or 120))
+
+
+def _fit_status_bar(segments: list[str], width: int) -> str:
+    visible_segments = [segment for segment in segments if segment]
+    if width <= 0:
+        return " | ".join(visible_segments)
+    joined_segments: list[str] = []
+    used_width = 0
+    for index, segment in enumerate(visible_segments):
+        separator_width = 3 if joined_segments else 0
+        segment_width = _display_width(segment)
+        if joined_segments and used_width + separator_width + segment_width > width:
+            break
+        if not joined_segments and segment_width > width:
+            return _truncate_markup(segment, width)
+        joined_segments.append(segment)
+        used_width += separator_width + segment_width
+        remaining = len(visible_segments) - index - 1
+        if remaining > 0 and used_width + 5 > width:
+            break
+    omitted = len(visible_segments) - len(joined_segments)
+    if omitted > 0:
+        ellipsis = f"[{WARNING}]...[/]"
+        if joined_segments and used_width + 3 + _display_width(ellipsis) <= width:
+            joined_segments.append(ellipsis)
+        elif not joined_segments:
+            return _truncate_markup(ellipsis, width)
+    return " | ".join(joined_segments)
+
+
+def _display_width(value: str) -> int:
+    plain = re.sub(r"\[[^\]]*\]", "", value)
+    return len(plain)
+
+
+def _truncate_markup(value: str, width: int) -> str:
+    plain = re.sub(r"\[[^\]]*\]", "", value)
+    if len(plain) <= width:
+        return value
+    if width <= 3:
+        return "." * max(width, 0)
+    return plain[: width - 3].rstrip() + "..."
