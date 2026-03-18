@@ -2051,6 +2051,12 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
             name=str(payload.get("tool", "sandbox-tool")),
             component="sandbox-tool-bindings",
         )
+    if event_type == EventType.MEMORY_UPDATED.value:
+        return EventSource(
+            kind=EventSourceKind.MEMORY,
+            name=str(payload.get("memory_id", "memory-record")),
+            component="sandbox-tool-bindings",
+        )
     return EventSource(kind=EventSourceKind.RUNTIME, component="langchain-deepagent-harness")
 
 

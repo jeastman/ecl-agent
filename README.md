@@ -562,12 +562,15 @@ Observed event types include:
 - `subagent.completed`
 - `tool.called`
 - `artifact.created`
+- `memory.updated`
 - `skill.install.requested`
 - `skill.install.validated`
 - `skill.install.approval_requested`
 - `skill.install.completed`
 - `skill.install.failed`
 - `task.completed`
+
+The primary agent also has a built-in `memory_write` tool for creating `run_state` and `project` memory records. `project` writes remain governed by the existing memory approval path, while subagents stay read-only for memory in the current baseline.
 - `task.failed`
 
 ## Documentation Map

@@ -1080,6 +1080,180 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 {"project_1", "run_1"},
             )
 
+    def test_memory_write_project_scope_requires_approval_and_persists_after_approval(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_memory_approval_harness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            correlation_id = new_correlation_id()
+            create_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_CREATE,
+                        params=TaskCreateParams(
+                            task=TaskCreateRequest(
+                                objective="Create durable project memory",
+                                workspace_roots=["/workspace"],
+                            )
+                        ).to_dict(),
+                        id="1",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            created_task = create_response.to_dict()["result"]
+            task_id = created_task["task_id"]
+            run_id = created_task["run_id"]
+            pending_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="1b",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            pending_task = pending_response.to_dict()["result"]["task"]
+            approval_id = pending_task["pending_approval_id"]
+            self.assertEqual(pending_task["status"], "awaiting_approval")
+            self.assertIsNotNone(approval_id)
+
+            approve_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_APPROVE,
+                        params={
+                            "run_id": run_id,
+                            "approval": {"approval_id": approval_id, "decision": "approved"},
+                        },
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            approved_task = approve_response.to_dict()["result"]["task"]
+            self.assertEqual(approved_task["status"], "completed")
+
+            memory_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={"task_id": task_id, "run_id": run_id, "scope": "project"},
+                        id="3",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            entries = memory_response.to_dict()["result"]["entries"]
+            self.assertEqual(len(entries), 1)
+            self.assertEqual(entries[0]["namespace"], "project.conventions")
+            self.assertEqual(entries[0]["summary"], "Store durable project guidance.")
+
+            logs_response, stream_events = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                        id="4",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertEqual(event_types.count("approval.requested"), 1)
+            self.assertIn("memory.updated", event_types)
+
+    def test_memory_write_rejection_does_not_persist_memory(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_memory_denied_harness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            correlation_id = new_correlation_id()
+            create_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_CREATE,
+                        params=TaskCreateParams(
+                            task=TaskCreateRequest(
+                                objective="Attempt invalid memory write",
+                                workspace_roots=["/workspace"],
+                            )
+                        ).to_dict(),
+                        id="1",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            created_task = create_response.to_dict()["result"]
+            task_id = created_task["task_id"]
+            run_id = created_task["run_id"]
+
+            completed_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="1b",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            completed_task = completed_response.to_dict()["result"]["task"]
+            self.assertEqual(completed_task["status"], "completed")
+
+            memory_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_MEMORY_INSPECT,
+                        params={
+                            "task_id": task_id,
+                            "run_id": run_id,
+                            "scope": "project",
+                        },
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertEqual(memory_response.to_dict()["result"]["entries"], [])
+
+            logs_response, stream_events = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={
+                            "task_id": created_task["task_id"],
+                            "run_id": run_id,
+                            "include_history": True,
+                        },
+                        id="3",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertIn("tool.rejected", event_types)
+            self.assertNotIn("memory.updated", event_types)
+
     def test_memory_inspect_supports_identity_scope_and_restart_persistence(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             runtime_root = str(Path(temp_dir) / "runtime")
@@ -1739,6 +1913,74 @@ class _ApprovalHarness:
 
 def _approval_harness() -> _ApprovalHarness:
     return _ApprovalHarness()
+
+
+class _MemoryApprovalHarness:
+    def execute(self, request, on_event=None) -> Any:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.memory_write(
+            content="Use durable project memory for conventions.",
+            summary="Store durable project guidance.",
+            namespace="project.conventions",
+            scope="project",
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="Durable memory write completed.",
+            output_artifacts=[],
+        )
+
+
+def _memory_approval_harness() -> _MemoryApprovalHarness:
+    return _MemoryApprovalHarness()
+
+
+class _MemoryDeniedHarness:
+    def execute(self, request, on_event=None) -> Any:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.memory_write(
+            content="Denied memory write.",
+            summary="Should be rejected.",
+            namespace="identity.bundle",
+            scope="identity",
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="Memory write rejected without persistence.",
+            output_artifacts=[],
+        )
+
+
+def _memory_denied_harness() -> _MemoryDeniedHarness:
+    return _MemoryDeniedHarness()
 
 
 class _NetworkDeniedHarness:

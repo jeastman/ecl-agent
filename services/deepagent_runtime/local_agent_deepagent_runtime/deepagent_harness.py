@@ -349,6 +349,11 @@ def _primary_tool_bindings() -> tuple[ResolvedToolBinding, ...]:
             requires_policy=False,
         ),
         ResolvedToolBinding(
+            tool_id="memory_write",
+            capability_aliases=("memory_write", "memory", "memory.write"),
+            requires_policy=True,
+        ),
+        ResolvedToolBinding(
             tool_id="plan_update",
             capability_aliases=("plan_update", "planning", "plan.write"),
             requires_policy=False,

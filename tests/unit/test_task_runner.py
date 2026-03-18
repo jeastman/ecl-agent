@@ -31,8 +31,9 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge i
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
-from packages.task_model.local_agent_task_model.models import TaskStatus
 from packages.task_model.local_agent_task_model.models import CompactionTrigger
+from packages.task_model.local_agent_task_model.models import EventType
+from packages.task_model.local_agent_task_model.models import TaskStatus
 
 
 class TaskRunnerTests(unittest.TestCase):
@@ -439,6 +440,41 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertFalse(snapshot.awaiting_approval)
         self.assertIsNone(snapshot.pending_approval_id)
 
+    def test_task_runner_publishes_memory_updated_events_from_harness(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=MemoryWriteHarness(),
+            durable_services=durable_services,
+        )
+
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Create runtime memory",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        events = bus.list_events(task_id, run_id)
+        memory_event = next(
+            event for event in events if event.event.event_type == EventType.MEMORY_UPDATED.value
+        )
+        self.assertEqual(memory_event.event.source.kind.value, "memory")
+        self.assertEqual(memory_event.event.payload["scope"], "run_state")
+        self.assertEqual(memory_event.event.payload["entry_count_delta"], 1)
+
+        entries = durable_services.memory_store.list_memory(scope="run_state")
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0].namespace, "run.notes")
+
     def test_task_runner_denies_network_command(self) -> None:
         store = InMemoryRunStateStore()
         bus = InMemoryEventBus()
@@ -758,6 +794,35 @@ class ApprovalThenResumeHarness:
         return AgentExecutionResult(
             success=True,
             summary="Governed write completed after approval.",
+            output_artifacts=[],
+        )
+
+
+class MemoryWriteHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        bridge = InterruptBridge(
+            governed_operation=request.governed_operation,
+            checkpoint_controller=request.checkpoint_controller,
+            on_event=on_event,
+        )
+        bindings = SandboxToolBindings(
+            sandbox=request.sandbox,
+            task_id=request.task_id,
+            run_id=request.run_id,
+            artifact_store=request.artifact_store,
+            memory_store=request.memory_store,
+            on_event=on_event,
+            allowed_capabilities=request.allowed_capabilities,
+            governed_operation=bridge.authorize,
+        )
+        bindings.memory_write(
+            content="Remember this execution detail.",
+            summary="Runtime memory created.",
+            namespace="run.notes",
+        )
+        return AgentExecutionResult(
+            success=True,
+            summary="Created runtime memory.",
             output_artifacts=[],
         )
 

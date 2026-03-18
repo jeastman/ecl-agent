@@ -8,8 +8,11 @@ from pydantic import ValidationError
 
 from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding
 from packages.protocol.local_agent_protocol.models import ArtifactReference
+from packages.protocol.local_agent_protocol.models import utc_now_timestamp
+from packages.task_model.local_agent_task_model.ids import new_memory_id
 from packages.task_model.local_agent_task_model.models import RecoverableToolRejection
 from services.artifact_service.local_agent_artifact_service.store import ArtifactStore
+from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 from services.memory_service.local_agent_memory_service.memory_store import MemoryStore
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
 from services.sandbox_service.local_agent_sandbox_service.sandbox import ExecutionSandbox
@@ -22,6 +25,7 @@ _WRITE_CAPABILITIES = {"write_file", "filesystem", "files.write"}
 _LIST_CAPABILITIES = {"list_files", "filesystem", "files.list", "files.read", "read_file"}
 _EXECUTE_CAPABILITIES = {"execute_command", "commands", "sandbox.execute"}
 _MEMORY_CAPABILITIES = {"memory_lookup", "memory", "memory.read"}
+_MEMORY_WRITE_CAPABILITIES = {"memory_write", "memory", "memory.write"}
 _PLAN_CAPABILITIES = {"plan_update", "planning", "plan.write"}
 _ARTIFACT_CAPABILITIES = {"artifact_inspect", "artifacts", "artifacts.read"}
 _SKILL_INSTALL_CAPABILITIES = {"skill_installer", "skills.install"}
@@ -201,6 +205,111 @@ class SandboxToolBindings:
             },
         )
         return [record.to_dict() for record in records]
+
+    def memory_write(
+        self,
+        content: str,
+        summary: str,
+        namespace: str,
+        scope: str = "run_state",
+        confidence: float | None = None,
+    ) -> dict[str, Any] | str:
+        self._ensure_allowed("memory_write", _MEMORY_WRITE_CAPABILITIES)
+        if self.memory_store is None:
+            raise ValueError("memory_write is not configured for this runtime")
+        arguments = {
+            "scope": scope,
+            "namespace": namespace,
+            "summary": summary,
+            "confidence": confidence,
+        }
+        try:
+            normalized_scope = self._normalize_memory_write_scope(scope)
+            normalized_content = content.strip()
+            normalized_summary = summary.strip()
+            normalized_namespace = namespace.strip()
+            if not normalized_content:
+                raise RecoverableToolRejection(
+                    code="invalid_arguments",
+                    message="memory_write content must be non-empty",
+                    category="argument_validation",
+                )
+            if not normalized_summary:
+                raise RecoverableToolRejection(
+                    code="invalid_arguments",
+                    message="memory_write summary must be non-empty",
+                    category="argument_validation",
+                )
+            if not normalized_namespace:
+                raise RecoverableToolRejection(
+                    code="invalid_arguments",
+                    message="memory_write namespace must be non-empty",
+                    category="argument_validation",
+                )
+            if confidence is not None and not 0.0 <= confidence <= 1.0:
+                raise RecoverableToolRejection(
+                    code="invalid_arguments",
+                    message="memory_write confidence must be between 0.0 and 1.0",
+                    category="argument_validation",
+                )
+            self._govern(
+                OperationContext(
+                    task_id=self.task_id,
+                    run_id=self.run_id,
+                    operation_type="memory.write",
+                    memory_scope=normalized_scope,
+                    namespace=normalized_namespace,
+                )
+            )
+            now = utc_now_timestamp()
+            record = MemoryRecord(
+                memory_id=new_memory_id(),
+                scope=normalized_scope,
+                namespace=normalized_namespace,
+                content=normalized_content,
+                summary=normalized_summary,
+                provenance={
+                    "task_id": self.task_id,
+                    "run_id": self.run_id,
+                    "source": "agent_tool",
+                    "tool": "memory_write",
+                },
+                created_at=now,
+                updated_at=now,
+                source_run=self.run_id,
+                confidence=confidence,
+            )
+            self.memory_store.write_memory(record)
+            payload = record.to_dict()
+            self._emit(
+                "tool.called",
+                {
+                    "tool": "memory_write",
+                    "arguments": {
+                        "scope": normalized_scope,
+                        "namespace": normalized_namespace,
+                        "summary": normalized_summary,
+                        "confidence": confidence,
+                    },
+                    "memory_id": record.memory_id,
+                    "scope": normalized_scope,
+                    "namespace": normalized_namespace,
+                    "summary": normalized_summary,
+                },
+            )
+            self._emit(
+                "memory.updated",
+                {
+                    "scope": normalized_scope,
+                    "summary": normalized_summary,
+                    "entry_count_delta": 1,
+                    "namespace": normalized_namespace,
+                    "memory_id": record.memory_id,
+                },
+            )
+            return payload
+        except RecoverableToolRejection as exc:
+            return self._handle_recoverable_rejection("memory_write", arguments, exc)
 
     def plan_update(self, summary: str, phase: str | None = None) -> dict[str, Any]:
         self._ensure_allowed("plan_update", _PLAN_CAPABILITIES)
@@ -443,6 +552,27 @@ class SandboxToolBindings:
 
             tools.append(self._with_validation_handler(memory_lookup, "memory_lookup"))
 
+        if "memory_write" in allowed_tool_ids:
+
+            @tool
+            def memory_write(
+                content: str,
+                summary: str,
+                namespace: str,
+                scope: str = "run_state",
+                confidence: float | None = None,
+            ) -> dict[str, Any] | str:
+                """Create a new runtime memory entry in run_state or project scope."""
+                return self.memory_write(
+                    content=content,
+                    summary=summary,
+                    namespace=namespace,
+                    scope=scope,
+                    confidence=confidence,
+                )
+
+            tools.append(self._with_validation_handler(memory_write, "memory_write"))
+
         if "plan_update" in allowed_tool_ids:
 
             @tool
@@ -638,6 +768,18 @@ class SandboxToolBindings:
         return (
             f"TOOL_REJECTED [invalid_arguments]: {message} "
             "Adjust the tool arguments to satisfy the schema and try again."
+        )
+
+    def _normalize_memory_write_scope(self, scope: str) -> str:
+        normalized = scope.strip().lower()
+        if normalized == "run":
+            return "run_state"
+        if normalized in {"run_state", "project"}:
+            return normalized
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message="memory_write scope must be either run_state or project",
+            category="argument_validation",
         )
 
 

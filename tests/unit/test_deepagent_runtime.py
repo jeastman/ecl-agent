@@ -25,6 +25,7 @@ from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_model
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness import (
     LangChainDeepAgentHarness,
+    _primary_tool_bindings,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
@@ -79,6 +80,10 @@ class PromptBuilderTests(unittest.TestCase):
         self.assertIn("Researcher identity", prompt)
         self.assertIn("Researcher overlay", prompt)
         self.assertIn("resolved_model: openai/gpt-5-mini", prompt)
+
+    def test_primary_tool_bindings_include_memory_write(self) -> None:
+        tool_ids = [binding.tool_id for binding in _primary_tool_bindings()]
+        self.assertIn("memory_write", tool_ids)
 
 
 class SandboxToolBindingsTests(unittest.TestCase):
@@ -143,6 +148,90 @@ class SandboxToolBindingsTests(unittest.TestCase):
             if tool.name == "memory_lookup"
         )
         self.assertEqual(memory_tool.invoke({"namespace": "docs"}), [])
+
+    def test_memory_write_creates_record_emits_events_and_normalizes_run_scope(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        payload = bindings.memory_write(
+            content="  prefer runtime-owned contracts  ",
+            summary="  runtime owns contracts  ",
+            namespace="  project.conventions  ",
+            scope="run",
+            confidence=0.8,
+        )
+
+        self.assertIsInstance(payload, dict)
+        created = self.memory_store.read_memory(payload["memory_id"])
+        assert created is not None
+        self.assertEqual(created.scope, "run_state")
+        self.assertEqual(created.namespace, "project.conventions")
+        self.assertEqual(created.content, "prefer runtime-owned contracts")
+        self.assertEqual(created.summary, "runtime owns contracts")
+        self.assertEqual(created.source_run, "run_1")
+        self.assertEqual(created.confidence, 0.8)
+        self.assertEqual(created.provenance["task_id"], "task_1")
+        self.assertEqual(created.provenance["run_id"], "run_1")
+        self.assertEqual(created.provenance["source"], "agent_tool")
+        self.assertEqual(created.provenance["tool"], "memory_write")
+        self.assertEqual(events[0][0], "tool.called")
+        self.assertEqual(events[0][1]["tool"], "memory_write")
+        self.assertEqual(events[1][0], "memory.updated")
+        self.assertEqual(events[1][1]["entry_count_delta"], 1)
+
+    def test_memory_write_rejects_invalid_scope_without_persisting(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        result = bindings.memory_write(
+            content="remember this",
+            summary="summary",
+            namespace="project.conventions",
+            scope="identity",
+        )
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", result)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "memory_write")
+        self.assertEqual(events[-1][1]["category"], "argument_validation")
+
+    def test_memory_write_project_scope_invokes_governed_operation(self) -> None:
+        contexts: list[Any] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            governed_operation=lambda context: contexts.append(context),
+        )
+
+        payload = bindings.memory_write(
+            content="use project memory",
+            summary="project memory",
+            namespace="project.conventions",
+            scope="project",
+        )
+
+        self.assertIsInstance(payload, dict)
+        self.assertEqual(len(contexts), 1)
+        self.assertEqual(contexts[0].operation_type, "memory.write")
+        self.assertEqual(contexts[0].memory_scope, "project")
+        self.assertEqual(contexts[0].namespace, "project.conventions")
 
     def test_plan_update_emits_runtime_friendly_event(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []

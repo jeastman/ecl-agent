@@ -19,6 +19,10 @@ def new_event_id() -> str:
     return _new_id("evt")
 
 
+def new_memory_id() -> str:
+    return _new_id("mem")
+
+
 def new_artifact_id() -> str:
     return _new_id("artifact")
 

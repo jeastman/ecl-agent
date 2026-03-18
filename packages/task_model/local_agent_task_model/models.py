@@ -21,6 +21,7 @@ class EventType(StrEnum):
     TOOL_CALLED = "tool.called"
     TOOL_REJECTED = "tool.rejected"
     ARTIFACT_CREATED = "artifact.created"
+    MEMORY_UPDATED = "memory.updated"
     SKILL_INSTALL_REQUESTED = "skill.install.requested"
     SKILL_INSTALL_VALIDATED = "skill.install.validated"
     SKILL_INSTALL_APPROVAL_REQUESTED = "skill.install.approval_requested"
