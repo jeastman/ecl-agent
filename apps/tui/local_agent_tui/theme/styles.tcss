@@ -29,13 +29,25 @@ Screen {
 
 #status-bar {
     dock: top;
-    height: 2;
-    min-height: 2;
-    background: $la-status;
-    color: $la-text;
+    height: 3;
+    min-height: 3;
+}
+
+#identity-bar {
+    height: 1;
+    background: $la-bg-overlay;
     padding: 0 1;
+    color: $la-text;
     content-align: left middle;
-    border-bottom: solid $la-border;
+}
+
+#context-bar {
+    height: 1;
+    background: $la-surface;
+    padding: 0 1;
+    color: $la-text-secondary;
+    content-align: left middle;
+    border-bottom: solid $la-border-subtle;
 }
 
 #dashboard-root,
@@ -286,10 +298,20 @@ Screen {
 #task-detail-footer,
 #approvals-screen-footer,
 #artifacts-screen-footer,
-#markdown-viewer-footer,
 #memory-screen-footer,
 #config-screen-footer,
 #diagnostics-screen-footer {
+    height: 2;
+    min-height: 2;
+    border: none;
+    background: $la-bg-base;
+    padding: 0 2;
+    margin-top: 1;
+    color: $la-muted;
+    content-align: left middle;
+}
+
+#markdown-viewer-footer {
     height: auto;
     min-height: 3;
     border: solid $la-border;
