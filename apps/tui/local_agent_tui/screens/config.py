@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
-
 from ..store.app_state import AppState
 from ..store.selectors import config_section_items, footer_hints, selected_config_detail
 from ..widgets.config_detail import ConfigDetailWidget
@@ -52,7 +50,7 @@ class ConfigScreen(Screen):  # type: ignore[misc]
                 ConfigDetailWidget(id="config-screen-detail"),
                 id="config-screen-main",
             ),
-            Static(id="config-screen-footer"),
+            Static(id="config-screen-footer", markup=False),
             id="config-screen-root",
         )
 
@@ -69,7 +67,7 @@ class ConfigScreen(Screen):  # type: ignore[misc]
         footer = "   ".join(footer_hints(state))
         footer = f"{footer}\nConfig viewer is read-only."
         if state.config_request_error:
-            footer = f"{footer}\n{escape(state.config_request_error)}"
+            footer = f"{footer}\n{state.config_request_error}"
         if self._last_footer != footer:
             self.query_one("#config-screen-footer", Static).update(footer)
             self._last_footer = footer

@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
+from ..renderables import badge, block, join, metadata_line, muted, text
 from ..store.selectors import (
     NotificationStripViewModel,
     SubagentActivityItemViewModel,
@@ -46,19 +48,43 @@ class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
             body.update("No task selected.")
             self.scroll_to(y=0, animate=False, immediate=True)
             return
-        status = _status_markup(model.status)
-        lines = [
-            f"{escape(model.task_id)}  {status}  {escape(model.run_id)}",
-            f"Created: {escape(model.created_at)}   Updated: {escape(model.updated_at)}",
-            f"Phase: {escape(model.current_phase)}   Next: {escape(model.actionable_label)}",
+        status_style = {
+            "executing": ACCENT,
+            "planning": ACCENT,
+            "running": ACCENT,
+            "completed": SUCCESS,
+            "failed": DANGER,
+            "paused": WARNING,
+            "awaiting_approval": WARNING,
+        }.get(model.status.lower(), ACCENT)
+        meta_pairs = [
+            ("Created", model.created_at),
+            ("Updated", model.updated_at),
+            ("Phase", model.current_phase),
+            ("Next", model.actionable_label),
         ]
         if model.active_subagent:
-            lines[-1] = f"{lines[-1]}   Active: {escape(model.active_subagent)}"
-        lines.append(
-            f"Objective: {escape(model.objective) if model.objective else 'No objective available.'}"
+            meta_pairs.append(("Active", model.active_subagent))
+        body.update(
+            block(
+                [
+                    join(
+                        [
+                            text(model.task_id, style="bold"),
+                            badge(model.status.upper(), style=status_style),
+                            muted(model.run_id),
+                        ],
+                        separator="  ",
+                    ),
+                    metadata_line(meta_pairs),
+                    Text(""),
+                    text("Objective", style="bold"),
+                    text(model.objective or "No objective available."),
+                    Text(""),
+                    muted(model.actionable_hint),
+                ]
+            )
         )
-        lines.append(escape(model.actionable_hint))
-        body.update("\n".join(lines))
         self.scroll_to(y=0, animate=False, immediate=True)
 
     def scroll_line(self, delta: int) -> None:
@@ -80,13 +106,34 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
         if not items:
             self.update("No subagent activity yet.")
             return
-        self.update(
-            "\n".join(
-                f"{escape(item.subagent_id)}  {_status_markup(item.status)}\n"
-                f"{escape(item.latest_summary)}"
-                for item in items
+        rows: list[Text] = []
+        for item in items:
+            status_style = {
+                "running": ACCENT,
+                "completed": SUCCESS,
+                "failed": DANGER,
+                "paused": WARNING,
+            }.get(item.status.lower(), ACCENT)
+            rows.append(
+                join(
+                    [
+                        text(item.subagent_id, style="bold"),
+                        badge(item.status.upper(), style=status_style),
+                    ],
+                    separator="  ",
+                )
             )
-        )
+            rows.append(text(item.latest_summary))
+            if item.started_at or item.completed_at:
+                pairs = []
+                if item.started_at:
+                    pairs.append(("Started", item.started_at))
+                if item.completed_at:
+                    pairs.append(("Completed", item.completed_at))
+                rows.append(metadata_line(pairs))
+            rows.append(Text(""))
+        rows.pop()
+        self.update(Group(*rows))
 
 
 class NotificationStripWidget(Static):  # type: ignore[misc]
@@ -97,39 +144,18 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
         if not model.items:
             self.update("No urgent updates.")
             return
-        self.update(
-            "\n".join(
-                _render_notification_line(
-                    timestamp=item.timestamp,
-                    severity=item.severity,
-                    summary=item.summary,
-                )
-                for item in model.items
-            )
-        )
+        self.update(Group(*(_render_notification_line(timestamp=item.timestamp, severity=item.severity, summary=item.summary) for item in model.items)))
 
 
-def _status_markup(status: str) -> str:
-    color = {
-        "executing": ACCENT,
-        "planning": ACCENT,
-        "running": ACCENT,
-        "completed": SUCCESS,
-        "failed": DANGER,
-        "paused": WARNING,
-        "awaiting_approval": WARNING,
-    }.get(status.lower(), ACCENT)
-    return f"[{color}]{escape(status.upper())}[/]"
-
-
-def _severity_markup(severity: str) -> str:
-    color = {
+def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> Group:
+    severity_style = {
         "error": DANGER,
         "attention": WARNING,
         "success": SUCCESS,
     }.get(severity.lower(), ACCENT)
-    return f"[{color}]\\[{escape(severity.upper())}\\][/]"
-
-
-def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> str:
-    return f"{escape(timestamp)} {_severity_markup(severity)} {escape(summary)}"
+    return block(
+        [
+            join([muted(timestamp), badge(severity.upper(), style=severity_style)], separator="  "),
+            text(summary),
+        ]
+    )

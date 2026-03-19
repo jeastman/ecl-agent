@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
-
 from ..store.app_state import AppState
 from ..store.selectors import (
     footer_hints,
@@ -75,7 +73,7 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
                 id="task-detail-main",
             ),
             InputBoxWidget(id="task-detail-input"),
-            Static(id="task-detail-footer"),
+            Static(id="task-detail-footer", markup=False),
             id="task-detail-root",
         )
 
@@ -99,8 +97,8 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         timeline_state = timeline_state_summary(state)
         footer = "   ".join(footer_hints(state))
         footer = (
-            f"{footer}\nTimeline filter: {escape(timeline_state.filter_label)}   "
-            f"Search: {escape(timeline_state.search_query) if timeline_state.search_query else 'none'}"
+            f"{footer}\nTimeline filter: {timeline_state.filter_label}   "
+            f"Search: {timeline_state.search_query if timeline_state.search_query else 'none'}"
         )
         self.query_one("#task-detail-footer", Static).update(footer)
 

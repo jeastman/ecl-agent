@@ -1,10 +1,10 @@
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.text import Text
 
+from ..renderables import badge, join, muted, text
 from ..store.app_state import AppState
 from ..store.selectors import (
     approval_count,
@@ -47,60 +47,58 @@ class StatusBar(Static):  # type: ignore[misc]
             "error": DANGER,
         }.get(state.connection_status, TEXT_PRIMARY)
         memory_status = status_bar_memory_status(state)
-        segments = [
-            f"[bold {ACCENT}]LOCAL AGENT HARNESS[/]",
-            f"Name: {escape(runtime_name)}",
-            f"Runtime: [{status_color}]{escape(connection_label(state))}[/]",
-            f"Health: {escape(runtime_health_label(state))}",
-            f"Transport: {escape(transport)}",
-            f"Model: {escape(model_name)}" if model_name else "",
-            f"Sandbox: {escape(sandbox_mode)}" if sandbox_mode else "",
-            f"Tasks: {task_count(state)}",
-            f"Approvals: [{WARNING}]{approval_count(state)}[/]",
-            f"Artifacts: [{ACCENT}]{artifact_count(state)}[/]",
-            f"Diagnostics: [{DANGER}]{diagnostics_count(state)}[/]",
-            f"Memory: {escape(memory_status)}",
+        segments: list[Text] = [
+            text("LOCAL AGENT HARNESS", style=f"bold {ACCENT}"),
+            join([muted("Name"), text(runtime_name)], separator=": "),
+            join([muted("Runtime"), badge(connection_label(state), style=status_color)], separator=": "),
+            join([muted("Health"), text(runtime_health_label(state))], separator=": "),
+            join([muted("Transport"), text(transport)], separator=": "),
         ]
+        if model_name:
+            segments.append(join([muted("Model"), text(model_name)], separator=": "))
+        if sandbox_mode:
+            segments.append(join([muted("Sandbox"), text(sandbox_mode)], separator=": "))
+        segments.extend(
+            [
+                join([muted("Tasks"), text(str(task_count(state)))], separator=": "),
+                join([muted("Approvals"), badge(str(approval_count(state)), style=WARNING)], separator=": "),
+                join([muted("Artifacts"), badge(str(artifact_count(state)), style=ACCENT)], separator=": "),
+                join([muted("Diagnostics"), badge(str(diagnostics_count(state)), style=DANGER)], separator=": "),
+                join([muted("Memory"), text(memory_status)], separator=": "),
+            ]
+        )
         self.update(_fit_status_bar(segments, self.size.width or 120))
 
 
-def _fit_status_bar(segments: list[str], width: int) -> str:
-    visible_segments = [segment for segment in segments if segment]
+def _fit_status_bar(segments: list[Text], width: int) -> Text:
+    visible_segments = [segment for segment in segments if segment.plain]
     if width <= 0:
-        return " | ".join(visible_segments)
-    joined_segments: list[str] = []
+        return join(visible_segments, separator=" | ")
+    joined = Text()
     used_width = 0
-    for index, segment in enumerate(visible_segments):
-        separator_width = 3 if joined_segments else 0
-        segment_width = _display_width(segment)
-        if joined_segments and used_width + separator_width + segment_width > width:
+    visible_count = 0
+    for segment in visible_segments:
+        segment_width = segment.cell_len
+        separator_width = 3 if visible_count else 0
+        if visible_count and used_width + separator_width + segment_width > width:
             break
-        if not joined_segments and segment_width > width:
-            return _truncate_markup(segment, width)
-        joined_segments.append(segment)
+        if not visible_count and segment_width > width:
+            clipped = segment.copy()
+            clipped.truncate(width, overflow="ellipsis")
+            return clipped
+        if visible_count:
+            joined.append(" | ")
+        joined.append_text(segment.copy())
         used_width += separator_width + segment_width
-        remaining = len(visible_segments) - index - 1
-        if remaining > 0 and used_width + 5 > width:
+        visible_count += 1
+        if visible_count < len(visible_segments) and used_width + 5 > width:
             break
-    omitted = len(visible_segments) - len(joined_segments)
+    omitted = len(visible_segments) - visible_count
     if omitted > 0:
-        ellipsis = f"[{WARNING}]...[/]"
-        if joined_segments and used_width + 3 + _display_width(ellipsis) <= width:
-            joined_segments.append(ellipsis)
-        elif not joined_segments:
-            return _truncate_markup(ellipsis, width)
-    return " | ".join(joined_segments)
-
-
-def _display_width(value: str) -> int:
-    plain = re.sub(r"\[[^\]]*\]", "", value)
-    return len(plain)
-
-
-def _truncate_markup(value: str, width: int) -> str:
-    plain = re.sub(r"\[[^\]]*\]", "", value)
-    if len(plain) <= width:
-        return value
-    if width <= 3:
-        return "." * max(width, 0)
-    return plain[: width - 3].rstrip() + "..."
+        ellipsis = badge("...", style=WARNING)
+        if joined and used_width + 3 + ellipsis.cell_len <= width:
+            joined.append(" | ")
+            joined.append_text(ellipsis)
+        elif not joined:
+            return ellipsis
+    return joined

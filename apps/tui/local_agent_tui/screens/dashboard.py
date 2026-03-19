@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
+from ..renderables import badge, block, highlighted_row, join, metadata_line, muted, text
 from ..store.app_state import AppState
 from ..store.selectors import (
     dashboard_empty_state,
@@ -16,7 +18,7 @@ from ..store.selectors import (
 from ..widgets.approval_queue import ApprovalQueueWidget
 from ..widgets.status_bar import StatusBar
 from ..widgets.task_list import TaskListRow, TaskListWidget
-from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -62,7 +64,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
                 ),
                 id="dashboard-main",
             ),
-            Static(id="dashboard-footer"),
+            Static(id="dashboard-footer", markup=False),
             id="dashboard-root",
         )
 
@@ -89,14 +91,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         artifacts_pane.border_subtitle = "Focused" if state.focused_pane == "artifacts" else ""
         artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
         artifacts = recent_artifacts(state)
-        artifacts_pane.update(
-            "\n".join(
-                f"{escape(artifact.task_id)}  {escape(artifact.display_name)}\n"
-                f"{escape(artifact.content_type)}"
-                for artifact in artifacts
-            )
-            or "No recent artifacts."
-        )
+        artifacts_pane.update(_recent_artifacts_renderable(artifacts))
         self.query_one("#dashboard-footer", Static).update("   ".join(footer_hints(state)))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
@@ -112,37 +107,14 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         self.app.action_open_task()  # type: ignore[attr-defined]
 
 
-def _task_summary_text(state: AppState) -> str:
+def _task_summary_text(state: AppState) -> Group | str:
     empty_state = dashboard_empty_state(state)
     if empty_state is not None:
         return empty_state
     summary = selected_task_summary(state)
     if summary is None:
         return "Select a task to view its summary."
-    lines = [
-        f"Task: {escape(summary.task_id)}",
-        f"Status: {_status_markup(summary.status)}",
-        f"Next Action: {escape(summary.actionable_label)}",
-        f"Run: {escape(summary.run_id)}",
-        f"Created: {escape(summary.created_at)}",
-        f"Updated: {escape(summary.updated_at)}",
-        f"Artifacts: {summary.artifact_count}",
-        "",
-        "Objective",
-        escape(summary.objective) if summary.objective else "No objective available.",
-        "",
-        "Latest Summary",
-        escape(summary.latest_summary),
-        "",
-        escape(summary.actionable_hint),
-    ]
-    if summary.awaiting_approval:
-        lines.extend(["", "Approval required before the task can continue."])
-    return "\n".join(lines)
-
-
-def _status_markup(status: str) -> str:
-    color = {
+    status_style = {
         "executing": ACCENT,
         "planning": ACCENT,
         "running": ACCENT,
@@ -150,5 +122,53 @@ def _status_markup(status: str) -> str:
         "failed": DANGER,
         "paused": WARNING,
         "awaiting_approval": WARNING,
-    }.get(status.lower(), ACCENT)
-    return f"[{color}]{escape(status.upper())}[/]"
+    }.get(summary.status.lower(), ACCENT)
+    lines: list[Text | Group] = [
+        join(
+            [
+                text(summary.task_id, style="bold"),
+                badge(summary.status.upper(), style=status_style),
+            ],
+            separator="  ",
+        ),
+        metadata_line(
+            [
+                ("Next", summary.actionable_label),
+                ("Run", summary.run_id),
+                ("Created", summary.created_at),
+                ("Updated", summary.updated_at),
+                ("Artifacts", str(summary.artifact_count)),
+            ]
+        ),
+        Text(""),
+        text("Objective", style="bold"),
+        text(summary.objective or "No objective available."),
+        Text(""),
+        text("Latest Summary", style="bold"),
+        text(summary.latest_summary),
+        Text(""),
+        muted(summary.actionable_hint),
+    ]
+    if summary.awaiting_approval:
+        lines.extend([Text(""), badge("Approval required before the task can continue.", style=WARNING)])
+    return block(lines)
+
+
+def _recent_artifacts_renderable(artifacts: list[Any]) -> Group | str:
+    if not artifacts:
+        return "No recent artifacts."
+    rows: list[Text] = []
+    for artifact in artifacts:
+        name_line = join(
+            [
+                text(artifact.display_name, style="bold"),
+                muted(artifact.task_id),
+            ],
+            separator="  ",
+        )
+        rows.append(name_line)
+        rows.append(metadata_line([("Type", artifact.content_type), ("Created", artifact.created_at)]))
+        rows.append(Text(""))
+    if rows:
+        rows.pop()
+    return Group(*rows)

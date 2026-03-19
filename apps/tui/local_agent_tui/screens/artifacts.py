@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
-
 from ..store.app_state import AppState
 from ..store.selectors import (
     artifact_browser_rows,
@@ -48,7 +46,7 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
                 ArtifactPreviewWidget(id="artifacts-screen-preview"),
                 id="artifacts-screen-main",
             ),
-            Static(id="artifacts-screen-footer"),
+            Static(id="artifacts-screen-footer", markup=False),
             id="artifacts-screen-root",
         )
 
@@ -64,9 +62,9 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
         )
         self.query_one(ArtifactPreviewWidget).update_preview(selected_artifact_preview(state))
         footer = "   ".join(footer_hints(state))
-        footer = f"{footer}\nGrouping: {escape(toolbar.group_by)}   Artifacts: {toolbar.total_count}"
+        footer = f"{footer}\nGrouping: {toolbar.group_by}   Artifacts: {toolbar.total_count}"
         if state.artifact_action_feedback:
-            footer = f"{footer}\n{escape(state.artifact_action_feedback)}"
+            footer = f"{footer}\n{state.artifact_action_feedback}"
         self.query_one("#artifacts-screen-footer", Static).update(footer)
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:

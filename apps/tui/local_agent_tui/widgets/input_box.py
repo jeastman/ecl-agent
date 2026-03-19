@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
+from ..renderables import badge, key_hints, text
 from ..store.selectors import TaskActionBarViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -34,7 +36,7 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             id="task-detail-command-input",
             disabled=True,
         )
-        yield Static(id="task-detail-command-status")
+        yield Static(id="task-detail-command-status", markup=False)
 
     def update_actions(self, model: TaskActionBarViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
@@ -57,10 +59,10 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             hints.append("[L] Hide Logs" if model.logs_visible else "[L] Show Logs")
         if model.back_enabled:
             hints.append("[Esc] Back")
-        status = escape(model.status_message)
+        renderables: list[Text] = [text(model.status_message)]
         if hints:
-            status = f"{status}\n{'   '.join(escape(hint) for hint in hints)}"
-        self.query_one("#task-detail-command-status", Static).update(status)
+            renderables.extend([Text(""), key_hints(hints)])
+        self.query_one("#task-detail-command-status", Static).update(Group(*renderables))
 
     def focus_input(self) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover

@@ -2,9 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.console import Group
-from rich.text import Text
-
+from ..renderables import block, metadata_line, text
 from ..store.selectors import ConfigDetailViewModel
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -33,5 +31,15 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
         if self._last_signature == signature:
             return
         self.border_title = model.title
-        self.update(Group(Text(f"Status: {model.status}"), Text(""), Text(model.summary), Text(""), Text(model.body)))
+        self.update(
+            block(
+                [
+                    metadata_line([("Status", model.status)]),
+                    "",
+                    text(model.summary),
+                    "",
+                    text(model.body),
+                ]
+            )
+        )
         self._last_signature = signature

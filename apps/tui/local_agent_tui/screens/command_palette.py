@@ -2,8 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
+from rich.console import Group
+from rich.text import Text
 
+from ..renderables import muted, text
 from ..store.app_state import AppState
 from ..store.selectors import CommandPaletteItemViewModel, command_palette
 
@@ -74,24 +76,26 @@ class CommandPaletteScreen(ModalScreen[None]):  # type: ignore[misc]
 def _render_results(items: list[CommandPaletteItemViewModel]) -> str:
     if not items:
         return "No matching commands."
-    lines: list[str] = []
+    lines: list[Text] = []
     for item in items:
         marker = ">" if item.is_selected else " "
-        lines.append(f"{marker} {_highlight_matches(item.label, item.match_spans)}")
-        lines.append(f"  {escape(item.hint)}")
-    return "\n".join(lines)
+        row = Text(f"{marker} ")
+        row.append_text(_highlight_matches(item.label, item.match_spans))
+        lines.append(row)
+        lines.append(muted(f"  {item.hint}"))
+    return Group(*lines)
 
 
-def _highlight_matches(text: str, spans: list[tuple[int, int]]) -> str:
+def _highlight_matches(text_value: str, spans: list[tuple[int, int]]) -> Text:
     if not spans:
-        return text
-    rendered: list[str] = []
+        return text(text_value)
+    rendered = Text()
     cursor = 0
     for start, end in spans:
         if start > cursor:
-            rendered.append(escape(text[cursor:start]))
-        rendered.append(f"[reverse]{escape(text[start:end])}[/reverse]")
+            rendered.append(text_value[cursor:start])
+        rendered.append(text_value[start:end], style="reverse")
         cursor = end
-    if cursor < len(text):
-        rendered.append(escape(text[cursor:]))
-    return "".join(rendered)
+    if cursor < len(text_value):
+        rendered.append(text_value[cursor:])
+    return rendered

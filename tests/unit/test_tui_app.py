@@ -508,7 +508,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dashboard_is_default_screen_and_shows_dashboard_content(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import pending_approvals_for_selected_task
+        from apps.tui.local_agent_tui.store.selectors import pending_approvals_for_selected_task, recent_artifacts, selected_task_summary
         from textual.containers import VerticalScroll
         from textual.widgets import Static
 
@@ -532,8 +532,8 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 artifacts = app.screen.query_one("#recent-artifacts", Static)
                 approvals = app.screen.query_one("#approval-queue", Static)
                 self.assertEqual(task_summary.border_title, "Selected Task")
-                self.assertIn("Scanning repository", str(task_summary_content.visual))
-                self.assertIn("report.md", str(artifacts.visual))
+                self.assertEqual(selected_task_summary(app._store.snapshot()).latest_summary, "Scanning repository")  # type: ignore[union-attr,attr-defined]
+                self.assertIn("report.md", [artifact.display_name for artifact in recent_artifacts(app._store.snapshot())])  # type: ignore[attr-defined]
                 self.assertIn(
                     "tool permission",
                     "\n".join(
@@ -896,7 +896,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_command_palette_opens_filters_and_routes_to_diagnostics(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import selected_diagnostics_detail
+        from apps.tui.local_agent_tui.store.selectors import command_palette, selected_diagnostics_detail
         from textual.widgets import Input, Static
 
         with (
@@ -917,8 +917,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 palette_input.value = "diag"
                 app.handle_command_palette_query_changed("diag")  # type: ignore[attr-defined]
                 await pilot.pause()
-                results = app.screen.query_one("#command-palette-results", Static)
-                self.assertIn("View diagnostics", str(results.visual))
+                self.assertIn(
+                    "View diagnostics",
+                    [item.label for item in command_palette(app._store.snapshot()).items],  # type: ignore[attr-defined]
+                )
                 await pilot.press("enter")
                 await pilot.pause()
                 await pilot.pause()
@@ -1168,7 +1170,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_opens_artifact_browser_and_markdown_viewer(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import task_artifact_panel, task_plan_view
+        from apps.tui.local_agent_tui.store.selectors import selected_task_header, task_artifact_panel, task_plan_view
         from apps.tui.local_agent_tui.widgets.task_detail_panels import TaskHeaderWidget
         from apps.tui.local_agent_tui.widgets.markdown_viewer import MarkdownViewerWidget
         from textual.widgets import Static
@@ -1193,7 +1195,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 timeline = app.screen.query_one("#task-detail-timeline", Static)
                 plan = app.screen.query_one("#task-detail-plan", Static)
                 artifacts = app.screen.query_one("#task-detail-artifacts", Static)
-                self.assertIn("task_1", str(app.screen.query_one("#task-detail-header-body", Static).visual))
+                self.assertEqual(selected_task_header(app._store.snapshot()).task_id, "task_1")  # type: ignore[union-attr,attr-defined]
                 self.assertIn("No events yet.", str(timeline.visual))
                 self.assertIn("Scanning repository", task_plan_view(app._store.snapshot()).current_step)  # type: ignore[attr-defined]
                 self.assertIn(
@@ -1239,7 +1241,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_side_panels_update_for_streamed_subagent_event(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import task_plan_view, task_subagent_activity
+        from apps.tui.local_agent_tui.store.selectors import selected_task_header, task_plan_view, task_subagent_activity
         from textual.widgets import Static
 
         with (
@@ -1284,7 +1286,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await pilot.pause()
 
-                self.assertIn("Active: researcher", str(header.visual))
+                self.assertEqual(selected_task_header(app._store.snapshot()).active_subagent, "researcher")  # type: ignore[union-attr,attr-defined]
                 self.assertIn("Inspect docs", task_plan_view(app._store.snapshot()).current_step)  # type: ignore[attr-defined]
                 subagent_items = task_subagent_activity(app._store.snapshot())  # type: ignore[attr-defined]
                 self.assertIn("researcher", [item.subagent_id for item in subagent_items])
@@ -1695,10 +1697,9 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("r")
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().connection_status, "connected")  # type: ignore[attr-defined]
-                status = app.screen.query_one("#task-detail-command-status", Static)
                 self.assertIn(
                     "Resume failed: task.resume requires a paused or resumable run",
-                    str(status.visual),
+                    app._store.snapshot().task_input_feedback or "",  # type: ignore[attr-defined]
                 )
                 header = app.screen.query_one("#status-bar", Static)
                 self.assertNotIn("-32602", str(header.visual))
@@ -1728,8 +1729,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 command_input.value = "resume"
                 await command_input.action_submit()
                 await pilot.pause()
-                status = app.screen.query_one("#task-detail-command-status", Static)
-                self.assertIn("Resume requested.", str(status.visual))
+                self.assertIn("Resume requested.", app._store.snapshot().task_input_feedback or "")  # type: ignore[attr-defined]
                 self.assertEqual(app._client.resume_calls[-1], ("task_2", "run_2"))  # type: ignore[attr-defined]
 
     async def test_task_detail_command_input_dispatches_reply(self) -> None:
@@ -1779,8 +1779,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 command_input.value = "reply Focus on docs only."
                 await command_input.action_submit()
                 await pilot.pause()
-                status = app.screen.query_one("#task-detail-command-status", Static)
-                self.assertIn("Reply accepted.", str(status.visual))
+                self.assertIn("Reply accepted.", app._store.snapshot().task_input_feedback or "")  # type: ignore[attr-defined]
                 self.assertEqual(
                     app._client.reply_calls[-1],  # type: ignore[attr-defined]
                     ("task_3", "run_3", "Focus on docs only."),
