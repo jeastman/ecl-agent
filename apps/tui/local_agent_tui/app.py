@@ -329,6 +329,9 @@ class AgentTUI(App):  # type: ignore[misc]
         # Compute new navigation stack
         if screen_name == "dashboard":
             new_stack: list[str] = ["dashboard"]
+        elif state.navigation_stack and state.navigation_stack[-1] == screen_name:
+            # Already at this screen — don't append duplicate
+            new_stack = list(state.navigation_stack)
         else:
             new_stack = list(state.navigation_stack) + [screen_name]
         message: UiMessage = {

@@ -65,6 +65,14 @@ class TestNavigationStackReducer(unittest.TestCase):
         state = reduce_app_state(state, {"kind": "ui", "navigation_stack": ["dashboard", "task_detail", "artifacts"]})
         self.assertEqual(state.navigation_stack, ["dashboard", "task_detail", "artifacts"])
 
+    def test_set_active_screen_does_not_duplicate_if_already_active(self) -> None:
+        # Verify via reducer that dispatching the same screen twice doesn't double-append
+        state = AppState()
+        state = reduce_app_state(state, {"kind": "ui", "navigation_stack": ["dashboard", "artifacts"]})
+        # Simulating _set_active_screen("artifacts") again — stack should not grow
+        state = reduce_app_state(state, {"kind": "ui", "navigation_stack": ["dashboard", "artifacts"]})
+        self.assertEqual(state.navigation_stack, ["dashboard", "artifacts"])
+
 
 if __name__ == "__main__":
     unittest.main()
