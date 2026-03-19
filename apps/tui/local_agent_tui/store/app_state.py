@@ -26,6 +26,8 @@ class UiMessage(TypedDict, total=False):
     kind: Literal["ui"]
     active_screen: str
     focused_pane: str
+    runtime_snapshot_status: str
+    runtime_snapshot_error: str | None
     selected_task_id: str | None
     selected_approval_id: str | None
     selected_artifact_id: str | None
@@ -54,6 +56,10 @@ class UiMessage(TypedDict, total=False):
     command_palette_visible: bool
     command_palette_query: str
     command_palette_selected_id: str | None
+    approvals_request_status: str
+    approvals_request_error: str | None
+    artifacts_request_status: str
+    artifacts_request_error: str | None
     diagnostics_origin_screen: str
     diagnostics_request_status: str
     diagnostics_request_error: str | None
@@ -83,6 +89,8 @@ class TaskEventRecord:
 class AppState:
     connection_status: str = "disconnected"
     last_error: str | None = None
+    runtime_snapshot_status: str = "idle"
+    runtime_snapshot_error: str | None = None
     runtime_health: dict[str, Any] = field(default_factory=dict)
     task_index: list[str] = field(default_factory=list)
     task_snapshots: dict[str, dict[str, Any]] = field(default_factory=dict)
@@ -124,6 +132,10 @@ class AppState:
     command_palette_visible: bool = False
     command_palette_query: str = ""
     command_palette_selected_id: str | None = None
+    approvals_request_status: str = "idle"
+    approvals_request_error: str | None = None
+    artifacts_request_status: str = "idle"
+    artifacts_request_error: str | None = None
     diagnostics_by_task: dict[tuple[str, str], list[dict[str, Any]]] = field(default_factory=dict)
     diagnostics_origin_screen: str = "dashboard"
     diagnostics_request_status: str = "idle"

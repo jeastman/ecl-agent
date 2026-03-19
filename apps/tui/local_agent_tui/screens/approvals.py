@@ -2,14 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.markup import escape
-
 from ..store.app_state import AppState
 from ..store.selectors import footer_hints, pending_approvals, selected_approval_detail
 from ..widgets.approval_detail import ApprovalDetailWidget
 from ..widgets.approval_queue import ApprovalQueueWidget
+from ..widgets.loading import loading_renderable
 from ..widgets.status_bar import StatusBar
-from ..theme.colors import TEXT_SECONDARY
+from ..widgets.toast import ToastRack
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -44,6 +43,7 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
                 id="approvals-screen-main",
             ),
             Static(id="approvals-screen-footer"),
+            ToastRack(id="toast-rack"),
             id="approvals-screen-root",
         )
 
@@ -51,13 +51,21 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
+        if state.approvals_request_status == "loading":
+            self.query_one(ApprovalQueueWidget).show_loading(
+                "Refreshing approvals...",
+                focused=True,
+                inbox_mode=True,
+            )
+            detail = self.query_one(ApprovalDetailWidget)
+            detail.border_title = "Request Details"
+            detail.update(loading_renderable("Loading approval details...", skeleton_lines=4))
+            self.query_one("#approvals-screen-footer", Static).update(footer_hints(state))
+            return
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals(state),
             focused=True,
             inbox_mode=True,
         )
         self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
-        footer = footer_hints(state)
-        if state.approval_feedback:
-            footer.append(f"\n{escape(state.approval_feedback)}", style=TEXT_SECONDARY)
-        self.query_one("#approvals-screen-footer", Static).update(footer)
+        self.query_one("#approvals-screen-footer", Static).update(footer_hints(state))

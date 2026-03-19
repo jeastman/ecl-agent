@@ -7,7 +7,9 @@ from rich.text import Text
 
 from ..store.app_state import AppState
 from ..store.selectors import diagnostics_items, footer_hints, selected_diagnostics_detail
+from ..widgets.loading import loading_renderable
 from ..widgets.status_bar import StatusBar
+from ..widgets.toast import ToastRack
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -42,6 +44,7 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
                 id="diagnostics-screen-main",
             ),
             Static(id="diagnostics-screen-footer"),
+            ToastRack(id="toast-rack"),
             id="diagnostics-screen-root",
         )
 
@@ -49,6 +52,15 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
+        if state.diagnostics_request_status == "loading":
+            list_panel = self.query_one("#diagnostics-screen-list", Static)
+            list_panel.border_title = "Diagnostics"
+            list_panel.update(loading_renderable("Loading diagnostics...", skeleton_lines=4))
+            detail_panel = self.query_one("#diagnostics-screen-detail", Static)
+            detail_panel.border_title = "Diagnostics"
+            detail_panel.update(loading_renderable("Loading diagnostic details...", skeleton_lines=5))
+            self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state))
+            return
         items = diagnostics_items(state)
         list_panel = self.query_one("#diagnostics-screen-list", Static)
         list_panel.border_title = "Diagnostics"

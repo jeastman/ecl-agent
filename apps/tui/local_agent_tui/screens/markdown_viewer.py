@@ -6,6 +6,7 @@ from ..store.app_state import AppState
 from ..store.selectors import selected_markdown_artifact
 from ..widgets.status_bar import StatusBar
 from ..widgets.markdown_viewer import MarkdownSearchState, MarkdownViewerWidget
+from ..widgets.toast import ToastRack
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -63,6 +64,7 @@ class MarkdownViewerScreen(Screen):  # type: ignore[misc]
             ),
             MarkdownViewerWidget(id="markdown-viewer-body"),
             Static(id="markdown-viewer-footer", markup=False),
+            ToastRack(id="toast-rack"),
             id="markdown-viewer-root",
         )
 

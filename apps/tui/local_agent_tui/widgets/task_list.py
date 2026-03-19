@@ -51,6 +51,13 @@ class TaskListEmptyRow(ListItem):  # type: ignore[misc]
         super().__init__(Label(render_empty_state("tasks"), classes="task-list-row-content"), classes="task-list-row task-list-empty-row")
 
 
+class TaskListPlaceholderRow(ListItem):  # type: ignore[misc]
+    can_focus = False
+
+    def __init__(self, label: str) -> None:
+        super().__init__(Label(Text(label), classes="task-list-row-content"), classes="task-list-row task-list-empty-row")
+
+
 class TaskListWidget(ListView):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -89,6 +96,15 @@ class TaskListWidget(ListView):  # type: ignore[misc]
             self.index = selected_index
         elif not items:
             self.index = None
+        self.border_title = "Tasks"
+        self.border_subtitle = "Focused" if focused else ""
+        self.set_class(focused, "-focused-pane")
+
+    def show_loading(self, label: str, *, focused: bool) -> None:
+        self.clear()
+        self.append(TaskListPlaceholderRow(label))
+        self._task_id_list = []
+        self.index = None
         self.border_title = "Tasks"
         self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")

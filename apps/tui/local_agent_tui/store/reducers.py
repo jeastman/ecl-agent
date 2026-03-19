@@ -44,6 +44,12 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         state,
         active_screen=str(message.get("active_screen", state.active_screen)),
         focused_pane=str(message.get("focused_pane", state.focused_pane)),
+        runtime_snapshot_status=str(
+            message.get("runtime_snapshot_status", state.runtime_snapshot_status)
+        ),
+        runtime_snapshot_error=_normalize_error(
+            message.get("runtime_snapshot_error", state.runtime_snapshot_error)
+        ),
         selected_task_id=selected_task_id,
         selected_approval_id=selected_approval_id,
         approval_feedback=message.get("approval_feedback", state.approval_feedback),
@@ -102,6 +108,18 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         command_palette_selected_id=message.get(
             "command_palette_selected_id", state.command_palette_selected_id
         ),
+        approvals_request_status=str(
+            message.get("approvals_request_status", state.approvals_request_status)
+        ),
+        approvals_request_error=_normalize_error(
+            message.get("approvals_request_error", state.approvals_request_error)
+        ),
+        artifacts_request_status=str(
+            message.get("artifacts_request_status", state.artifacts_request_status)
+        ),
+        artifacts_request_error=_normalize_error(
+            message.get("artifacts_request_error", state.artifacts_request_error)
+        ),
         diagnostics_origin_screen=str(
             message.get("diagnostics_origin_screen", state.diagnostics_origin_screen)
         ),
@@ -159,6 +177,8 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             state,
             runtime_health=result,
             connection_status="connected",
+            runtime_snapshot_status="loaded",
+            runtime_snapshot_error=None,
             last_error=None,
         )
 
@@ -207,6 +227,8 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
         return replace(
             state,
             approvals_by_task=approvals_by_task,
+            approvals_request_status="loaded",
+            approvals_request_error=None,
             selected_approval_id=selected_approval_id,
         )
 
@@ -226,6 +248,8 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
         return replace(
             state,
             artifacts_by_task=artifacts_by_task,
+            artifacts_request_status="loaded",
+            artifacts_request_error=None,
             selected_artifact_id_by_task=selected_artifact_id_by_task,
         )
 

@@ -28,6 +28,11 @@ class MemoryEntryRow(ListItem):  # type: ignore[misc]
         super().__init__(Label(Text(f"{item.title}\n{item.subtitle}")))
 
 
+class MemoryEntryPlaceholderRow(ListItem):  # type: ignore[misc]
+    def __init__(self, label: str) -> None:
+        super().__init__(Label(Text(label)))
+
+
 class MemoryEntryListWidget(ListView):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -54,3 +59,11 @@ class MemoryEntryListWidget(ListView):  # type: ignore[misc]
         if selected_index is not None:
             self.index = selected_index
         self._last_signature = signature
+
+    def show_loading(self, label: str, *, focused: bool) -> None:
+        self.border_title = "Entries"
+        self.border_subtitle = "Focused" if focused else ""
+        self.set_class(focused, "-focused-pane")
+        self.clear()
+        self.append(MemoryEntryPlaceholderRow(label))
+        self._last_signature = None

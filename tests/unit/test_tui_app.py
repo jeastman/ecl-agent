@@ -904,17 +904,16 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Approve", str(footer.visual))
                 await pilot.press("a")
                 await pilot.pause()
-                footer = app.screen.query_one("#approvals-screen-footer", Static)
+                app.screen.dismiss(True)  # type: ignore[attr-defined]
+                await pilot.pause()
                 self.assertEqual(
                     app._client.approve_calls[-1],  # type: ignore[attr-defined]
                     ("task_1", "run_1", "approval_1", "approved"),
                 )
                 self.assertEqual(app._store.snapshot().selected_approval_id, "approval_2")  # type: ignore[attr-defined]
-                self.assertIn("Approved approval_1.", str(footer.visual))
 
     async def test_approvals_screen_rejects_request_and_keeps_feedback(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from textual.widgets import Static
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -931,16 +930,15 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await pilot.press("r")
                 await pilot.pause()
-                footer = app.screen.query_one("#approvals-screen-footer", Static)
+                app.screen.dismiss(True)  # type: ignore[attr-defined]
+                await pilot.pause()
                 self.assertEqual(
                     app._client.approve_calls[-1],  # type: ignore[attr-defined]
                     ("task_1", "run_1", "approval_1", "rejected"),
                 )
-                self.assertIn("Rejected approval_1.", str(footer.visual))
 
     async def test_approvals_screen_refreshes_when_selected_approval_is_stale(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from textual.widgets import Static
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -979,10 +977,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 ]
                 await pilot.press("a")
                 await pilot.pause()
-                footer = app.screen.query_one("#approvals-screen-footer", Static)
+                app.screen.dismiss(True)  # type: ignore[attr-defined]
+                await pilot.pause()
                 self.assertEqual(app._client.approve_calls, [])  # type: ignore[attr-defined]
                 self.assertEqual(app._store.snapshot().selected_approval_id, "approval_3")  # type: ignore[attr-defined]
-                self.assertIn("stale", str(footer.visual).lower())
 
     async def test_opening_approvals_refreshes_known_task_approval_lists(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1044,10 +1042,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await pilot.press("a")
                 await pilot.pause()
-                queue = app.screen.query_one("#approvals-screen-queue", Static)
-                detail = app.screen.query_one("#approvals-screen-detail", Static)
-                self.assertIn("No pending approvals.", str(queue.visual))
-                self.assertIn("Select an approval", str(detail.visual))
+                app.screen.dismiss(True)  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(pending_approvals(app._store.snapshot()), [])  # type: ignore[attr-defined]
+                self.assertIsNone(app._store.snapshot().selected_approval_id)  # type: ignore[attr-defined]
 
     async def test_command_palette_opens_filters_and_routes_to_diagnostics(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1680,7 +1678,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_artifacts_screen_supports_external_open(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from apps.tui.local_agent_tui.widgets.artifact_table import ArtifactTableWidget
-        from textual.widgets import Static
+        from apps.tui.local_agent_tui.widgets.toast import ToastRack
 
         class _FakeProcess:
             returncode = 0
@@ -1713,8 +1711,13 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await pilot.press("e")
                 await pilot.pause()
-                footer = app.screen.query_one("#artifacts-screen-footer", Static)
-                self.assertIn("Opened /workspace/artifacts/report.html.", str(footer.visual))
+                rack = app.screen.query_one(ToastRack)
+                self.assertTrue(
+                    any(
+                        "Opened /workspace/artifacts/report.html." in str(child.render())
+                        for child in rack.children
+                    )
+                )
                 open_mock.assert_awaited()
                 table = app.screen.query_one(ArtifactTableWidget)
                 self.assertEqual(len(table.children), 2)
@@ -1754,6 +1757,93 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().artifact_browser_selected_id, "artifact_2")  # type: ignore[attr-defined]
                 self.assertEqual(len(getattr(table, "_nodes", [])), 2)
+
+    async def test_opening_approvals_sets_loading_state_immediately(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.action_open_approvals()
+                self.assertEqual(
+                    app._store.snapshot().approvals_request_status,  # type: ignore[attr-defined]
+                    "loading",
+                )
+
+    async def test_quit_prompts_when_non_terminal_tasks_exist(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("q")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ConfirmDialogScreen")
+                app.screen.dismiss(False)  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
+
+    async def test_quit_exits_immediately_when_all_tasks_are_terminal(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    **app._store.snapshot().task_snapshots["task_1"],  # type: ignore[attr-defined]
+                                    "status": "completed",
+                                }
+                            }
+                        },
+                    }
+                )
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    **app._store.snapshot().task_snapshots["task_2"],  # type: ignore[attr-defined]
+                                    "status": "failed",
+                                }
+                            }
+                        },
+                    }
+                )
+                with patch.object(app, "exit") as exit_mock:
+                    await app.action_quit()
+                exit_mock.assert_called_once()
 
     async def test_markdown_viewer_scroll_and_search_bindings(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

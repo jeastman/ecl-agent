@@ -21,6 +21,7 @@ from ..widgets.input_box import InputBoxWidget
 from ..widgets.log_view import LogViewWidget
 from ..widgets.plan_view import PlanViewWidget
 from ..widgets.status_bar import StatusBar
+from ..widgets.toast import ToastRack
 from ..theme.colors import TEXT_SECONDARY
 from ..widgets.task_detail_panels import (
     NotificationStripWidget,
@@ -74,7 +75,8 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
                 id="task-detail-main",
             ),
             InputBoxWidget(id="task-detail-input"),
-            Static(id="task-detail-footer", markup=False),
+            Static(id="task-detail-footer"),
+            ToastRack(id="toast-rack"),
             id="task-detail-root",
         )
 

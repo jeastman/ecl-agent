@@ -6,6 +6,7 @@ from rich.console import Group
 from rich.text import Text
 
 from ..store.selectors import ArtifactPreviewViewModel
+from .loading import loading_renderable
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -50,6 +51,14 @@ class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
         )
         body = model.body if model.render_as_markdown else _as_markdown_code_block(model.body)
         self.query_one("#artifact-preview-body", Markdown).update(body)
+        self.scroll_home(animate=False)
+
+    def show_loading(self, label: str) -> None:
+        self.border_title = "Preview"
+        self.query_one("#artifact-preview-meta", Static).update(
+            loading_renderable(label, skeleton_lines=2)
+        )
+        self.query_one("#artifact-preview-body", Markdown).update("_Loading preview..._")
         self.scroll_home(animate=False)
 
 

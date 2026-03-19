@@ -22,9 +22,11 @@ from ..theme.typography import label, muted, status_badge, title, value
 from ..utils.time_format import compact_datetime
 from ..utils.text import truncate_id
 from ..utils.text import truncate
+from ..widgets.loading import loading_renderable
 from ..widgets.approval_queue import ApprovalQueueWidget
 from ..widgets.status_bar import StatusBar
 from ..widgets.task_list import TaskListRow, TaskListWidget
+from ..widgets.toast import ToastRack
 from ..theme.colors import ACCENT, DANGER, TEXT_MUTED_DEEP, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -71,7 +73,8 @@ class DashboardScreen(Screen):  # type: ignore[misc]
                 ),
                 id="dashboard-main",
             ),
-            Static(id="dashboard-footer", markup=False),
+            Static(id="dashboard-footer"),
+            ToastRack(id="toast-rack"),
             id="dashboard-root",
         )
 
@@ -79,6 +82,27 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
+        if state.runtime_snapshot_status == "loading" and not state.task_snapshots:
+            self.query_one(TaskListWidget).show_loading("Loading tasks...", focused=state.focused_pane == "tasks")
+            self.query_one(ApprovalQueueWidget).show_loading(
+                "Loading approvals...",
+                focused=state.focused_pane == "approvals",
+                inbox_mode=False,
+            )
+            task_summary = self.query_one("#task-summary", VerticalScroll)
+            task_summary.border_title = "Selected Task"
+            task_summary.border_subtitle = "Loading"
+            task_summary.set_class(state.focused_pane == "summary", "-focused-pane")
+            self.query_one("#task-summary-content", Static).update(
+                loading_renderable("Loading dashboard summary...", skeleton_lines=5)
+            )
+            artifacts_pane = self.query_one("#recent-artifacts", Static)
+            artifacts_pane.border_title = "Recent Artifacts"
+            artifacts_pane.border_subtitle = "Loading"
+            artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
+            artifacts_pane.update(loading_renderable("Loading artifacts...", skeleton_lines=4))
+            self.query_one("#dashboard-footer", Static).update(footer_hints(state))
+            return
         tasks = recent_tasks(state)
         self.query_one(TaskListWidget).update_tasks(tasks, focused=state.focused_pane == "tasks")
         self.query_one(ApprovalQueueWidget).update_approvals(

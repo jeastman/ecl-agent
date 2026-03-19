@@ -69,6 +69,40 @@ Screen {
     padding: 1;
 }
 
+#toast-rack {
+    dock: bottom;
+    align: right bottom;
+    width: 48;
+    height: auto;
+    padding: 0;
+    margin: 0 1 1 0;
+    layer: overlay;
+}
+
+.toast-item {
+    border: round $la-border-default;
+    background: $la-bg-overlay;
+    color: $la-text;
+    padding: 0 1;
+    margin-top: 1;
+}
+
+.toast-item.-info {
+    border-left: heavy $la-focus;
+}
+
+.toast-item.-success {
+    border-left: heavy $la-success;
+}
+
+.toast-item.-warning {
+    border-left: heavy $la-warning;
+}
+
+.toast-item.-error {
+    border-left: heavy $la-danger;
+}
+
 #dashboard-main {
     layout: horizontal;
     height: 1fr;
@@ -174,10 +208,48 @@ Screen {
 #diagnostics-screen-detail,
 #command-palette-panel,
 #create-task-panel,
-#task-timeline-prompt-panel {
+#task-timeline-prompt-panel,
+#confirm-dialog-panel {
     border: round $la-border-subtle;
     background: $la-surface;
     padding: 1;
+}
+
+#confirm-dialog-panel {
+    width: 64;
+    max-width: 80%;
+    height: auto;
+    border: heavy $la-focus;
+    background: $la-bg-overlay;
+}
+
+#confirm-dialog-panel.-danger {
+    border: heavy $la-danger;
+}
+
+#confirm-dialog-title {
+    text-style: bold;
+    color: $la-text-title;
+    margin-bottom: 1;
+}
+
+#confirm-dialog-body {
+    color: $la-text-secondary;
+    margin-bottom: 1;
+}
+
+#confirm-dialog-actions {
+    layout: horizontal;
+    height: auto;
+}
+
+.confirm-dialog-button {
+    margin-right: 1;
+}
+
+.confirm-dialog-button.-danger {
+    background: $la-danger;
+    color: $la-text-title;
 }
 
 #task-detail-header,

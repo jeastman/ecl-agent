@@ -13,9 +13,11 @@ from ..store.selectors import (
     memory_scope_groups,
     selected_memory_detail,
 )
+from ..widgets.loading import loading_renderable
 from ..widgets.memory_entry_list import MemoryEntryListWidget, MemoryEntryRow
 from ..widgets.memory_group_list import MemoryGroupListWidget, MemoryGroupRow
 from ..widgets.status_bar import StatusBar
+from ..widgets.toast import ToastRack
 from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -63,7 +65,8 @@ class MemoryScreen(Screen):  # type: ignore[misc]
                 ),
                 id="memory-screen-main",
             ),
-            Static(id="memory-screen-footer", markup=False),
+            Static(id="memory-screen-footer"),
+            ToastRack(id="toast-rack"),
             id="memory-screen-root",
         )
 
@@ -71,6 +74,27 @@ class MemoryScreen(Screen):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
+        if state.memory_request_status == "loading":
+            self.query_one(MemoryGroupListWidget).show_loading(
+                "Loading scopes...",
+                focused=state.focused_pane == "memory_groups",
+            )
+            self.query_one(MemoryEntryListWidget).show_loading(
+                "Loading entries...",
+                focused=state.focused_pane == "memory_entries",
+            )
+            summary = self.query_one("#memory-screen-group-summary", Static)
+            summary.border_title = "Selected Scope"
+            summary.update(loading_renderable("Loading memory summary...", skeleton_lines=2))
+            detail = self.query_one("#memory-screen-detail", Static)
+            detail.border_title = "Memory Inspector"
+            detail.update(loading_renderable("Loading memory details...", skeleton_lines=5))
+            footer = footer_hints(state)
+            footer.append("\nMemory inspector is read-only.", style=TEXT_SECONDARY)
+            if self._last_footer != footer.plain:
+                self.query_one("#memory-screen-footer", Static).update(footer)
+                self._last_footer = footer.plain
+            return
         self.query_one(MemoryGroupListWidget).update_groups(
             memory_scope_groups(state),
             focused=state.focused_pane == "memory_groups",

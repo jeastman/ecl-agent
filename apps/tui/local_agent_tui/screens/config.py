@@ -4,9 +4,11 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..store.app_state import AppState
 from ..store.selectors import config_section_items, footer_hints, selected_config_detail
+from ..widgets.loading import loading_renderable
 from ..widgets.config_detail import ConfigDetailWidget
 from ..widgets.config_section_list import ConfigSectionListWidget, ConfigSectionRow
 from ..widgets.status_bar import StatusBar
+from ..widgets.toast import ToastRack
 from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -51,7 +53,8 @@ class ConfigScreen(Screen):  # type: ignore[misc]
                 ConfigDetailWidget(id="config-screen-detail"),
                 id="config-screen-main",
             ),
-            Static(id="config-screen-footer", markup=False),
+            Static(id="config-screen-footer"),
+            ToastRack(id="toast-rack"),
             id="config-screen-root",
         )
 
@@ -63,8 +66,12 @@ class ConfigScreen(Screen):  # type: ignore[misc]
             config_section_items(state),
             focused=state.focused_pane == "config_sections",
         )
-        detail_model = selected_config_detail(state)
-        self.query_one(ConfigDetailWidget).update_detail(detail_model)
+        detail_widget = self.query_one(ConfigDetailWidget)
+        if state.config_request_status == "loading":
+            detail_widget.show_loading("Refreshing configuration snapshot...")
+        else:
+            detail_model = selected_config_detail(state)
+            detail_widget.update_detail(detail_model)
         footer = footer_hints(state)
         footer.append("\nConfig viewer is read-only.", style=TEXT_SECONDARY)
         if state.config_request_error:

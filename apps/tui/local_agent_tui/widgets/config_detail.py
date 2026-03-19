@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, cast
 
 from ..renderables import block, metadata_line, text
 from ..store.selectors import ConfigDetailViewModel
+from .loading import loading_renderable
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -43,3 +44,8 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
             )
         )
         self._last_signature = signature
+
+    def show_loading(self, label: str) -> None:
+        self.border_title = "Config Viewer"
+        self.update(loading_renderable(label, skeleton_lines=4))
+        self._last_signature = None

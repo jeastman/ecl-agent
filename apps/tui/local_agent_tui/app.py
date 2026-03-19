@@ -7,7 +7,7 @@ import sys
 import threading
 import time
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Callable, cast
 
 from .actions.approve_request import build_approval_request_action
 from .actions.inspect_memory import build_inspect_memory_action
@@ -17,6 +17,7 @@ from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
 from .screens.artifacts import ArtifactsScreen
 from .screens.command_palette import CommandPaletteScreen
+from .screens.confirm_dialog import ConfirmDialogScreen
 from .screens.config import ConfigScreen
 from .screens.create_task import CreateTaskScreen
 from .screens.dashboard import DashboardScreen
@@ -47,6 +48,7 @@ from .store.selectors import (
 )
 from .widgets.input_box import InputBoxWidget
 from .widgets.log_view import LogViewWidget
+from .widgets.toast import ToastMessage, ToastRack
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -144,6 +146,7 @@ class AgentTUI(App):  # type: ignore[misc]
     async def on_mount(self) -> None:
         self.push_screen("dashboard")
         self._store.dispatch({"kind": "connection", "status": "connecting"})
+        self._set_runtime_snapshot_loading("loading")
         self._render_state()
         self.run_worker(self._connect_and_refresh(), group="runtime-bootstrap", exclusive=True)
 
@@ -164,6 +167,8 @@ class AgentTUI(App):  # type: ignore[misc]
         preferred_task_id: str | None,
         preferred_run_id: str | None,
     ) -> None:
+        self._set_runtime_snapshot_loading("loading")
+        self._render_state()
         try:
             await self._client.connect()
             self._store.dispatch({"kind": "connection", "status": "connected"})
@@ -188,10 +193,12 @@ class AgentTUI(App):  # type: ignore[misc]
                 self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": task_payload})
             await self._prefetch_dashboard_data()
             await self._prime_config_snapshot()
+            self._set_runtime_snapshot_loading("loaded")
             self._render_state()
             await self._sync_selected_task()
         except ProtocolClientError as exc:
             self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+            self._set_runtime_snapshot_loading("error", str(exc))
             self._render_state()
 
     async def _prefetch_dashboard_data(self) -> None:
@@ -204,35 +211,89 @@ class AgentTUI(App):  # type: ignore[misc]
             await self._load_task_related(task_id=task_id, run_id=run_id)
 
     async def _refresh_known_artifacts(self) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "artifacts_request_status": "loading",
+                "artifacts_request_error": None,
+            }
+        )
+        self._render_state()
         state = self._store.snapshot()
-        for task_id in recent_task_ids(state):
-            task = state.task_snapshots.get(task_id)
-            if task is None:
-                continue
-            run_id = str(task.get("run_id", "")) or None
-            try:
-                artifacts = await self._client.task_artifacts_list(task_id, run_id)
-            except ProtocolClientError as exc:
-                self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
-                continue
+        if not recent_task_ids(state):
             self._store.dispatch(
-                {"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts}
+                {
+                    "kind": "ui",
+                    "artifacts_request_status": "loaded",
+                    "artifacts_request_error": None,
+                }
             )
+            self._render_state()
+            return
+        try:
+            for task_id in recent_task_ids(state):
+                task = state.task_snapshots.get(task_id)
+                if task is None:
+                    continue
+                run_id = str(task.get("run_id", "")) or None
+                artifacts = await self._client.task_artifacts_list(task_id, run_id)
+                self._store.dispatch(
+                    {"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts}
+                )
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "artifacts_request_status": "error",
+                    "artifacts_request_error": str(exc),
+                }
+            )
+            self._render_state()
+            return
         self._ensure_artifact_browser_selection()
         self._render_state()
         self._queue_selected_artifact_preview_load()
 
     async def _refresh_known_approvals(self) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "approvals_request_status": "loading",
+                "approvals_request_error": None,
+            }
+        )
+        self._render_state()
         state = self._store.snapshot()
-        for task_id in recent_task_ids(state):
-            task = state.task_snapshots.get(task_id)
-            if task is None:
-                continue
-            run_id = str(task.get("run_id", "")) or None
-            approvals = await self._client.task_approvals_list(task_id, run_id)
+        if not recent_task_ids(state):
             self._store.dispatch(
-                {"kind": "rpc", "name": "task.approvals.list", "payload": approvals}
+                {
+                    "kind": "ui",
+                    "approvals_request_status": "loaded",
+                    "approvals_request_error": None,
+                }
             )
+            self._render_state()
+            return
+        try:
+            for task_id in recent_task_ids(state):
+                task = state.task_snapshots.get(task_id)
+                if task is None:
+                    continue
+                run_id = str(task.get("run_id", "")) or None
+                approvals = await self._client.task_approvals_list(task_id, run_id)
+                self._store.dispatch(
+                    {"kind": "rpc", "name": "task.approvals.list", "payload": approvals}
+                )
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "approvals_request_status": "error",
+                    "approvals_request_error": str(exc),
+                }
+            )
+            self._render_state()
+            return
         self._render_state()
 
     async def _load_task_related(self, *, task_id: str, run_id: str | None) -> None:
@@ -323,6 +384,54 @@ class AgentTUI(App):  # type: ignore[misc]
             self._render_state()
 
         self.set_timer(3.0, clear_feedback)
+
+    def _toast(self, message: str, *, level: str = "info", timeout_seconds: float | None = None) -> None:
+        rack = self._toast_rack()
+        if rack is None:
+            return
+        if timeout_seconds is None:
+            timeout_seconds = 5.0 if level == "error" else 3.0
+        rack.show_toast(
+            ToastMessage(message=message, level=level, timeout_seconds=timeout_seconds)
+        )
+
+    def _toast_rack(self) -> ToastRack | None:
+        try:
+            return self.screen.query_one(ToastRack)
+        except NoMatches:
+            return None
+
+    def _set_runtime_snapshot_loading(self, status: str, error: str | None = None) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "runtime_snapshot_status": status,
+                "runtime_snapshot_error": error,
+            }
+        )
+
+    def _confirm(
+        self,
+        *,
+        title: str,
+        body: str,
+        confirm_label: str,
+        danger: bool,
+        on_confirm: Callable[[], None] | None = None,
+    ) -> None:
+        def _handle(result: bool | None) -> None:
+            if result and on_confirm is not None:
+                on_confirm()
+
+        self.push_screen(
+            ConfirmDialogScreen(
+                title=title,
+                body=body,
+                confirm_label=confirm_label,
+                danger=danger,
+            ),
+            _handle,
+        )
 
     def _render_state(self) -> None:
         self._last_render_at = time.monotonic()
@@ -528,6 +637,13 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.active_screen == "approvals":
             self.action_approve_selected_request()
             return
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "approvals_request_status": "loading",
+                "approvals_request_error": None,
+            }
+        )
         self._set_active_screen("approvals")
         self.run_worker(
             self._refresh_known_approvals(),
@@ -769,6 +885,13 @@ class AgentTUI(App):  # type: ignore[misc]
                 message["artifact_browser_selected_id"] = selected_panel.artifact_id
         self._store.dispatch(message)
         self.switch_screen("artifacts")
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "artifacts_request_status": "loading",
+                "artifacts_request_error": None,
+            }
+        )
         self._ensure_artifact_browser_selection()
         self._render_state()
         self.run_worker(self._refresh_known_artifacts(), group="artifacts-refresh", exclusive=True)
@@ -812,7 +935,16 @@ class AgentTUI(App):  # type: ignore[misc]
         if self._store.snapshot().active_screen == "markdown_viewer":
             self.action_back_dashboard()
             return
-        self.exit()
+        if not _has_non_terminal_tasks(self._store.snapshot()):
+            self.exit()
+            return
+        self._confirm(
+            title="Quit TUI?",
+            body="There are still active or paused tasks. Quit the TUI anyway?",
+            confirm_label="Quit",
+            danger=True,
+            on_confirm=self.exit,
+        )
 
     def action_open_selected_approval_task(self) -> None:
         selected = selected_approval_detail(self._store.snapshot())
@@ -957,10 +1089,29 @@ class AgentTUI(App):  # type: ignore[misc]
         self._render_state()
 
     def action_approve_selected_request(self) -> None:
-        self._submit_selected_approval("approve")
+        self._confirm_selected_approval("approve")
 
     def action_reject_selected_request(self) -> None:
-        self._submit_selected_approval("reject")
+        self._confirm_selected_approval("reject")
+
+    def _confirm_selected_approval(self, decision: str) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "approvals":
+            return
+        selected = selected_approval_detail(state)
+        if selected is None:
+            return
+        action_name = "Approve" if decision == "approve" else "Reject"
+        self._confirm(
+            title=f"{action_name} Request?",
+            body=(
+                f"{action_name} {selected.request_type} approval for {selected.task_id} "
+                f"({selected.approval_id})?"
+            ),
+            confirm_label=action_name,
+            danger=decision == "reject",
+            on_confirm=lambda: self._submit_selected_approval(decision),
+        )
 
     def _submit_selected_approval(self, decision: str) -> None:
         state = self._store.snapshot()
@@ -1002,13 +1153,10 @@ class AgentTUI(App):  # type: ignore[misc]
                 and pending_approval_id != approval_id
             ):
                 await self._load_task_related(task_id=task_id, run_id=run_id or None)
-                self._store.dispatch(
-                    {
-                        "kind": "ui",
-                        "approval_feedback": "Approval request is stale. Refreshed pending approvals.",
-                    }
+                self._toast(
+                    "Approval request is stale. Refreshed pending approvals.",
+                    level="warning",
                 )
-                self._render_state()
                 return
             response = await self._client.task_approve(
                 task_id,
@@ -1018,9 +1166,8 @@ class AgentTUI(App):  # type: ignore[misc]
             )
             self._store.dispatch({"kind": "rpc", "name": "task.approve", "payload": response})
             await self._load_task_related(task_id=task_id, run_id=run_id or None)
-            feedback = f"{decision.title()} {approval_id}."
-            self._store.dispatch({"kind": "ui", "approval_feedback": feedback})
-            self._render_state()
+            verb = "Approved" if decision == "approve" else "Rejected"
+            self._toast(f"{verb} {approval_id}.", level="success")
             self._start_selected_task_stream(task_id=task_id, run_id=run_id or None)
         except ProtocolClientError as exc:
             await self._refresh_task_snapshot(task_id=task_id, run_id=run_id or None)
@@ -1029,13 +1176,11 @@ class AgentTUI(App):  # type: ignore[misc]
             feedback = f"Approval request failed: {error_text}"
             if "approval is not the active pending approval for this run" in error_text:
                 feedback = "Approval request is stale. Refreshed pending approvals."
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "approval_feedback": feedback,
-                }
+            self._toast(
+                feedback,
+                level="warning" if "stale" in feedback.lower() else "error",
+                timeout_seconds=5.0,
             )
-            self._render_state()
 
     async def _refresh_task_snapshot(
         self,
@@ -1204,46 +1349,25 @@ class AgentTUI(App):  # type: ignore[misc]
             self.switch_screen("markdown_viewer")
             self._render_state()
             return
-        self._store.dispatch(
-            {
-                "kind": "ui",
-                "artifact_action_feedback": "This artifact does not have an in-TUI viewer. Use [E] to open externally when available.",
-            }
+        self._toast(
+            "This artifact does not have an in-TUI viewer. Use [E] to open externally when available.",
+            level="warning",
         )
-        self._render_state()
 
     async def _open_selected_artifact_externally(self) -> None:
         state = self._store.snapshot()
         selected = selected_artifact_browser_item(state)
         preview = selected_artifact_preview(state)
         if selected is None or preview.artifact_id is None:
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "artifact_action_feedback": "Select an artifact first.",
-                }
-            )
-            self._render_state()
+            self._toast("Select an artifact first.", level="warning")
             return
         if not preview.external_open_supported:
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "artifact_action_feedback": "External open is not available for the selected artifact.",
-                }
-            )
-            self._render_state()
+            self._toast("External open is not available for the selected artifact.", level="warning")
             return
         logical_path = str(selected.get("logical_path", "")).strip()
         command = _external_open_command(logical_path)
         if command is None:
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "artifact_action_feedback": "External open is not supported on this platform.",
-                }
-            )
-            self._render_state()
+            self._toast("External open is not supported on this platform.", level="error")
             return
         try:
             process = await asyncio.create_subprocess_exec(
@@ -1254,20 +1378,9 @@ class AgentTUI(App):  # type: ignore[misc]
             _, stderr = await process.communicate()
             if process.returncode not in {0, None}:
                 raise RuntimeError(stderr.decode("utf-8").strip() or "open command failed")
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "artifact_action_feedback": f"Opened {logical_path}.",
-                }
-            )
+            self._toast(f"Opened {logical_path}.", level="success")
         except Exception as exc:  # pragma: no cover - OS integration
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "artifact_action_feedback": f"External open failed: {exc}",
-                }
-            )
-        self._render_state()
+            self._toast(f"External open failed: {exc}", level="error")
 
     def _set_artifact_group(self, group_by: str) -> None:
         state = self._store.snapshot()
@@ -1293,6 +1406,8 @@ class AgentTUI(App):  # type: ignore[misc]
                 "active_screen": "memory",
                 "focused_pane": "memory_groups",
                 "memory_origin_screen": action.origin_screen,
+                "memory_request_status": "loading",
+                "memory_request_error": None,
             }
         )
         if state.active_screen != "memory":
@@ -1308,14 +1423,16 @@ class AgentTUI(App):  # type: ignore[misc]
         state = self._store.snapshot()
         is_config_screen = self.screen.__class__.__name__ == "ConfigScreen"
         origin_screen = state.config_origin_screen if is_config_screen else state.active_screen
-        self._store.dispatch(
-            {
-                "kind": "ui",
-                "active_screen": "config",
-                "focused_pane": "config_sections",
-                "config_origin_screen": origin_screen,
-            }
-        )
+        message: UiMessage = {
+            "kind": "ui",
+            "active_screen": "config",
+            "focused_pane": "config_sections",
+            "config_origin_screen": origin_screen,
+        }
+        if is_config_screen or not state.config_snapshot:
+            message["config_request_status"] = "loading"
+            message["config_request_error"] = None
+        self._store.dispatch(message)
         if not is_config_screen:
             self.switch_screen("config")
         self._render_state()
@@ -1338,6 +1455,8 @@ class AgentTUI(App):  # type: ignore[misc]
                 "kind": "ui",
                 "active_screen": "diagnostics",
                 "diagnostics_origin_screen": origin_screen,
+                "diagnostics_request_status": "loading",
+                "diagnostics_request_error": None,
             }
         )
         if state.active_screen != "diagnostics":
@@ -1384,6 +1503,14 @@ class AgentTUI(App):  # type: ignore[misc]
             preferred_run_id=selected_run_id,
         )
         refreshed_state = self._store.snapshot()
+        if refreshed_state.runtime_snapshot_status == "loaded":
+            self._toast("Runtime reconnected.", level="success")
+        elif refreshed_state.runtime_snapshot_status == "error":
+            self._toast(
+                refreshed_state.runtime_snapshot_error or "Runtime reconnect failed.",
+                level="error",
+                timeout_seconds=5.0,
+            )
         if selected_task_id and selected_task_id not in refreshed_state.task_snapshots:
             self._set_active_screen("dashboard")
             return
@@ -1526,12 +1653,15 @@ class AgentTUI(App):  # type: ignore[misc]
             self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
             await self._load_task_related(task_id=task_id, run_id=run_id)
             self._render_state()
+            self._toast("Task created.", level="success")
         except ProtocolClientError as exc:
             if self.screen.__class__.__name__ == "CreateTaskScreen":
                 self.screen.set_status(f"Create task failed: {exc}")  # type: ignore[attr-defined]
+                self._toast(f"Create task failed: {exc}", level="error", timeout_seconds=5.0)
             else:
                 self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
                 self._render_state()
+                self._toast(f"Create task failed: {exc}", level="error", timeout_seconds=5.0)
 
     async def _prime_config_snapshot(self) -> None:
         try:
@@ -1635,6 +1765,15 @@ def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:
     if not isinstance(workspace_root, str) or not workspace_root.strip():
         return None
     return workspace_root
+
+
+def _has_non_terminal_tasks(state: Any) -> bool:
+    terminal_statuses = {"completed", "failed", "cancelled"}
+    for task in state.task_snapshots.values():
+        status = str(task.get("status", "")).lower()
+        if status not in terminal_statuses:
+            return True
+    return False
 
 
 def _external_open_command(path: str) -> list[str] | None:

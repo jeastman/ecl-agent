@@ -38,6 +38,11 @@ class ArtifactTableRow(ListItem):  # type: ignore[misc]
         super().__init__(Label(text))
 
 
+class ArtifactTablePlaceholderRow(ListItem):  # type: ignore[misc]
+    def __init__(self, label: str) -> None:
+        super().__init__(Label(Text(label)))
+
+
 class ArtifactTableWidget(ListView):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -72,6 +77,14 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
             "Name                       Type               Created              Task/Run"
         )
         self.set_class(focused, "-focused-pane")
+
+    def show_loading(self, label: str, *, focused: bool, group_by: str) -> None:
+        self.clear()
+        self.append(ArtifactTablePlaceholderRow(label))
+        self.border_title = f"Artifacts by {group_by}"
+        self.border_subtitle = "Loading artifacts..."
+        self.set_class(focused, "-focused-pane")
+        self._row_signature = ()
 
 
 def _truncate(value: str, width: int) -> str:

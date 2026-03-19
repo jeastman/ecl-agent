@@ -10,6 +10,7 @@ from ..theme.empty_states import render_empty_state
 from ..theme.colors import DANGER, WARNING
 from ..theme.typography import muted, status_badge
 from ..utils.text import truncate_id
+from .loading import loading_renderable
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -26,6 +27,12 @@ else:  # pragma: no cover
 
 
 class ApprovalQueueWidget(Static):  # type: ignore[misc]
+    def show_loading(self, label: str, *, focused: bool, inbox_mode: bool = False) -> None:
+        self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
+        self.border_subtitle = "Focused" if focused else ""
+        self.set_class(focused, "-focused-pane")
+        self.update(loading_renderable(label, skeleton_lines=4))
+
     def update_approvals(
         self,
         items: list[ApprovalQueueItemViewModel],
