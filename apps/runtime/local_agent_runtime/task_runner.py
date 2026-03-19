@@ -1125,6 +1125,12 @@ class TaskRunner:
                 payload=payload,
             )
             return
+        if event_type == EventType.TOOL_CALLED.value:
+            self._reset_recoverable_tool_rejection_streak(
+                task_id=task_id,
+                run_id=run_id,
+                timestamp=timestamp,
+            )
         updates: dict[str, Any] = {
             "updated_at": timestamp,
             "last_event_at": timestamp,
@@ -1283,6 +1289,27 @@ class TaskRunner:
                 rejection_count=rejection_count,
                 last_rejection=FailureInfo(message=message, code=code),
             )
+
+    def _reset_recoverable_tool_rejection_streak(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        timestamp: str,
+    ) -> None:
+        state = self._run_state_store.get(task_id, run_id)
+        if (
+            state.recoverable_rejection_count == 0
+            and state.last_recoverable_rejection is None
+        ):
+            return
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            updated_at=timestamp,
+            recoverable_rejection_count=0,
+            last_recoverable_rejection=None,
+        )
 
     def _create_approval_request(
         self,
