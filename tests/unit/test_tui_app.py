@@ -544,7 +544,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_status_bar_keeps_connected_runtime_label_concise_on_narrow_width(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from textual.widgets import Static
+        from apps.tui.local_agent_tui.widgets.status_bar import StatusBar
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -566,12 +566,12 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
-                header = app.screen.query_one("#status-bar", Static)
-                header_text = str(header.visual)
-                self.assertIn("Runtime: connected", header_text)
-                self.assertNotIn("-32602", header_text)
-                self.assertNotIn("sandbox path must be under", header_text)
-                self.assertIn("...", header_text)
+                header = app.screen.query_one("#status-bar", StatusBar)
+                identity_bar = header.query_one("#identity-bar")
+                identity_text = str(identity_bar.visual)
+                self.assertIn("LOCAL AGENT HARNESS", identity_text)
+                self.assertNotIn("-32602", identity_text)
+                self.assertNotIn("sandbox path must be under", identity_text)
 
     async def test_dashboard_keyboard_navigation_updates_selection_and_focus(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1701,8 +1701,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     "Resume failed: task.resume requires a paused or resumable run",
                     app._store.snapshot().task_input_feedback or "",  # type: ignore[attr-defined]
                 )
-                header = app.screen.query_one("#status-bar", Static)
-                self.assertNotIn("-32602", str(header.visual))
+                from apps.tui.local_agent_tui.widgets.status_bar import StatusBar
+                header = app.screen.query_one("#status-bar", StatusBar)
+                identity_bar = header.query_one("#identity-bar")
+                self.assertNotIn("-32602", str(identity_bar.visual))
 
     async def test_task_detail_command_input_dispatches_commands(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
