@@ -25,7 +25,7 @@ else:  # pragma: no cover
 class MemoryEntryRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: MemoryEntryItemViewModel) -> None:
         self.memory_id = item.memory_id
-        super().__init__(Label(Text(f"{item.title}\n{item.subtitle}")))
+        super().__init__(Label(Text(f"{item.title}\n{item.subtitle}\n{item.preview}")))
 
 
 class MemoryEntryPlaceholderRow(ListItem):  # type: ignore[misc]

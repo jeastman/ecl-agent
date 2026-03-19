@@ -22,19 +22,27 @@ else:  # pragma: no cover
         _TEXTUAL_IMPORT_ERROR = None
 
 
+class ArtifactTableGroupHeader(ListItem):  # type: ignore[misc]
+    can_focus = False
+
+    def __init__(self, label: str) -> None:
+        super().__init__(Label(Text(label, style="bold")))
+
+
 class ArtifactTableRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: ArtifactBrowserRowViewModel) -> None:
         self.artifact_id = item.artifact_id
-        name = _truncate(item.display_name, 26)
-        content_type = _truncate(item.content_type, 18)
-        created = _truncate(item.created_at, 20)
-        origin = _truncate(f"{item.task_id}/{item.run_id}", 18)
-        group = _truncate(item.group_label, 18)
-        marker = "*" if item.is_highlighted else " "
+        name = _truncate(item.display_name, 28)
+        content_type = _truncate(item.content_type_label, 10)
+        created = _truncate(item.created_at_relative, 10)
+        context = _truncate(item.context_label or item.origin_label, 28)
+        marker = "▎" if item.is_selected else ("•" if item.is_highlighted else " ")
         text = Text()
-        text.append(f"{marker} {name:<26} {content_type:<18} {created:<20} {origin:<18}")
-        text.append("\n")
-        text.append(f"  Group: {group}  Path: {_truncate(item.logical_path, 52)}")
+        text.append(f"{marker} {item.icon} ", style="bold")
+        text.append(f"{name:<28}", style="bold")
+        text.append(f" {content_type:<10}")
+        text.append(f" {context:<28}")
+        text.append(f" {created:>10}")
         super().__init__(Label(text))
 
 
@@ -61,21 +69,28 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
         signature = tuple(_artifact_row_signature(item) for item in items)
         if signature != self._row_signature:
             self.clear()
-            for index, item in enumerate(items):
+            display_index = 0
+            for item in items:
+                if item.group_header:
+                    self.append(ArtifactTableGroupHeader(item.group_header))
+                    display_index += 1
                 self.append(ArtifactTableRow(item))
                 if item.is_selected:
-                    selected_index = index
+                    selected_index = display_index
+                display_index += 1
             self._row_signature = signature
         else:
+            display_index = 0
             for index, item in enumerate(items):
+                if item.group_header:
+                    display_index += 1
                 if item.is_selected:
-                    selected_index = index
+                    selected_index = display_index
+                display_index += 1
         if selected_index is not None:
             self.index = selected_index
         self.border_title = f"Artifacts by {group_by}"
-        self.border_subtitle = (
-            "Name                       Type               Created              Task/Run"
-        )
+        self.border_subtitle = "Icon Name                         Type       Context                       Updated"
         self.set_class(focused, "-focused-pane")
 
     def show_loading(self, label: str, *, focused: bool, group_by: str) -> None:
@@ -100,7 +115,7 @@ def _artifact_row_signature(item: ArtifactBrowserRowViewModel) -> tuple[str, str
         item.artifact_id,
         item.display_name,
         item.content_type,
-        item.created_at,
+        item.created_at_relative,
         item.logical_path,
         item.group_label,
     )

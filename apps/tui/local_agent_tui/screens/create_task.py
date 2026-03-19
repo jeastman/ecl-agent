@@ -38,8 +38,10 @@ class CreateTaskScreen(ModalScreen[None]):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
             Static("Create task", id="create-task-title"),
+            Static("Describe the objective clearly. The runtime will create a fresh task from the current workspace.", id="create-task-subtitle"),
             TextArea("", placeholder="Describe the task objective", id="create-task-input"),
             Static(self._DEFAULT_STATUS, id="create-task-status"),
+            Static("0 chars", id="create-task-count"),
             id="create-task-panel",
         )
 
@@ -58,6 +60,12 @@ class CreateTaskScreen(ModalScreen[None]):  # type: ignore[misc]
         input_widget.load_text("")
         input_widget.focus()
         self.set_status(self._DEFAULT_STATUS)
+        self.query_one("#create-task-count", Static).update("0 chars")
+
+    def on_text_area_changed(self, event: TextArea.Changed) -> None:
+        if event.text_area.id != "create-task-input":
+            return
+        self.query_one("#create-task-count", Static).update(f"{len(event.text_area.text)} chars")
 
     def on_key(self, event: Any) -> None:
         key = getattr(event, "key", "")

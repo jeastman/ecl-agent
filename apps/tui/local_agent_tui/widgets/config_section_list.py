@@ -25,7 +25,12 @@ else:  # pragma: no cover
 class ConfigSectionRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: ConfigSectionItemViewModel) -> None:
         self.section_id = item.section_id
-        super().__init__(Label(Text(f"{item.title}\n{item.description}")))
+        text = Text()
+        text.append(f"{item.icon} ", style="bold")
+        text.append(item.title, style="bold")
+        text.append("\n")
+        text.append(item.description)
+        super().__init__(Label(text))
 
 
 class ConfigSectionListWidget(ListView):  # type: ignore[misc]

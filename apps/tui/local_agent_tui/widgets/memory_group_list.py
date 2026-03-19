@@ -25,7 +25,7 @@ else:  # pragma: no cover
 class MemoryGroupRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: MemoryGroupItemViewModel) -> None:
         self.group_id = item.group_id
-        text = Text(f"{item.title} ({item.count})\n{item.description}")
+        text = Text(f"{item.title} [{item.count}]\n{item.description}")
         super().__init__(Label(text))
 
 

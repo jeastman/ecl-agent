@@ -352,7 +352,8 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
 
     next_state = _ensure_task_buffers(state, task_id=task_id, run_id=run_id)
     event_type = str(envelope["event_type"])
-    event_payload = dict(envelope.get("payload", {}))
+    raw_event_payload = envelope.get("payload", {})
+    event_payload = dict(raw_event_payload) if isinstance(raw_event_payload, dict) else {}
     snapshot = dict(next_state.task_snapshots.get(task_id, {}))
     if not snapshot:
         snapshot = {

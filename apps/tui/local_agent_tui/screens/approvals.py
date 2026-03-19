@@ -14,17 +14,20 @@ _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.binding import Binding
     from textual.containers import Container
     from textual.screen import Screen
     from textual.widgets import Static
 else:  # pragma: no cover
     try:
         from textual.app import ComposeResult
+        from textual.binding import Binding
         from textual.containers import Container
         from textual.screen import Screen
         from textual.widgets import Static
     except ModuleNotFoundError as exc:
         ComposeResult = cast(Any, object)
+        Binding = cast(Any, object)
         Container = cast(Any, object)
         Screen = cast(Any, object)
         Static = cast(Any, object)
@@ -34,6 +37,12 @@ else:  # pragma: no cover
 
 
 class ApprovalsScreen(Screen):  # type: ignore[misc]
+    BINDINGS = [
+        Binding("y", "approve_selected", "Approve", show=False, priority=True),
+        Binding("n", "reject_selected", "Reject", show=False, priority=True),
+        Binding("enter", "show_scope", "Details", show=False, priority=True),
+    ]
+
     def compose(self) -> ComposeResult:
         yield Container(
             StatusBar(id="status-bar"),
@@ -69,3 +78,12 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
         )
         self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
         self.query_one("#approvals-screen-footer", Static).update(footer_hints(state))
+
+    def action_approve_selected(self) -> None:
+        self.app.action_approve_selected_request()  # type: ignore[attr-defined]
+
+    def action_reject_selected(self) -> None:
+        self.app.action_reject_selected_request()  # type: ignore[attr-defined]
+
+    def action_show_scope(self) -> None:
+        self.query_one(ApprovalDetailWidget).focus()

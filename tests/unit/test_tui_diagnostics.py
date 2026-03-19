@@ -42,6 +42,8 @@ class DiagnosticsScreenTests(unittest.TestCase):
                 "Tool call failed with payload "
                 "[type=list_type, input_value='[\"curl\",\"-s\"]', input_type=str]"
             ),
+            "",
+            "Retry with a valid payload.",
         )
         combined = "\n".join(segment.plain for segment in rendered.renderables)
         self.assertIn("Diagnostic summary", combined)

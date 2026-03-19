@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Group
+from rich.markup import escape
+from rich.syntax import Syntax
 from rich.text import Text
 
 from ..renderables import block, metadata_line, muted, text
@@ -111,45 +114,15 @@ class MemoryScreen(Screen):  # type: ignore[misc]
             self._last_summary = summary_text
         detail_model = selected_memory_detail(state)
         detail = self.query_one("#memory-screen-detail", Static)
-        detail.border_title = detail_model.title
+        detail.border_title = escape(detail_model.title)
         detail_signature = (
             detail_model.title,
             detail_model.summary,
             detail_model.content,
-            detail_model.raw_scope,
-            detail_model.namespace,
-            detail_model.source_run,
-            detail_model.confidence,
-            detail_model.created_at,
-            detail_model.updated_at,
             detail_model.provenance,
         )
         if self._last_detail_signature != detail_signature:
-            detail.update(
-                block(
-                    [
-                        text(detail_model.summary),
-                        Text(""),
-                        text("Content", style="bold"),
-                        text(detail_model.content),
-                        Text(""),
-                        text("Metadata", style="bold"),
-                        metadata_line(
-                            [
-                                ("Scope", detail_model.raw_scope or "n/a"),
-                                ("Namespace", detail_model.namespace or "n/a"),
-                                ("Source Run", detail_model.source_run),
-                                ("Confidence", detail_model.confidence),
-                                ("Created", detail_model.created_at or "n/a"),
-                                ("Updated", detail_model.updated_at or "n/a"),
-                            ]
-                        ),
-                        Text(""),
-                        text("Provenance", style="bold"),
-                        muted(detail_model.provenance),
-                    ]
-                )
-            )
+            detail.update(_render_memory_detail(detail_model))
             self._last_detail_signature = detail_signature
         footer = footer_hints(state)
         footer.append("\nMemory inspector is read-only.", style=TEXT_SECONDARY)
@@ -169,3 +142,29 @@ class MemoryScreen(Screen):  # type: ignore[misc]
             message.item, MemoryEntryRow
         ):
             self.app.handle_memory_entry_selected(message.item.memory_id)  # type: ignore[attr-defined]
+
+
+def _render_memory_detail(model: Any) -> Group:
+    metadata_lines = [Text(f"{label}: {value}") for label, value in model.metadata_rows]
+    content = (
+        Syntax(model.content, model.content_format, word_wrap=True, line_numbers=False)
+        if model.content_format != "text"
+        else Text(model.content)
+    )
+    provenance = (
+        Syntax(model.provenance, model.provenance_format, word_wrap=True, line_numbers=False)
+        if model.provenance_format != "text"
+        else Text(model.provenance)
+    )
+    return Group(
+        Text(model.summary),
+        Text(""),
+        Text("Content", style="bold"),
+        content,
+        Text(""),
+        Text("Metadata", style="bold"),
+        *metadata_lines,
+        Text(""),
+        Text("Provenance", style="bold"),
+        provenance,
+    )

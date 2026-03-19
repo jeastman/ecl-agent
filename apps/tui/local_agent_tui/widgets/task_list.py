@@ -75,7 +75,7 @@ class TaskListWidget(ListView):  # type: ignore[misc]
             self.border_subtitle = "Focused" if focused else ""
             self.set_class(focused, "-focused-pane")
             return
-        if list(self.query(TaskListEmptyRow)):
+        if list(self.query(TaskListEmptyRow)) or list(self.query(TaskListPlaceholderRow)):
             self.clear()
         new_task_ids = [item.task_id for item in items]
         selected_index = None

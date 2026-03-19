@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Group
+from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
@@ -138,7 +140,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         self.app.action_open_task()  # type: ignore[attr-defined]
 
 
-def _task_summary_renderable(state: AppState) -> Text:
+def _task_summary_renderable(state: AppState) -> Text | Group:
     empty_state = dashboard_empty_state(state)
     if empty_state is not None:
         if state.connection_status == "error":
@@ -156,7 +158,7 @@ def _task_summary_renderable(state: AppState) -> Text:
     return _task_summary_text(summary)
 
 
-def _task_summary_text(summary: TaskSummaryViewModel) -> Text:
+def _task_summary_text(summary: TaskSummaryViewModel) -> Group:
     metadata = Table.grid(padding=(0, 2))
     metadata.add_column(style=TEXT_MUTED_DEEP, width=10)
     metadata.add_column(style="default")
@@ -166,29 +168,31 @@ def _task_summary_text(summary: TaskSummaryViewModel) -> Text:
     metadata.add_row("Updated", compact_datetime(summary.updated_at))
     metadata.add_row("Artifacts", str(summary.artifact_count))
 
-    text = Text()
-    text.append_text(status_badge(summary.status))
-    text.append("  ")
-    text.append_text(label("Next: "))
-    text.append_text(value(summary.actionable_label))
-    text.append("\n\n")
-    text.append_text(title("Objective"))
-    text.append("\n")
-    text.append(truncate(summary.objective or "No objective available.", 240))
-    text.append("\n\n")
-    text.append_text(title("Latest Summary"))
-    text.append("\n")
-    text.append(truncate(summary.latest_summary, 240))
-    text.append("\n\n")
-    text.append_text(title("Metadata"))
-    text.append("\n")
-    text.append(str(metadata))
-    text.append("\n\n")
-    text.append_text(muted(summary.actionable_hint))
+    status_line = Text()
+    status_line.append_text(status_badge(summary.status))
+    status_line.append("  ")
+    status_line.append_text(label("Next: "))
+    status_line.append_text(value(summary.actionable_label))
+    status_panel = Panel(status_line, title="Status", border_style=ACCENT)
+
+    objective = Text()
+    objective.append_text(title("Objective"))
+    objective.append("\n")
+    objective.append(truncate(summary.objective or "No objective available.", 240))
+
+    latest = Text()
+    latest.append_text(title("Latest Summary"))
+    latest.append("\n")
+    latest.append(truncate(summary.latest_summary, 240))
+
+    hint = Text()
+    hint.append_text(muted(summary.actionable_hint))
     if summary.awaiting_approval:
-        text.append("\n\n")
-        text.append("Approval required before the task can continue.", style=WARNING)
-    return text
+        hint.append("\n")
+        hint.append("Approval required before the task can continue.", style=WARNING)
+
+    metadata_group = Group(title("Metadata"), metadata)
+    return Group(status_panel, objective, latest, metadata_group, hint)
 
 
 def _recent_artifacts_renderable(artifacts: list[ArtifactItemViewModel]) -> Text:

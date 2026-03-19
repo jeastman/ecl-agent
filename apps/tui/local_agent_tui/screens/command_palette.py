@@ -36,7 +36,8 @@ else:  # pragma: no cover
 class CommandPaletteScreen(ModalScreen[None]):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
-            Input(placeholder="Type a command", id="command-palette-input"),
+            Static("Command Palette", id="command-palette-title"),
+            Input(placeholder="Search commands", id="command-palette-input"),
             Static(id="command-palette-results"),
             id="command-palette-panel",
         )
@@ -76,14 +77,16 @@ class CommandPaletteScreen(ModalScreen[None]):  # type: ignore[misc]
 def _render_results(items: list[CommandPaletteItemViewModel]) -> str:
     if not items:
         return "No matching commands."
-    lines: list[Text] = []
+    lines: list[str] = []
+    last_category: str | None = None
     for item in items:
-        marker = ">" if item.is_selected else " "
-        row = Text(f"{marker} ")
-        row.append_text(_highlight_matches(item.label, item.match_spans))
-        lines.append(row)
-        lines.append(muted(f"  {item.hint}"))
-    return Group(*lines)
+        if item.category != last_category:
+            lines.append(f"─ {item.category} ─")
+            last_category = item.category
+        marker = "▎" if item.is_selected else " "
+        lines.append(f"{marker} {item.icon} {_highlight_matches(item.label, item.match_spans)}")
+        lines.append(f"  {item.hint}")
+    return "\n".join(lines)
 
 
 def _highlight_matches(text_value: str, spans: list[tuple[int, int]]) -> Text:
@@ -93,8 +96,8 @@ def _highlight_matches(text_value: str, spans: list[tuple[int, int]]) -> Text:
     cursor = 0
     for start, end in spans:
         if start > cursor:
-            rendered.append(text_value[cursor:start])
-        rendered.append(text_value[start:end], style="reverse")
+            rendered.append(escape(text[cursor:start]))
+        rendered.append(f"[bold #67b7dc]{escape(text[start:end])}[/]")
         cursor = end
     if cursor < len(text_value):
         rendered.append(text_value[cursor:])

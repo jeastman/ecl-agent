@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from ..renderables import block, metadata_line, text
+from rich.console import Group
+from rich.syntax import Syntax
+from rich.text import Text
+
 from ..store.selectors import ConfigDetailViewModel
 from .loading import loading_renderable
 
@@ -32,15 +35,21 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
         if self._last_signature == signature:
             return
         self.border_title = model.title
+        summary = model.summary
+        if model.redaction_count:
+            summary = f"{summary}  [REDACTED x{model.redaction_count}]"
+        body_renderable = (
+            Syntax(model.body, model.body_format, word_wrap=True, line_numbers=False)
+            if model.body_format != "text"
+            else Text(model.body)
+        )
         self.update(
-            block(
-                [
-                    metadata_line([("Status", model.status)]),
-                    "",
-                    text(model.summary),
-                    "",
-                    text(model.body),
-                ]
+            Group(
+                Text(f"Status: {model.status.upper()}"),
+                Text(""),
+                Text(summary),
+                Text(""),
+                body_renderable,
             )
         )
         self._last_signature = signature

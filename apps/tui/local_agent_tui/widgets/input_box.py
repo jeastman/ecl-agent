@@ -32,6 +32,7 @@ else:  # pragma: no cover
 
 class InputBoxWidget(Container):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
+        yield Static(id="task-detail-command-actions")
         yield Static(id="task-detail-command-status")
         yield Input(
             placeholder="Enter a task command",
@@ -46,6 +47,8 @@ class InputBoxWidget(Container):  # type: ignore[misc]
         input_widget = self.query_one("#task-detail-command-input", Input)
         input_widget.placeholder = model.input_placeholder
         hints: list[Text] = []
+        if model.command_enabled:
+            hints.append(key_hint("I", "Command"))
         if model.resume_enabled:
             hints.append(key_hint("R", "Resume"))
         if model.approvals_enabled:
@@ -60,15 +63,16 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             hints.append(key_hint("L", "Hide Logs" if model.logs_visible else "Logs"))
         if model.back_enabled:
             hints.append(key_hint("Esc", "Back"))
-        status = Text(model.status_message, style=_status_tone_style(model.status_tone))
         if hints:
             hint_row = Text()
             for index, hint in enumerate(hints):
                 if index:
                     hint_row.append("   ", style=TEXT_SECONDARY)
                 hint_row.append_text(hint)
-            status.append("\n")
-            status.append_text(hint_row)
+            self.query_one("#task-detail-command-actions", Static).update(hint_row)
+        else:
+            self.query_one("#task-detail-command-actions", Static).update(Text())
+        status = Text(model.status_message, style=_status_tone_style(model.status_tone))
         self.query_one("#task-detail-command-status", Static).update(status)
 
     def focus_input(self) -> None:

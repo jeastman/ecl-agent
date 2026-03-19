@@ -3,7 +3,12 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from ..store.app_state import AppState
-from ..store.selectors import config_section_items, footer_hints, selected_config_detail
+from ..store.selectors import (
+    config_profiles_summary,
+    config_section_items,
+    footer_hints,
+    selected_config_detail,
+)
 from ..widgets.loading import loading_renderable
 from ..widgets.config_detail import ConfigDetailWidget
 from ..widgets.config_section_list import ConfigSectionListWidget, ConfigSectionRow
@@ -50,7 +55,11 @@ class ConfigScreen(Screen):  # type: ignore[misc]
             StatusBar(id="status-bar"),
             Container(
                 ConfigSectionListWidget(id="config-screen-sections"),
-                ConfigDetailWidget(id="config-screen-detail"),
+                Container(
+                    Static(id="config-screen-profiles"),
+                    ConfigDetailWidget(id="config-screen-detail"),
+                    id="config-screen-detail-column",
+                ),
                 id="config-screen-main",
             ),
             Static(id="config-screen-footer"),
@@ -66,6 +75,7 @@ class ConfigScreen(Screen):  # type: ignore[misc]
             config_section_items(state),
             focused=state.focused_pane == "config_sections",
         )
+        self.query_one("#config-screen-profiles", Static).update(config_profiles_summary(state))
         detail_widget = self.query_one(ConfigDetailWidget)
         if state.config_request_status == "loading":
             detail_widget.show_loading("Refreshing configuration snapshot...")

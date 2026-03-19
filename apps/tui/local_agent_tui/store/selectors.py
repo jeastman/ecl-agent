@@ -13,6 +13,7 @@ from ..theme.colors import (
     TEXT_MUTED_DEEP as _TEXT_MUTED_DEEP,
 )
 from ..utils.time_format import compact_time as _compact_time
+from ..utils.time_format import compact_datetime as _compact_datetime
 from ..utils.time_format import relative_time as _relative_time
 from ..utils.text import truncate as _truncate
 from ..utils.text import truncate_id as _truncate_id
@@ -75,6 +76,10 @@ class ApprovalDetailViewModel:
     scope_summary: str
     status: str
     created_at: str
+    created_at_relative: str
+    metadata_rows: list[tuple[str, str]]
+    scope_rows: list[tuple[str, str]]
+    action_hints: list[tuple[str, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -159,6 +164,7 @@ class ArtifactPanelItemViewModel:
 
 @dataclass(frozen=True, slots=True)
 class TaskActionBarViewModel:
+    command_enabled: bool
     resume_enabled: bool
     approvals_enabled: bool
     approval_count: int
@@ -200,9 +206,15 @@ class ArtifactBrowserRowViewModel:
     task_id: str
     run_id: str
     group_label: str
+    group_header: str | None
     display_name: str
+    icon: str
     content_type: str
+    content_type_label: str
     created_at: str
+    created_at_relative: str
+    origin_label: str
+    context_label: str
     logical_path: str
     is_selected: bool
     is_highlighted: bool
@@ -212,12 +224,18 @@ class ArtifactBrowserRowViewModel:
 class ArtifactPreviewViewModel:
     artifact_id: str | None
     title: str
+    icon: str
     status: str
     body: str
     content_type: str | None
+    logical_path: str
+    created_at: str
+    created_at_relative: str
+    metadata_summary: str
     open_label: str
     external_open_supported: bool
     render_as_markdown: bool
+    render_language: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -243,6 +261,7 @@ class MemoryEntryItemViewModel:
     memory_id: str
     title: str
     subtitle: str
+    preview: str
     is_selected: bool
 
 
@@ -252,13 +271,16 @@ class MemoryDetailViewModel:
     status: str
     summary: str
     content: str
+    content_format: str
     raw_scope: str
     namespace: str
     provenance: str
+    provenance_format: str
     source_run: str
     confidence: str
     created_at: str
     updated_at: str
+    metadata_rows: list[tuple[str, str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -266,6 +288,7 @@ class ConfigSectionItemViewModel:
     section_id: str
     title: str
     description: str
+    icon: str
     is_selected: bool
 
 
@@ -275,6 +298,8 @@ class ConfigDetailViewModel:
     status: str
     summary: str
     body: str
+    body_format: str
+    redaction_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -282,6 +307,8 @@ class CommandPaletteItemViewModel:
     command_id: str
     label: str
     hint: str
+    category: str
+    icon: str
     is_selected: bool
     match_spans: list[tuple[int, int]]
 
@@ -323,7 +350,12 @@ class DiagnosticsItemViewModel:
     diagnostic_id: str
     kind: str
     created_at: str
+    created_at_relative: str
     message: str
+    severity: str
+    severity_label: str
+    icon: str
+    tone: str
     is_selected: bool
 
 
@@ -332,7 +364,18 @@ class DiagnosticsDetailViewModel:
     title: str
     status: str
     summary: str
-    body: str
+    message: str
+    stack_trace: str
+    resolution: str
+
+    @property
+    def body(self) -> str:
+        parts = [self.message]
+        if self.stack_trace:
+            parts.append(self.stack_trace)
+        if self.resolution:
+            parts.append(self.resolution)
+        return "\n\n".join(part for part in parts if part)
 
 
 _SCREEN_DISPLAY_NAMES: dict[str, str] = {
@@ -518,17 +561,45 @@ def selected_approval_detail(state: AppState) -> ApprovalDetailViewModel | None:
     approval = _selected_approval(state)
     if approval is None:
         return None
+    created_at = str(approval.get("created_at", ""))
+    run_id = str(approval.get("run_id", ""))
+    metadata_rows = [
+        ("Status", str(approval.get("status", "pending")).upper()),
+        ("Type", _approval_request_type(approval)),
+        ("Policy", _approval_policy_context(approval)),
+        ("Action", _approval_requested_action(approval)),
+        ("Task", str(approval.get("task_id", ""))),
+    ]
+    if run_id:
+        metadata_rows.append(("Run", run_id))
+    if created_at:
+        metadata_rows.append(
+            ("Created", f"{_compact_datetime(created_at)} ({_relative_time(created_at)})")
+        )
+    scope_rows = [("Summary", str(approval.get("scope_summary") or "Pending review"))]
+    scope = approval.get("scope")
+    if isinstance(scope, dict):
+        if scope.get("path_scope"):
+            scope_rows.append(("Path", str(scope.get("path_scope"))))
+        if scope.get("boundary_key"):
+            scope_rows.append(("Boundary", str(scope.get("boundary_key"))))
+        if scope.get("risk_level"):
+            scope_rows.append(("Risk", str(scope.get("risk_level"))))
     return ApprovalDetailViewModel(
         approval_id=str(approval.get("approval_id", "")),
         task_id=str(approval.get("task_id", "")),
-        run_id=str(approval.get("run_id", "")),
+        run_id=run_id,
         request_type=_approval_request_type(approval),
         policy_context=_approval_policy_context(approval),
         requested_action=_approval_requested_action(approval),
         description=str(approval.get("description") or approval.get("type") or "Approval"),
         scope_summary=str(approval.get("scope_summary") or "Pending review"),
         status=str(approval.get("status", "pending")),
-        created_at=str(approval.get("created_at", "")),
+        created_at=created_at,
+        created_at_relative=_relative_time(created_at),
+        metadata_rows=metadata_rows,
+        scope_rows=scope_rows,
+        action_hints=[("Y", "Approve"), ("N", "Reject"), ("Enter", "Open Task"), ("Esc", "Back")],
     )
 
 
@@ -741,6 +812,7 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
             isinstance(links, dict) and links.get("resume") == "task.resume"
         )
     return TaskActionBarViewModel(
+        command_enabled=_selected_task_key(state) is not None,
         resume_enabled=resume_enabled,
         approvals_enabled=approvals_enabled,
         approval_count=approval_count,
@@ -767,21 +839,34 @@ def artifact_browser_rows(state: AppState) -> list[ArtifactBrowserRowViewModel]:
     rows: list[ArtifactBrowserRowViewModel] = []
     selected_id = _selected_artifact_browser_id(state)
     highlighted_artifact_ids = _highlighted_artifact_ids(state)
+    last_group_label: str | None = None
     for artifact in _all_artifacts(state):
+        task_id = str(artifact.get("task_id", ""))
+        run_id = str(artifact.get("run_id", ""))
+        group_label = _artifact_group_label(artifact, state.artifact_group_by)
+        content_type = str(artifact.get("content_type", "unknown"))
+        context_label = " · ".join(part for part in (task_id, run_id) if part)
         rows.append(
             ArtifactBrowserRowViewModel(
                 artifact_id=str(artifact.get("artifact_id", "")),
-                task_id=str(artifact.get("task_id", "")),
-                run_id=str(artifact.get("run_id", "")),
-                group_label=_artifact_group_label(artifact, state.artifact_group_by),
+                task_id=task_id,
+                run_id=run_id,
+                group_label=group_label,
+                group_header=group_label if group_label != last_group_label else None,
                 display_name=_artifact_display_name(artifact),
-                content_type=str(artifact.get("content_type", "unknown")),
+                icon=_artifact_icon(artifact),
+                content_type=content_type,
+                content_type_label=_artifact_type_label(content_type),
                 created_at=str(artifact.get("created_at", "")),
+                created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
+                origin_label=_artifact_origin_label(artifact),
+                context_label=context_label,
                 logical_path=str(artifact.get("logical_path", "")),
                 is_selected=str(artifact.get("artifact_id", "")) == selected_id,
                 is_highlighted=str(artifact.get("artifact_id", "")) in highlighted_artifact_ids,
             )
         )
+        last_group_label = group_label
     return rows
 
 
@@ -791,12 +876,18 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
         return ArtifactPreviewViewModel(
             artifact_id=None,
             title="Artifact Preview",
+            icon="□",
             status="empty",
             body="Select an artifact to inspect its preview.",
             content_type=None,
+            logical_path="",
+            created_at="",
+            created_at_relative="",
+            metadata_summary="",
             open_label="Unavailable",
             external_open_supported=False,
             render_as_markdown=False,
+            render_language="text",
         )
     artifact_id = str(artifact.get("artifact_id", ""))
     preview_payload = state.artifact_preview_cache.get(artifact_id)
@@ -806,34 +897,52 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
         return ArtifactPreviewViewModel(
             artifact_id=artifact_id,
             title=_artifact_display_name(artifact),
+            icon=_artifact_icon(artifact),
             status="loading",
             body="Loading preview...",
             content_type=str(artifact.get("content_type", "unknown")),
+            logical_path=str(artifact.get("logical_path", "")),
+            created_at=str(artifact.get("created_at", "")),
+            created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
+            metadata_summary=_artifact_preview_metadata_summary(artifact),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
             render_as_markdown=False,
+            render_language=_artifact_preview_language(artifact, None),
         )
     if preview_error:
         return ArtifactPreviewViewModel(
             artifact_id=artifact_id,
             title=_artifact_display_name(artifact),
+            icon=_artifact_icon(artifact),
             status="error",
             body=preview_error,
             content_type=str(artifact.get("content_type", "unknown")),
+            logical_path=str(artifact.get("logical_path", "")),
+            created_at=str(artifact.get("created_at", "")),
+            created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
+            metadata_summary=_artifact_preview_metadata_summary(artifact),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
             render_as_markdown=False,
+            render_language=_artifact_preview_language(artifact, None),
         )
     if not isinstance(preview_payload, dict):
         return ArtifactPreviewViewModel(
             artifact_id=artifact_id,
             title=_artifact_display_name(artifact),
-            status="idle",
-            body="Preview not loaded yet.",
+            icon=_artifact_icon(artifact),
+            status="loading",
+            body="Loading preview...",
             content_type=str(artifact.get("content_type", "unknown")),
+            logical_path=str(artifact.get("logical_path", "")),
+            created_at=str(artifact.get("created_at", "")),
+            created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
+            metadata_summary=_artifact_preview_metadata_summary(artifact),
             open_label=_artifact_open_label(artifact),
             external_open_supported=False,
             render_as_markdown=False,
+            render_language=_artifact_preview_language(artifact, None),
         )
     preview = dict(preview_payload.get("preview", {}))
     body = str(preview.get("text") or preview.get("message") or "Preview unavailable.")
@@ -842,15 +951,21 @@ def selected_artifact_preview(state: AppState) -> ArtifactPreviewViewModel:
     return ArtifactPreviewViewModel(
         artifact_id=artifact_id,
         title=_artifact_display_name(artifact),
+        icon=_artifact_icon(artifact),
         status="loaded",
         body=body,
         content_type=str(artifact.get("content_type", "unknown")),
+        logical_path=str(artifact.get("logical_path", "")),
+        created_at=str(artifact.get("created_at", "")),
+        created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
+        metadata_summary=_artifact_preview_metadata_summary(artifact, preview_payload),
         open_label=_artifact_open_label(
             artifact,
             external_open_supported=bool(preview_payload.get("external_open_supported", False)),
         ),
         external_open_supported=bool(preview_payload.get("external_open_supported", False)),
         render_as_markdown=str(artifact.get("content_type", "unknown")) == "text/markdown",
+        render_language=_artifact_preview_language(artifact, preview_payload),
     )
 
 
@@ -921,32 +1036,40 @@ def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemVi
 
 def command_palette(state: AppState) -> CommandPaletteViewModel:
     commands = [
-        ("create_task", "Create task", "New task from workspace", True),
+        ("create_task", "Create task", "New task from workspace", "Tasks", "□", True),
         (
             "resume_task",
             "Resume task",
             "Continue paused selected task",
+            "Tasks",
+            "▶",
             task_action_bar(state).resume_enabled,
         ),
         (
             "approve_request",
             "Approve request",
             "Jump directly into the pending approval workflow",
+            "Review",
+            "⚠",
             bool(pending_approvals(state)),
         ),
-        ("open_artifacts", "Inspect artifacts", "Browse runtime artifacts", True),
-        ("open_memory", "Inspect memory", "Open memory inspector", True),
-        ("open_config", "View runtime config", "Inspect effective runtime config", True),
+        ("open_artifacts", "Inspect artifacts", "Browse runtime artifacts", "Inspect", "▤", True),
+        ("open_memory", "Inspect memory", "Open memory inspector", "Inspect", "◫", True),
+        ("open_config", "View runtime config", "Inspect effective runtime config", "Inspect", "⌘", True),
         (
             "open_diagnostics",
             "View diagnostics",
             "Inspect persisted task diagnostics",
+            "Inspect",
+            "✱",
             _selected_task_key(state) is not None,
         ),
         (
             "reconnect_runtime",
             "Reconnect runtime",
             "Reconnect and recover the current TUI context",
+            "Runtime",
+            "↻",
             True,
         ),
     ]
@@ -963,12 +1086,14 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
                         command_id=f"open_task::{candidate_task_id}",
                         label=f"Open {candidate_task_id}",
                         hint="Jump directly to task detail",
+                        category="Tasks",
+                        icon="→",
                         is_selected=True,
                         match_spans=[(5, 5 + len(candidate_task_id))],
                     )
                 )
                 return CommandPaletteViewModel(query=state.command_palette_query, items=items)
-    for command_id, label, hint, available in commands:
+    for command_id, label, hint, category, icon, available in commands:
         if not available:
             continue
         haystack = f"{label} {hint} {command_id.replace('_', ' ')}".lower()
@@ -980,6 +1105,8 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
                 command_id=command_id,
                 label=label,
                 hint=hint,
+                category=category,
+                icon=icon,
                 is_selected=state.command_palette_selected_id == command_id,
                 match_spans=match_spans,
             )
@@ -990,6 +1117,8 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
             command_id=first.command_id,
             label=first.label,
             hint=first.hint,
+            category=first.category,
+            icon=first.icon,
             is_selected=True,
             match_spans=first.match_spans,
         )
@@ -1076,12 +1205,18 @@ def diagnostics_items(state: AppState) -> list[DiagnosticsItemViewModel]:
     items: list[DiagnosticsItemViewModel] = []
     for diagnostic in state.diagnostics_by_task.get(task_key, []):
         diagnostic_id = str(diagnostic.get("diagnostic_id", ""))
+        tone = _diagnostic_tone(diagnostic)
         items.append(
             DiagnosticsItemViewModel(
                 diagnostic_id=diagnostic_id,
                 kind=str(diagnostic.get("kind", "diagnostic")),
                 created_at=str(diagnostic.get("created_at", "")),
+                created_at_relative=_relative_time(str(diagnostic.get("created_at", ""))),
                 message=str(diagnostic.get("message", "")),
+                severity=_diagnostic_severity(diagnostic),
+                severity_label=_diagnostic_severity_label(diagnostic),
+                icon=_diagnostic_icon(diagnostic),
+                tone=tone,
                 is_selected=state.selected_diagnostic_id == diagnostic_id,
             )
         )
@@ -1092,7 +1227,12 @@ def diagnostics_items(state: AppState) -> list[DiagnosticsItemViewModel]:
             diagnostic_id=first.diagnostic_id,
             kind=first.kind,
             created_at=first.created_at,
+            created_at_relative=first.created_at_relative,
             message=first.message,
+            severity=first.severity,
+            severity_label=first.severity_label,
+            icon=first.icon,
+            tone=first.tone,
             is_selected=True,
         )
     return items
@@ -1104,21 +1244,27 @@ def selected_diagnostics_detail(state: AppState) -> DiagnosticsDetailViewModel:
             title="Diagnostics",
             status="empty",
             summary="No task selected.",
-            body="Select a task to inspect persisted diagnostics.",
+            message="Select a task to inspect persisted diagnostics.",
+            stack_trace="",
+            resolution="",
         )
     if state.diagnostics_request_status == "loading":
         return DiagnosticsDetailViewModel(
             title="Diagnostics",
             status="loading",
             summary="Loading diagnostics...",
-            body="Waiting for runtime diagnostics.",
+            message="Waiting for runtime diagnostics.",
+            stack_trace="",
+            resolution="",
         )
     if state.diagnostics_request_status == "error":
         return DiagnosticsDetailViewModel(
             title="Diagnostics",
             status="error",
             summary="Diagnostics request failed.",
-            body=state.diagnostics_request_error or "Unknown diagnostics error.",
+            message=state.diagnostics_request_error or "Unknown diagnostics error.",
+            stack_trace="",
+            resolution="Inspect the runtime connection and retry diagnostics.",
         )
     selected = _selected_diagnostic(state)
     if selected is None:
@@ -1126,26 +1272,29 @@ def selected_diagnostics_detail(state: AppState) -> DiagnosticsDetailViewModel:
             title="Diagnostics",
             status="empty",
             summary="No diagnostics available.",
-            body="The selected task has no persisted diagnostics.",
+            message="The selected task has no persisted diagnostics.",
+            stack_trace="",
+            resolution="No action required.",
         )
     details = selected.get("details")
-    body = (
-        json.dumps(details, indent=2, sort_keys=True)
-        if isinstance(details, dict)
-        else "No details."
-    )
+    message = json.dumps(details, indent=2, sort_keys=True) if isinstance(details, dict) else "No details."
+    stack_trace = ""
+    resolution = "Inspect the runtime event timeline and retry after fixing the reported issue."
+    if isinstance(details, dict):
+        stack_trace = str(
+            details.get("stack_trace")
+            or details.get("stack")
+            or details.get("traceback")
+            or ""
+        )
+        resolution = str(details.get("resolution") or details.get("suggested_resolution") or resolution)
     return DiagnosticsDetailViewModel(
         title=str(selected.get("kind", "diagnostic")),
         status="loaded",
         summary=str(selected.get("message", "")),
-        body="\n".join(
-            [
-                f"Diagnostic: {selected.get('diagnostic_id', '')}",
-                f"Created: {selected.get('created_at', '')}",
-                "",
-                body,
-            ]
-        ).strip(),
+        message=message,
+        stack_trace=stack_trace,
+        resolution=resolution,
     )
 
 
@@ -1186,6 +1335,7 @@ def memory_entry_items(state: AppState) -> list[MemoryEntryItemViewModel]:
                 memory_id=str(entry.get("memory_id", "")),
                 title=str(entry.get("summary") or entry.get("namespace") or entry.get("memory_id")),
                 subtitle=_memory_entry_subtitle(entry),
+                preview=_memory_entry_preview(entry),
                 is_selected=str(entry.get("memory_id", "")) == selected_entry_id,
             )
         )
@@ -1199,13 +1349,16 @@ def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
             status="loading",
             summary="Loading memory inspection output...",
             content="Waiting for runtime memory data.",
+            content_format="text",
             raw_scope="",
             namespace="",
             provenance="",
+            provenance_format="text",
             source_run="",
             confidence="",
             created_at="",
             updated_at="",
+            metadata_rows=[],
         )
     if state.memory_request_status == "error":
         return MemoryDetailViewModel(
@@ -1213,13 +1366,16 @@ def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
             status="error",
             summary=state.memory_request_error or "Memory inspection failed.",
             content=state.memory_request_error or "Memory inspection failed.",
+            content_format="text",
             raw_scope="",
             namespace="",
             provenance="",
+            provenance_format="text",
             source_run="",
             confidence="",
             created_at="",
             updated_at="",
+            metadata_rows=[],
         )
 
     grouped_entries = _memory_grouped_entries(state)
@@ -1230,13 +1386,16 @@ def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
             status="empty",
             summary="No memory entries available for the current context.",
             content="The runtime returned no memory data for this view.",
+            content_format="text",
             raw_scope="",
             namespace="",
             provenance="",
+            provenance_format="text",
             source_run="",
             confidence="",
             created_at="",
             updated_at="",
+            metadata_rows=[],
         )
     entries = grouped_entries.get(selected_group_id, [])
     if not entries:
@@ -1246,13 +1405,16 @@ def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
             status="empty",
             summary=f"No entries in {group_title.lower()}.",
             content="Select a different memory group to inspect available entries.",
+            content_format="text",
             raw_scope="",
             namespace="",
             provenance="",
+            provenance_format="text",
             source_run="",
             confidence="",
             created_at="",
             updated_at="",
+            metadata_rows=[],
         )
 
     selected_entry_id = _selected_memory_entry_id(state, selected_group_id, grouped_entries)
@@ -1274,13 +1436,16 @@ def selected_memory_detail(state: AppState) -> MemoryDetailViewModel:
         status="loaded",
         summary=str(entry.get("summary") or "No summary provided."),
         content=_format_memory_content(entry.get("content")),
+        content_format=_memory_content_format(entry.get("content")),
         raw_scope=str(entry.get("scope", "")),
         namespace=str(entry.get("namespace", "")),
         provenance=_format_memory_provenance(entry.get("provenance")),
+        provenance_format=_memory_content_format(entry.get("provenance")),
         source_run=str(entry.get("source_run") or "n/a"),
         confidence=_format_memory_confidence(entry.get("confidence")),
         created_at=str(entry.get("created_at", "")),
         updated_at=str(entry.get("updated_at", "")),
+        metadata_rows=_memory_metadata_rows(entry),
     )
 
 
@@ -1313,6 +1478,7 @@ def config_section_items(state: AppState) -> list[ConfigSectionItemViewModel]:
                 section_id=section_id,
                 title=title,
                 description=description,
+                icon=_config_section_icon(section_id),
                 is_selected=section_id == selected_section_id,
             )
         )
@@ -1326,6 +1492,8 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
             status="loading",
             summary="Loading runtime configuration snapshot...",
             body="Waiting for runtime configuration data.",
+            body_format="text",
+            redaction_count=0,
         )
     if state.config_request_status == "error":
         message = state.config_request_error or "Configuration request failed."
@@ -1334,6 +1502,8 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
             status="error",
             summary=message,
             body=message,
+            body_format="text",
+            redaction_count=0,
         )
     if not state.config_snapshot:
         return ConfigDetailViewModel(
@@ -1341,6 +1511,8 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
             status="empty",
             summary="No runtime configuration snapshot available.",
             body="Open the config viewer to request a runtime snapshot.",
+            body_format="text",
+            redaction_count=0,
         )
 
     selected_section_id = _selected_config_section_id(state)
@@ -1358,6 +1530,8 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
             status="empty",
             summary="No configuration sections are available.",
             body="The runtime snapshot did not produce any operator-facing sections.",
+            body_format="text",
+            redaction_count=0,
         )
     _, title, description, content = section
     return ConfigDetailViewModel(
@@ -1365,6 +1539,8 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
         status="loaded",
         summary=description,
         body=content,
+        body_format="json",
+        redaction_count=content.count("[REDACTED]"),
     )
 
 
@@ -1396,45 +1572,40 @@ def footer_hints(state: AppState) -> _RichText:
         ])
     if state.active_screen == "diagnostics":
         return _hints_to_text([
-            "G Palette",
-            "N New Task",
             "Up/Down Move",
+            "Enter Select",
+            "G Palette",
             "Esc Back",
             "Q Quit",
         ])
     if state.active_screen == "config":
         return _hints_to_text([
             "Up/Down Move",
-            "G Palette",
-            "N New Task",
             "C Refresh",
+            "G Palette",
             "Esc Back",
             "Q Quit",
         ])
     if state.active_screen == "approvals":
         return _hints_to_text([
-            "A Approve",
-            "R Reject",
-            "Enter Open Task",
-            "G Palette",
-            "N New Task",
-            "C Config",
-            "Esc Dashboard",
+            "J/K Navigate",
+            "Y Approve",
+            "N Reject",
+            "Enter Details",
             "Q Quit",
         ])
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
         hints = [
-            "G Palette",
-            "N New Task",
+            "I Command",
             "F Filter Events",
             "/ Search Events",
             "L Toggle Logs",
-            "Esc Dashboard",
             "A Approvals",
-            "C Config",
             "O Artifacts",
             "D Diagnostics",
+            "G Palette",
+            "Esc Back",
             "Q Quit",
         ]
         if state.task_detail_show_logs:
@@ -1444,38 +1615,33 @@ def footer_hints(state: AppState) -> _RichText:
         return _hints_to_text(hints)
     if state.active_screen == "artifacts":
         return _hints_to_text([
-            "G Palette",
-            "N New Task",
             "Up/Down Move",
             "Enter Open",
             "E External Open",
-            "C Config",
             "T Group Task",
             "R Group Run",
             "Y Group Type",
+            "G Palette",
             "Esc Back",
         ])
     if state.active_screen == "markdown_viewer":
         return _hints_to_text(["Esc Back", "Q Quit"])
     if state.active_screen == "memory":
         return _hints_to_text([
-            "G Palette",
-            "N New Task",
             "Up/Down Move",
             "Tab Focus",
-            "C Config",
             "M Refresh",
+            "G Palette",
             "Esc Back",
             "Q Quit",
         ])
     if state.focused_pane == "approvals":
         return _hints_to_text([
-            "G Palette",
-            "N New Task",
             "Up/Down Move Approval",
             "Tab Focus",
             "Enter Open Approvals",
             "A Approvals",
+            "G Palette",
             "Q Quit",
         ])
     if state.focused_pane == "summary":
@@ -1932,9 +2098,14 @@ def _memory_entry_subtitle(entry: dict[str, Any]) -> str:
     bits = [
         str(entry.get("scope", "")),
         str(entry.get("namespace", "")),
-        str(entry.get("updated_at", "")),
+        _relative_time(str(entry.get("updated_at", ""))),
     ]
     return " | ".join(bit for bit in bits if bit)
+
+
+def _memory_entry_preview(entry: dict[str, Any]) -> str:
+    content = _format_memory_content(entry.get("content")).replace("\n", " ")
+    return _truncate(content, 72)
 
 
 def _is_checkpoint_candidate(entry: dict[str, Any]) -> bool:
@@ -1986,6 +2157,21 @@ def _format_memory_content(value: Any) -> str:
     return str(value or "No content available.")
 
 
+def _memory_content_format(value: Any) -> str:
+    if isinstance(value, dict):
+        return "json"
+    if isinstance(value, str):
+        stripped = value.strip()
+        if not stripped:
+            return "text"
+        try:
+            json.loads(stripped)
+        except json.JSONDecodeError:
+            return "text"
+        return "json"
+    return "text"
+
+
 def _format_memory_provenance(value: Any) -> str:
     if isinstance(value, dict):
         if not value:
@@ -2004,12 +2190,29 @@ def _format_memory_confidence(value: Any) -> str:
     return str(value)
 
 
+def _memory_metadata_rows(entry: dict[str, Any]) -> list[tuple[str, str]]:
+    return [
+        ("Scope", str(entry.get("scope", "")) or "n/a"),
+        ("Namespace", str(entry.get("namespace", "")) or "n/a"),
+        ("Source Run", str(entry.get("source_run") or "n/a")),
+        ("Confidence", _format_memory_confidence(entry.get("confidence"))),
+        ("Created", _compact_datetime(str(entry.get("created_at", ""))) or "n/a"),
+        ("Updated", _compact_datetime(str(entry.get("updated_at", ""))) or "n/a"),
+    ]
+
+
 def _format_config_detail(value: Any) -> str:
     if isinstance(value, str):
         return value or "n/a"
     if value in (None, {}, []):
         return "n/a"
     return json.dumps(value, indent=2, sort_keys=True)
+
+
+def config_profiles_summary(state: AppState) -> str:
+    loaded = ", ".join(state.config_loaded_profiles) if state.config_loaded_profiles else "none"
+    sources = ", ".join(state.config_sources) if state.config_sources else "runtime snapshot"
+    return f"Profiles: {loaded} | Sources: {sources} | Redactions: {len(state.config_redactions)}"
 
 
 def _selected_artifact_browser_id(state: AppState) -> str | None:
@@ -2041,6 +2244,81 @@ def _artifact_display_name(artifact: dict[str, Any]) -> str:
         or artifact.get("artifact_id")
         or "artifact"
     )
+
+
+def _artifact_icon(artifact: dict[str, Any]) -> str:
+    content_type = str(artifact.get("content_type", "unknown")).lower()
+    path = str(artifact.get("logical_path", "")).lower()
+    if content_type == "text/markdown" or path.endswith(".md"):
+        return "M"
+    if "json" in content_type or path.endswith(".json"):
+        return "J"
+    if "html" in content_type or path.endswith(".html"):
+        return "H"
+    if content_type.startswith("image/"):
+        return "I"
+    if "log" in content_type or path.endswith(".log"):
+        return "L"
+    return "F"
+
+
+def _artifact_origin_label(artifact: dict[str, Any]) -> str:
+    task_id = str(artifact.get("task_id", ""))
+    run_id = str(artifact.get("run_id", ""))
+    parts = [_truncate_id(task_id, width=14)] if task_id else []
+    if run_id:
+        parts.append(_truncate_id(run_id, width=14))
+    return " / ".join(parts)
+
+
+def _artifact_type_label(content_type: str) -> str:
+    lowered = content_type.lower()
+    if "markdown" in lowered:
+        return "markdown"
+    if "yaml" in lowered:
+        return "yaml"
+    if "json" in lowered:
+        return "json"
+    if "python" in lowered:
+        return "python"
+    if "html" in lowered:
+        return "html"
+    if "text" in lowered:
+        return "text"
+    return lowered.split("/")[-1] or "unknown"
+
+
+def _artifact_preview_metadata_summary(
+    artifact: dict[str, Any],
+    preview_payload: dict[str, Any] | None = None,
+) -> str:
+    parts = [
+        _artifact_type_label(str(artifact.get("content_type", "unknown"))),
+        _relative_time(str(artifact.get("created_at", ""))),
+        _truncate_id(str(artifact.get("task_id", "")), width=14),
+    ]
+    if preview_payload and preview_payload.get("external_open_supported"):
+        parts.append("[E] Open External")
+    return " · ".join(part for part in parts if part)
+
+
+def _artifact_preview_language(
+    artifact: dict[str, Any],
+    preview_payload: dict[str, Any] | None,
+) -> str:
+    content_type = str(artifact.get("content_type", "unknown")).lower()
+    kind = str((preview_payload or {}).get("preview", {}).get("kind", "")).lower()
+    if "markdown" in content_type or kind == "markdown":
+        return "markdown"
+    if "json" in content_type:
+        return "json"
+    if "yaml" in content_type:
+        return "yaml"
+    if "python" in content_type:
+        return "python"
+    if "html" in content_type:
+        return "html"
+    return "text"
 
 
 def _artifact_open_label(
@@ -2085,6 +2363,43 @@ def _approval_requested_action(approval: dict[str, Any]) -> str:
     if isinstance(scope_summary, str) and scope_summary.strip():
         return scope_summary
     return _approval_request_type(approval)
+
+
+def _diagnostic_severity(diagnostic: dict[str, Any]) -> str:
+    kind = str(diagnostic.get("kind", "")).lower()
+    message = str(diagnostic.get("message", "")).lower()
+    if "error" in kind or "failed" in message:
+        return "error"
+    if "warning" in kind or "warning" in message:
+        return "warning"
+    return "info"
+
+
+def _diagnostic_severity_label(diagnostic: dict[str, Any]) -> str:
+    severity = _diagnostic_severity(diagnostic)
+    return {
+        "error": "ERROR",
+        "warning": "WARN",
+        "info": "INFO",
+    }.get(severity, "INFO")
+
+
+def _diagnostic_icon(diagnostic: dict[str, Any]) -> str:
+    severity = _diagnostic_severity(diagnostic)
+    return {
+        "error": "!",
+        "warning": "~",
+        "info": "i",
+    }.get(severity, "i")
+
+
+def _diagnostic_tone(diagnostic: dict[str, Any]) -> str:
+    severity = _diagnostic_severity(diagnostic)
+    return {
+        "error": "danger",
+        "warning": "warning",
+        "info": "info",
+    }.get(severity, "info")
 
 
 def _actionable_status_label(task: dict[str, Any] | None) -> str:
@@ -2137,6 +2452,16 @@ def _task_command_placeholder(task: dict[str, Any] | None) -> str:
     if status == "paused" or bool(task.get("is_resumable")):
         return "Type 'resume' to continue or 'reply <message>' to respond"
     return "Enter a task command and press Enter"
+
+
+def _config_section_icon(section_id: str) -> str:
+    return {
+        "runtime": "⚙",
+        "models": "◈",
+        "sandbox": "▣",
+        "policy": "⚖",
+        "profiles": "⌘",
+    }.get(section_id, "•")
 
 
 def _task_action_status_tone(task: dict[str, Any] | None, *, feedback: str | None) -> str:

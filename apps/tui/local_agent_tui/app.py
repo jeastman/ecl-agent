@@ -48,7 +48,7 @@ from .store.selectors import (
 )
 from .widgets.input_box import InputBoxWidget
 from .widgets.log_view import LogViewWidget
-from .widgets.toast import ToastMessage, ToastRack
+from .widgets.toast import ToastItem, ToastMessage, ToastRack
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -391,9 +391,23 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         if timeout_seconds is None:
             timeout_seconds = 5.0 if level == "error" else 3.0
-        rack.show_toast(
-            ToastMessage(message=message, level=level, timeout_seconds=timeout_seconds)
-        )
+        toast = ToastMessage(message=message, level=level, timeout_seconds=timeout_seconds)
+        show_toast = getattr(rack, "show_toast", None)
+        if callable(show_toast):
+            show_toast(toast)
+            return
+
+        # Compatibility fallback: mount/dismiss toasts inline if the rack instance
+        # does not expose the helper method expected by the current app code.
+        item = ToastItem(classes="toast-item")
+        item.update_toast(toast)
+        rack.mount(item)
+        if timeout_seconds is not None and timeout_seconds > 0:
+            dismiss_toast = getattr(rack, "dismiss_toast", None)
+            if callable(dismiss_toast):
+                rack.set_timer(timeout_seconds, lambda: dismiss_toast(item))
+            else:
+                rack.set_timer(timeout_seconds, item.remove)
 
     def _toast_rack(self) -> ToastRack | None:
         try:
@@ -991,6 +1005,11 @@ class AgentTUI(App):  # type: ignore[misc]
     def handle_artifact_browser_selected(self, artifact_id: str) -> None:
         state = self._store.snapshot()
         if state.artifact_browser_selected_id == artifact_id:
+            if (
+                artifact_id not in state.artifact_preview_cache
+                and state.artifact_preview_status_by_artifact.get(artifact_id) != "loading"
+            ):
+                self._queue_selected_artifact_preview_load()
             return
         self._store.dispatch({"kind": "ui", "artifact_browser_selected_id": artifact_id})
         self._render_state()

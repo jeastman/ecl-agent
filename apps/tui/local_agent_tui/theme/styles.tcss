@@ -377,8 +377,21 @@ Screen {
     margin-right: 1;
 }
 
-#config-screen-detail {
+#config-screen-detail-column {
     width: 66%;
+    height: 1fr;
+}
+
+#config-screen-profiles {
+    height: auto;
+    margin-bottom: 1;
+    border: round $la-border-subtle;
+    background: $la-bg-elevated;
+    color: $la-text-secondary;
+    padding: 0 1;
+}
+
+#config-screen-detail {
     height: 1fr;
 }
 
@@ -461,6 +474,8 @@ TaskTimelinePromptScreen {
     width: 72;
     max-width: 90%;
     height: auto;
+    border: heavy $la-focus;
+    background: $la-bg-overlay;
 }
 
 #command-palette-input,
@@ -473,9 +488,9 @@ TaskTimelinePromptScreen {
     height: 8;
     min-height: 6;
     margin-bottom: 1;
-    background: $la-surface;
-    border: none;
-    padding: 0;
+    background: $la-bg-input;
+    border: round $la-border-subtle;
+    padding: 0 1;
 }
 
 #create-task-input .text-area--gutter,
@@ -490,7 +505,7 @@ TaskTimelinePromptScreen {
 }
 
 #create-task-input:focus {
-    border: none;
+    border: heavy $la-focus;
 }
 
 #command-palette-results,
@@ -498,6 +513,23 @@ TaskTimelinePromptScreen {
 #task-timeline-prompt-status,
 #task-detail-command-status {
     color: $la-muted;
+}
+
+#command-palette-title,
+#create-task-title {
+    text-style: bold;
+    color: $la-text-title;
+    margin-bottom: 1;
+}
+
+#create-task-subtitle {
+    color: $la-text-secondary;
+    margin-bottom: 1;
+}
+
+#command-palette-results {
+    border-top: solid $la-border-subtle;
+    padding-top: 1;
 }
 
 #task-detail-input {
