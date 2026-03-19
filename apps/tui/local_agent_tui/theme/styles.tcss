@@ -10,6 +10,16 @@ $la-warning: #f0c36a;
 $la-danger: #d96c6c;
 $la-text: #f1f6f8;
 $la-muted: #b2bcc4;
+$la-bg-base: #0c1015;
+$la-bg-elevated: #1c2430;
+$la-bg-overlay: #242e3a;
+$la-bg-input: #1a2230;
+$la-border-subtle: #2a3440;
+$la-border-default: #3a4650;
+$la-border-urgent: #d96c6c;
+$la-text-title: #ffffff;
+$la-text-secondary: #9aa8b8;
+$la-text-muted-deep: #6b7a8a;
 
 Screen {
     layout: vertical;
@@ -293,7 +303,7 @@ Screen {
 .-focused-pane {
     border: heavy $la-focus;
     background: #1f3140;
-    tint: $la-focus 8%;
+    tint: $la-focus 5%;
 }
 
 .-hidden {
@@ -304,7 +314,7 @@ CommandPaletteScreen,
 CreateTaskScreen,
 TaskTimelinePromptScreen {
     align: center middle;
-    background: rgba(10, 14, 18, 0.82);
+    background: rgba(10, 14, 18, 0.88);
 }
 
 #command-palette-panel,
@@ -354,4 +364,14 @@ TaskTimelinePromptScreen {
 
 #task-detail-input {
     height: auto;
+}
+
+.panel {
+    border: round $la-border;
+    background: $la-surface;
+    padding: 1;
+}
+
+.-urgent-pane {
+    border: heavy $la-border-urgent;
 }
