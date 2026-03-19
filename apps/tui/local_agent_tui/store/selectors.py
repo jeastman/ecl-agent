@@ -12,6 +12,7 @@ from ..theme.colors import (
     TEXT_SECONDARY as _TEXT_SECONDARY,
     TEXT_MUTED_DEEP as _TEXT_MUTED_DEEP,
 )
+from ..utils.time_format import relative_time as _relative_time
 from ..utils.text import truncate_id as _truncate_id
 
 
@@ -55,6 +56,7 @@ class ApprovalQueueItemViewModel:
     description: str
     scope_summary: str
     created_at: str
+    created_at_relative: str
     is_selected: bool
     is_highlighted: bool
 
@@ -82,6 +84,7 @@ class ArtifactItemViewModel:
     display_name: str
     content_type: str
     created_at: str
+    created_at_relative: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -478,11 +481,12 @@ def pending_approvals(
                     request_type=_approval_request_type(approval),
                     policy_context=_approval_policy_context(approval),
                     requested_action=_approval_requested_action(approval),
-                    description=str(
+                description=str(
                         approval.get("description") or approval.get("type") or "Approval"
                     ),
                     scope_summary=str(approval.get("scope_summary") or "Pending review"),
                     created_at=str(approval.get("created_at", "")),
+                    created_at_relative=_relative_time(str(approval.get("created_at", ""))),
                     is_selected=state.selected_approval_id == approval_id,
                     is_highlighted=approval_id in highlighted_approval_ids,
                 )
@@ -1646,6 +1650,7 @@ def _artifact_item_view_model(artifact: dict[str, Any]) -> ArtifactItemViewModel
         ),
         content_type=str(artifact.get("content_type", "unknown")),
         created_at=str(artifact.get("created_at", "")),
+        created_at_relative=_relative_time(str(artifact.get("created_at", ""))),
     )
 
 

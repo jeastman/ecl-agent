@@ -6,7 +6,10 @@ from rich.console import Group
 from rich.text import Text
 
 from ..store.selectors import ApprovalQueueItemViewModel
+from ..theme.empty_states import render_empty_state
 from ..theme.colors import DANGER, WARNING
+from ..theme.typography import muted, status_badge
+from ..utils.text import truncate_id
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -36,23 +39,37 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
         self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")
         if not items:
-            self.update("No pending approvals.")
+            self.update(render_empty_state("approvals"))
             return
-        rendered_items: list[Text] = [
-            Text("Task        Type             Policy              Status"),
-            Text("----------- ---------------- ------------------- ----------"),
-        ]
-        for item in items:
-            marker = ">" if item.is_selected else " "
-            urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
-            row = Text()
-            if item.is_highlighted:
-                row.stylize("reverse")
-            row.append(f"{marker} {item.task_id[:10]:<10} {item.request_type[:16]:<16} ")
-            row.append(f"{item.policy_context[:19]:<19} ")
-            row.append(f"{item.status.upper()[:10]:<10}", style=urgency)
-            rendered_items.append(row)
-            if inbox_mode:
-                rendered_items.append(Text(f"  Action: {item.requested_action}"))
-            rendered_items.append(Text(f"  {item.description}"))
-        self.update(Group(*rendered_items))
+        self.update(Group(*[_approval_card(item, inbox_mode=inbox_mode) for item in items]))
+
+
+def _approval_card(item: ApprovalQueueItemViewModel, *, inbox_mode: bool) -> Text:
+    urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
+    text = Text()
+    if item.is_selected or item.is_highlighted:
+        text.append("▶ ", style=urgency)
+    else:
+        text.append("  ")
+    text.append(item.request_type, style="bold")
+    text.append(" ")
+    text.append_text(status_badge(item.status))
+    text.append("\n")
+    text.append(truncate_id(item.task_id, width=18), style="bold")
+    if item.run_id:
+        text.append("  ")
+        text.append(truncate_id(item.run_id, width=18), style=muted("").style)
+    text.append("\n")
+    text.append(item.description)
+    text.append("\n")
+    text.append(item.requested_action, style=muted("").style)
+    text.append("   ", style=muted("").style)
+    text.append(item.policy_context, style=muted("").style)
+    text.append("\n")
+    text.append(item.scope_summary, style=muted("").style)
+    text.append("   ", style=muted("").style)
+    text.append(item.created_at_relative, style=muted("").style)
+    if inbox_mode:
+        text.append("\n")
+        text.append(f"Action: {item.requested_action}", style=muted("").style)
+    return text

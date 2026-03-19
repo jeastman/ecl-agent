@@ -2,12 +2,13 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.console import Group
 from rich.text import Text
 
 from ..renderables import badge, block, highlighted_row, join, metadata_line, muted, text
 from ..store.app_state import AppState
 from ..store.selectors import (
+    ArtifactItemViewModel,
+    TaskSummaryViewModel,
     dashboard_empty_state,
     footer_hints,
     pending_approvals_for_selected_task,
@@ -15,10 +16,14 @@ from ..store.selectors import (
     recent_tasks,
     selected_task_summary,
 )
+from ..theme.empty_states import render_empty_state
+from ..theme.typography import label, muted, status_badge, title, value
+from ..utils.time_format import compact_datetime
+from ..utils.text import truncate_id
 from ..widgets.approval_queue import ApprovalQueueWidget
 from ..widgets.status_bar import StatusBar
 from ..widgets.task_list import TaskListRow, TaskListWidget
-from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
+from ..theme.colors import ACCENT, DANGER, TEXT_MUTED_DEEP, WARNING
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -85,20 +90,13 @@ class DashboardScreen(Screen):  # type: ignore[misc]
             "Focused" if state.focused_pane == "summary" else "Active Task"
         )
         task_summary.set_class(state.focused_pane == "summary", "-focused-pane")
-        self.query_one("#task-summary-content", Static).update(_task_summary_text(state))
+        self.query_one("#task-summary-content", Static).update(_task_summary_renderable(state))
         artifacts_pane = self.query_one("#recent-artifacts", Static)
         artifacts_pane.border_title = "Recent Artifacts"
         artifacts_pane.border_subtitle = "Focused" if state.focused_pane == "artifacts" else ""
         artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
         artifacts = recent_artifacts(state)
-        artifacts_pane.update(
-            "\n".join(
-                f"{escape(artifact.task_id)}  {escape(artifact.display_name)}\n"
-                f"{escape(artifact.content_type)}"
-                for artifact in artifacts
-            )
-            or "No recent artifacts."
-        )
+        artifacts_pane.update(_recent_artifacts_renderable(artifacts))
         self.query_one("#dashboard-footer", Static).update(footer_hints(state))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
@@ -114,68 +112,98 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         self.app.action_open_task()  # type: ignore[attr-defined]
 
 
-def _task_summary_text(state: AppState) -> Group | str:
+def _task_summary_renderable(state: AppState) -> Text:
     empty_state = dashboard_empty_state(state)
     if empty_state is not None:
-        return empty_state
+        if state.connection_status == "error":
+            text = render_empty_state("tasks")
+            text.append("\n")
+            text.append(state.last_error or "Runtime connection failed.", style=DANGER)
+            return text
+        return render_empty_state("tasks")
     summary = selected_task_summary(state)
     if summary is None:
-        return "Select a task to view its summary."
-    status_style = {
-        "executing": ACCENT,
-        "planning": ACCENT,
-        "running": ACCENT,
-        "completed": SUCCESS,
-        "failed": DANGER,
-        "paused": WARNING,
-        "awaiting_approval": WARNING,
-    }.get(summary.status.lower(), ACCENT)
-    lines: list[Text | Group] = [
-        join(
-            [
-                text(summary.task_id, style="bold"),
-                badge(summary.status.upper(), style=status_style),
-            ],
-            separator="  ",
-        ),
-        metadata_line(
-            [
-                ("Next", summary.actionable_label),
-                ("Run", summary.run_id),
-                ("Created", summary.created_at),
-                ("Updated", summary.updated_at),
-                ("Artifacts", str(summary.artifact_count)),
-            ]
-        ),
-        Text(""),
-        text("Objective", style="bold"),
-        text(summary.objective or "No objective available."),
-        Text(""),
-        text("Latest Summary", style="bold"),
-        text(summary.latest_summary),
-        Text(""),
-        muted(summary.actionable_hint),
-    ]
+        text = render_empty_state("tasks")
+        text.append("\n")
+        text.append("Select a task to view its summary.", style=TEXT_MUTED_DEEP)
+        return text
+    return _task_summary_text(summary)
+
+
+def _task_summary_text(summary: TaskSummaryViewModel) -> Text:
+    text = Text()
+    text.append_text(title(truncate_id(summary.task_id, width=28)))
+    text.append(" ")
+    text.append_text(status_badge(summary.status))
+    text.append("\n")
+    text.append_text(label("Next"))
+    text.append(": ")
+    text.append_text(value(summary.actionable_label))
+    text.append("\n")
+    text.append_text(label("Run"))
+    text.append(": ")
+    text.append_text(muted(summary.run_id or "unknown"))
+    text.append("   ")
+    text.append_text(label("Artifacts"))
+    text.append(": ")
+    text.append_text(value(str(summary.artifact_count)))
+    text.append("\n")
+    text.append_text(label("Created"))
+    text.append(": ")
+    text.append_text(muted(compact_datetime(summary.created_at)))
+    text.append("   ")
+    text.append_text(label("Updated"))
+    text.append(": ")
+    text.append_text(muted(compact_datetime(summary.updated_at)))
+    text.append("\n\n")
+    text.append_text(title("Objective"))
+    text.append("\n")
+    text.append(summary.objective or "No objective available.")
+    text.append("\n\n")
+    text.append_text(title("Latest Summary"))
+    text.append("\n")
+    text.append(summary.latest_summary)
+    text.append("\n\n")
+    text.append_text(muted(summary.actionable_hint))
     if summary.awaiting_approval:
-        lines.extend([Text(""), badge("Approval required before the task can continue.", style=WARNING)])
-    return block(lines)
+        text.append("\n\n")
+        text.append("Approval required before the task can continue.", style=WARNING)
+    return text
 
 
-def _recent_artifacts_renderable(artifacts: list[Any]) -> Group | str:
+def _recent_artifacts_renderable(artifacts: list[ArtifactItemViewModel]) -> Text:
     if not artifacts:
-        return "No recent artifacts."
-    rows: list[Text] = []
-    for artifact in artifacts:
-        name_line = join(
-            [
-                text(artifact.display_name, style="bold"),
-                muted(artifact.task_id),
-            ],
-            separator="  ",
-        )
-        rows.append(name_line)
-        rows.append(metadata_line([("Type", artifact.content_type), ("Created", artifact.created_at)]))
-        rows.append(Text(""))
-    if rows:
-        rows.pop()
-    return Group(*rows)
+        return render_empty_state("artifacts")
+    text = Text()
+    for index, artifact in enumerate(artifacts):
+        if index:
+            text.append("\n\n")
+        text.append_text(_artifact_card(artifact))
+    return text
+
+
+def _artifact_card(artifact: ArtifactItemViewModel) -> Text:
+    text = Text()
+    text.append(f"{_artifact_icon(artifact)} ", style=ACCENT)
+    text.append(artifact.display_name, style="bold")
+    text.append("\n")
+    text.append(f"{truncate_id(artifact.task_id, width=18)}", style=TEXT_MUTED_DEEP)
+    text.append("   ", style=TEXT_MUTED_DEEP)
+    text.append(artifact.created_at_relative, style=TEXT_MUTED_DEEP)
+    text.append("\n")
+    text.append(artifact.content_type, style=TEXT_MUTED_DEEP)
+    return text
+
+
+def _artifact_icon(artifact: ArtifactItemViewModel) -> str:
+    content_type = artifact.content_type.lower()
+    name = artifact.display_name.lower()
+    if "markdown" in content_type or name.endswith(".md"):
+        return "M"
+    if "json" in content_type or name.endswith(".json"):
+        return "J"
+    if name.endswith(".py") or "python" in content_type:
+        return "P"
+    if "image" in content_type:
+        return "I"
+    return "F"

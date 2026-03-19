@@ -104,13 +104,21 @@ Screen {
     border: solid $la-border;
     margin-right: 1;
     padding: 0;
+    background: $la-surface;
 }
 
 .task-list-row {
     height: 4;
     min-height: 4;
     padding: 0 1;
-    border-bottom: solid $la-border;
+}
+
+.task-list-row:even {
+    background: $la-surface;
+}
+
+.task-list-row:odd {
+    background: $la-background;
 }
 
 .task-list-row-content {
@@ -212,6 +220,7 @@ Screen {
 #recent-artifacts {
     margin-top: 1;
     height: 1fr;
+    overflow-y: auto;
 }
 
 #approvals-screen-queue {

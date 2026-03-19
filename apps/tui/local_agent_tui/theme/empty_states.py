@@ -5,7 +5,7 @@ from rich.text import Text
 EMPTY_STATES: dict[str, tuple[str, str, str]] = {
     "tasks":         ("◇", "No tasks yet",           "Press n to create your first task"),
     "events":        ("◇", "No events yet",           "Events will appear as the task executes"),
-    "approvals":     ("✓", "No pending approvals",    "All requests have been resolved"),
+    "approvals":     ("✓", "No pending approvals.",   "All requests have been resolved"),
     "artifacts":     ("◇", "No artifacts",            "Artifacts will appear as the agent produces output"),
     "subagents":     ("◇", "No subagent activity",    "Subagents will appear when the task delegates work"),
     "plan":          ("◇", "No plan yet",             "A plan will appear when the agent begins strategizing"),

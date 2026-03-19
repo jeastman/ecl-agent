@@ -481,6 +481,14 @@ class _ArtifactListErrorProtocolClient(_FakeProtocolClient):
         return await super().task_artifacts_list(task_id, run_id)
 
 
+class _EmptyDashboardProtocolClient(_FakeProtocolClient):
+    def __init__(self, config_path: str) -> None:
+        super().__init__(config_path)
+        self._tasks = {}
+        self._approvals = {}
+        self._diagnostics = {}
+
+
 @unittest.skipIf(_TEXTUAL_IMPORT_ERROR is not None, "textual is not installed")
 class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
     async def test_dispatch_and_render_uses_direct_render_on_app_thread(self) -> None:
@@ -532,8 +540,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 artifacts = app.screen.query_one("#recent-artifacts", Static)
                 approvals = app.screen.query_one("#approval-queue", Static)
                 self.assertEqual(task_summary.border_title, "Selected Task")
-                self.assertEqual(selected_task_summary(app._store.snapshot()).latest_summary, "Scanning repository")  # type: ignore[union-attr,attr-defined]
-                self.assertIn("report.md", [artifact.display_name for artifact in recent_artifacts(app._store.snapshot())])  # type: ignore[attr-defined]
+                self.assertIn("Scanning repository", str(task_summary_content.visual))
+                self.assertIn("Latest Summary", str(task_summary_content.visual))
+                self.assertIn("report.md", str(artifacts.visual))
+                self.assertIn("text/markdown", str(artifacts.visual))
                 self.assertIn(
                     "tool permission",
                     "\n".join(
@@ -654,6 +664,125 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("Initialize the Enterprise Context Layer", row_text)
                 self.assertNotIn("detail line 20", row_text)
                 self.assertIn("run_15dbf9c5c1ab", row_text)
+
+    async def test_dashboard_task_list_updates_rows_in_place_when_ids_are_stable(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListRow
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                original_rows = list(app.screen.query(TaskListRow))
+                self.assertGreaterEqual(len(original_rows), 2)
+                first_row_id = id(original_rows[0])
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "status": "completed",
+                                    "objective": "Inspect repo with richer summary output",
+                                    "created_at": "2026-03-12T00:00:00Z",
+                                    "updated_at": "2026-03-18T00:15:33Z",
+                                    "latest_summary": "Repository scan complete",
+                                }
+                            }
+                        },
+                    }
+                )
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                updated_rows = list(app.screen.query(TaskListRow))
+                self.assertEqual(id(updated_rows[0]), first_row_id)
+                self.assertIn("Inspect repo with richer summary output", str(updated_rows[0].children[0].visual))
+
+    async def test_dashboard_task_list_rebuilds_when_task_ids_change(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListRow
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                original_rows = list(app.screen.query(TaskListRow))
+                self.assertEqual(original_rows[0].task_id, "task_1")
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_3",
+                                    "run_id": "run_3",
+                                    "status": "executing",
+                                    "objective": "New task at the top",
+                                    "created_at": "2026-03-19T00:00:00Z",
+                                    "updated_at": "2026-03-19T00:00:00Z",
+                                    "latest_summary": "Fresh task",
+                                }
+                            }
+                        },
+                    }
+                )
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.pause()
+                reordered_rows = list(app.screen.query(TaskListRow))
+                self.assertEqual(reordered_rows[0].task_id, "task_3")
+                self.assertNotEqual(id(reordered_rows[0]), id(original_rows[0]))
+
+    async def test_dashboard_empty_state_renders_structured_empty_panels(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListEmptyRow
+        from textual.widgets import Static
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _EmptyDashboardProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(100, 32)) as pilot:
+                await pilot.pause()
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                task_summary = app.screen.query_one("#task-summary-content", Static)
+                artifacts = app.screen.query_one("#recent-artifacts", Static)
+                approvals = app.screen.query_one("#approval-queue", Static)
+                empty_rows = list(app.screen.query(TaskListEmptyRow))
+                self.assertEqual(len(empty_rows), 1)
+                self.assertIn("No tasks yet", str(task_summary.visual))
+                self.assertIn("No artifacts", str(artifacts.visual))
+                self.assertIn("No pending approvals", str(approvals.visual))
 
     async def test_dashboard_task_selection_surfaces_artifact_list_errors_without_crashing(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
