@@ -169,6 +169,15 @@ class MCPToolProvider:
                     exposed_tool_name=exposed_name,
                     exc=exc,
                 )
+            except Exception as exc:
+                return self._handle_execution_error(
+                    role=role,
+                    server=server,
+                    raw_tool_name=original_name,
+                    exposed_tool_name=exposed_name,
+                    arguments=arguments,
+                    exc=exc,
+                )
 
         async def _ainvoke(**arguments: Any) -> Any:
             self._emit_tool_called(
@@ -186,6 +195,15 @@ class MCPToolProvider:
                     server=server,
                     raw_tool_name=original_name,
                     exposed_tool_name=exposed_name,
+                    exc=exc,
+                )
+            except Exception as exc:
+                return self._handle_execution_error(
+                    role=role,
+                    server=server,
+                    raw_tool_name=original_name,
+                    exposed_tool_name=exposed_name,
+                    arguments=arguments,
                     exc=exc,
                 )
 
@@ -249,6 +267,41 @@ class MCPToolProvider:
             "Adjust the tool arguments to satisfy the schema and try again."
         )
 
+    def _handle_execution_error(
+        self,
+        *,
+        role: str,
+        server: MCPServerConfig,
+        raw_tool_name: str,
+        exposed_tool_name: str,
+        arguments: dict[str, Any],
+        exc: Exception,
+    ) -> str:
+        message = str(exc)
+        self._emit(
+            "tool.rejected",
+            {
+                "tool": exposed_tool_name,
+                "arguments": _sanitize_mcp_arguments(arguments),
+                "server_name": server.name,
+                "transport": server.transport,
+                "raw_tool_name": raw_tool_name,
+                "exposed_tool_name": exposed_tool_name,
+                "tool_source": "mcp",
+                "agent_role": role,
+                "code": "tool_execution_failed",
+                "category": "tool_execution",
+                "message": message,
+                "retryable": True,
+                "details": {},
+                "summary": f"{exposed_tool_name} rejected: {message}",
+            },
+        )
+        return (
+            f"TOOL_REJECTED [tool_execution_failed]: {message} "
+            "Revise the tool arguments or query syntax and try again."
+        )
+
     def _emit_tool_called(
         self,
         *,
@@ -298,6 +351,19 @@ def _connection_payload(server: MCPServerConfig) -> dict[str, Any]:
     if server.headers:
         payload["headers"] = dict(server.headers)
     return payload
+
+
+def _sanitize_mcp_arguments(value: Any) -> Any:
+    if isinstance(value, str):
+        stripped = value.strip()
+        return "<host-native-path>" if stripped.startswith("/") and not stripped.startswith("/workspace") and not stripped.startswith("/tmp") and not stripped.startswith("/.memory") else value
+    if isinstance(value, list):
+        return [_sanitize_mcp_arguments(item) for item in value]
+    if isinstance(value, tuple):
+        return [_sanitize_mcp_arguments(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _sanitize_mcp_arguments(item) for key, item in value.items()}
+    return value
 
 
 def _original_tool_name(tool_name: str, *, server_name: str, tool_name_prefix: bool) -> str:

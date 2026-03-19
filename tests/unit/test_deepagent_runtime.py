@@ -1634,6 +1634,92 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(rejection_event["code"], "invalid_arguments")
         self.assertTrue(rejection_event["retryable"])
 
+    def test_harness_keeps_running_after_post_invoke_pattern_mismatch_mcp_arguments(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        async def _fake_load_mcp_tools(*args: Any, **kwargs: Any) -> list[BaseTool]:
+            return [_post_invoke_pattern_mismatch_mcp_get_issue_tool()]
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider.load_mcp_tools",
+            _fake_load_mcp_tools,
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                mcp_config=_fixture_mcp_config(),
+                model_factory=lambda model_name, *, model_provider: {},
+                agent_factory=lambda **kwargs: PostInvokePatternMismatchMCPArgumentsAgent(kwargs, {}),
+            ).execute(
+                request,
+                on_event=lambda event_type, payload: events.append((event_type, payload)),
+            )
+
+        self.assertTrue(result.success)
+        artifact_text = self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md")
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", artifact_text)
+        self.assertIn("String should match pattern", artifact_text)
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "fixture_get_issue")
+        self.assertEqual(rejection_event["code"], "invalid_arguments")
+        self.assertTrue(rejection_event["retryable"])
+
+    def test_harness_keeps_running_after_mcp_execution_error(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        async def _fake_load_mcp_tools(*args: Any, **kwargs: Any) -> list[BaseTool]:
+            return [_post_invoke_jql_execution_error_search_tool()]
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider.load_mcp_tools",
+            _fake_load_mcp_tools,
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                mcp_config=_fixture_mcp_config(),
+                model_factory=lambda model_name, *, model_provider: {},
+                agent_factory=lambda **kwargs: PostInvokeExecutionErrorMCPAgent(kwargs, {}),
+            ).execute(
+                request,
+                on_event=lambda event_type, payload: events.append((event_type, payload)),
+            )
+
+        self.assertTrue(result.success)
+        artifact_text = self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md")
+        self.assertIn("TOOL_REJECTED [tool_execution_failed]", artifact_text)
+        self.assertIn("Error in the JQL Query", artifact_text)
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "fixture_search")
+        self.assertEqual(rejection_event["code"], "tool_execution_failed")
+        self.assertTrue(rejection_event["retryable"])
+
     def test_harness_keeps_running_after_missing_local_tool_argument(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         request = AgentExecutionRequest(
@@ -1718,6 +1804,79 @@ class MCPToolProviderTests(unittest.TestCase):
         self.assertEqual(events[-1][0], "tool.rejected")
         self.assertEqual(events[-1][1]["tool"], "fixture_search")
         self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertTrue(events[-1][1]["retryable"])
+
+    def test_post_invoke_pattern_mismatch_errors_return_retryable_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider = MCPToolProvider(
+            config=_fixture_mcp_config(),
+            task_id="task_1",
+            run_id="run_1",
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tool = provider._wrap_tool(
+            role="primary",
+            server=_fixture_mcp_config().servers["fixture"],
+            raw_tool=_post_invoke_pattern_mismatch_mcp_get_issue_tool(),
+        )
+
+        message = tool.invoke({"issue_key": "AP", "fields": "*all"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("String should match pattern", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "fixture_get_issue")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertTrue(events[-1][1]["retryable"])
+
+    def test_post_invoke_jql_execution_errors_return_retryable_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider = MCPToolProvider(
+            config=_fixture_mcp_config(),
+            task_id="task_1",
+            run_id="run_1",
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tool = provider._wrap_tool(
+            role="primary",
+            server=_fixture_mcp_config().servers["fixture"],
+            raw_tool=_post_invoke_jql_execution_error_search_tool(),
+        )
+
+        message = tool.invoke({"jql": "project = AP issuetype != Sub-task ORDER BY created DESC", "limit": 10})
+
+        self.assertIn("TOOL_REJECTED [tool_execution_failed]", message)
+        self.assertIn("Error in the JQL Query", message)
+        self.assertIn("Revise the tool arguments or query syntax", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "fixture_search")
+        self.assertEqual(events[-1][1]["code"], "tool_execution_failed")
+        self.assertTrue(events[-1][1]["retryable"])
+
+    def test_generic_mcp_execution_errors_return_retryable_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider = MCPToolProvider(
+            config=_fixture_mcp_config(),
+            task_id="task_1",
+            run_id="run_1",
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tool = provider._wrap_tool(
+            role="primary",
+            server=_fixture_mcp_config().servers["fixture"],
+            raw_tool=_post_invoke_generic_execution_error_tool(),
+        )
+
+        message = tool.invoke({"query": "agent runtime"})
+
+        self.assertIn("TOOL_REJECTED [tool_execution_failed]", message)
+        self.assertIn("remote API temporarily rejected the request", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "fixture_search")
+        self.assertEqual(events[-1][1]["code"], "tool_execution_failed")
         self.assertTrue(events[-1][1]["retryable"])
 
 
@@ -1924,6 +2083,50 @@ class PostInvokeInvalidMCPArgumentsAgent:
         search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         message = search_tool.invoke({"query": "agent runtime", "limit": 20, "project_key": "AP"})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class PostInvokePatternMismatchMCPArgumentsAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        issue_tool = next(tool for tool in self._tools if tool.name == "fixture_get_issue")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = issue_tool.invoke({"issue_key": "AP", "fields": "*all"})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class PostInvokeExecutionErrorMCPAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = search_tool.invoke(
+            {"jql": "project = AP issuetype != Sub-task ORDER BY created DESC", "limit": 10}
+        )
         write_tool.invoke(
             {
                 "path": "/workspace/artifacts/task_1/run_1/final_response.md",
@@ -2257,6 +2460,20 @@ class _PostInvokeInvalidSearchArgs(BaseModel):
     project_key: str | None = None
 
 
+class _PostInvokePatternMismatchGetIssueArgs(BaseModel):
+    issue_key: str
+    fields: str | None = None
+
+
+class _PostInvokeJQLExecutionErrorSearchArgs(BaseModel):
+    jql: str
+    limit: int = 10
+
+
+class _GenericExecutionErrorSearchArgs(BaseModel):
+    query: str
+
+
 def _invalid_mcp_search_tool() -> BaseTool:
     return StructuredTool.from_function(
         func=lambda query, limit=5: [{"text": f"{query}:{limit}"}],
@@ -2288,6 +2505,61 @@ class _PostInvokeInvalidMCPTool:
 
 def _post_invoke_invalid_mcp_search_tool() -> BaseTool:
     return cast(BaseTool, _PostInvokeInvalidMCPTool())
+
+
+class _PostInvokePatternMismatchMCPGetIssueTool:
+    name = "fixture_get_issue"
+    description = "Get fixture Jira issue."
+    args_schema = _PostInvokePatternMismatchGetIssueArgs
+    metadata: dict[str, Any] | None = None
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        raise ValidationError.from_exception_data(
+            "call[get_issue]",
+            [
+                {
+                    "type": "string_pattern_mismatch",
+                    "loc": ("issue_key",),
+                    "msg": "String should match pattern '^[A-Z][A-Z0-9_]+-\\d+$'",
+                    "input": arguments.get("issue_key"),
+                    "ctx": {"pattern": "^[A-Z][A-Z0-9_]+-\\d+$"},
+                }
+            ],
+        )
+
+
+def _post_invoke_pattern_mismatch_mcp_get_issue_tool() -> BaseTool:
+    return cast(BaseTool, _PostInvokePatternMismatchMCPGetIssueTool())
+
+
+class _PostInvokeJQLExecutionErrorSearchTool:
+    name = "fixture_search"
+    description = "Search fixture MCP tool."
+    args_schema = _PostInvokeJQLExecutionErrorSearchArgs
+    metadata: dict[str, Any] | None = None
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        raise RuntimeError(
+            "Error calling tool 'search': Error in the JQL Query: Expecting either 'OR' or 'AND' but got 'issuetype'. (line 1, character 14)"
+        )
+
+
+def _post_invoke_jql_execution_error_search_tool() -> BaseTool:
+    return cast(BaseTool, _PostInvokeJQLExecutionErrorSearchTool())
+
+
+class _PostInvokeGenericExecutionErrorSearchTool:
+    name = "fixture_search"
+    description = "Search fixture MCP tool."
+    args_schema = _GenericExecutionErrorSearchArgs
+    metadata: dict[str, Any] | None = None
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        raise RuntimeError("remote API temporarily rejected the request")
+
+
+def _post_invoke_generic_execution_error_tool() -> BaseTool:
+    return cast(BaseTool, _PostInvokeGenericExecutionErrorSearchTool())
 
 
 def _tool_result_text(value: Any) -> str:
