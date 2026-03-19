@@ -12,6 +12,7 @@ from ..store.selectors import (
 from ..widgets.artifact_preview import ArtifactPreviewWidget
 from ..widgets.artifact_table import ArtifactTableRow, ArtifactTableWidget
 from ..widgets.status_bar import StatusBar
+from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -61,10 +62,13 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
             group_by=toolbar.group_by,
         )
         self.query_one(ArtifactPreviewWidget).update_preview(selected_artifact_preview(state))
-        footer = footer_hints(state).plain
-        footer = f"{footer}\nGrouping: {escape(toolbar.group_by)}   Artifacts: {toolbar.total_count}"
+        footer = footer_hints(state)
+        footer.append(
+            f"\nGrouping: {escape(toolbar.group_by)}   Artifacts: {toolbar.total_count}",
+            style=TEXT_SECONDARY,
+        )
         if state.artifact_action_feedback:
-            footer = f"{footer}\n{state.artifact_action_feedback}"
+            footer.append(f"\n{escape(state.artifact_action_feedback)}", style=STATUS_DANGER)
         self.query_one("#artifacts-screen-footer", Static).update(footer)
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:

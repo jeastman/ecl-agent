@@ -9,6 +9,7 @@ from ..store.selectors import footer_hints, pending_approvals, selected_approval
 from ..widgets.approval_detail import ApprovalDetailWidget
 from ..widgets.approval_queue import ApprovalQueueWidget
 from ..widgets.status_bar import StatusBar
+from ..theme.colors import TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -56,7 +57,7 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
             inbox_mode=True,
         )
         self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
-        footer = footer_hints(state).plain
+        footer = footer_hints(state)
         if state.approval_feedback:
-            footer = f"{footer}\n{escape(state.approval_feedback)}"
+            footer.append(f"\n{escape(state.approval_feedback)}", style=TEXT_SECONDARY)
         self.query_one("#approvals-screen-footer", Static).update(footer)

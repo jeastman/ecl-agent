@@ -16,6 +16,7 @@ from ..store.selectors import (
 from ..widgets.memory_entry_list import MemoryEntryListWidget, MemoryEntryRow
 from ..widgets.memory_group_list import MemoryGroupListWidget, MemoryGroupRow
 from ..widgets.status_bar import StatusBar
+from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -126,13 +127,13 @@ class MemoryScreen(Screen):  # type: ignore[misc]
                 )
             )
             self._last_detail_signature = detail_signature
-        footer = footer_hints(state).plain
-        footer = f"{footer}\nMemory inspector is read-only."
+        footer = footer_hints(state)
+        footer.append("\nMemory inspector is read-only.", style=TEXT_SECONDARY)
         if state.memory_request_error:
-            footer = f"{footer}\n{state.memory_request_error}"
-        if self._last_footer != footer:
+            footer.append(f"\n{escape(state.memory_request_error)}", style=STATUS_DANGER)
+        if self._last_footer != footer.plain:
             self.query_one("#memory-screen-footer", Static).update(footer)
-            self._last_footer = footer
+            self._last_footer = footer.plain
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id == "memory-screen-groups" and isinstance(

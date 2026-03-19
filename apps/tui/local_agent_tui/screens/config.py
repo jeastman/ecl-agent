@@ -7,6 +7,7 @@ from ..store.selectors import config_section_items, footer_hints, selected_confi
 from ..widgets.config_detail import ConfigDetailWidget
 from ..widgets.config_section_list import ConfigSectionListWidget, ConfigSectionRow
 from ..widgets.status_bar import StatusBar
+from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -64,13 +65,13 @@ class ConfigScreen(Screen):  # type: ignore[misc]
         )
         detail_model = selected_config_detail(state)
         self.query_one(ConfigDetailWidget).update_detail(detail_model)
-        footer = footer_hints(state).plain
-        footer = f"{footer}\nConfig viewer is read-only."
+        footer = footer_hints(state)
+        footer.append("\nConfig viewer is read-only.", style=TEXT_SECONDARY)
         if state.config_request_error:
-            footer = f"{footer}\n{state.config_request_error}"
-        if self._last_footer != footer:
+            footer.append(f"\n{escape(state.config_request_error)}", style=STATUS_DANGER)
+        if self._last_footer != footer.plain:
             self.query_one("#config-screen-footer", Static).update(footer)
-            self._last_footer = footer
+            self._last_footer = footer.plain
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id != "config-screen-sections":

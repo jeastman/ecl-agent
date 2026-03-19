@@ -21,6 +21,7 @@ from ..widgets.input_box import InputBoxWidget
 from ..widgets.log_view import LogViewWidget
 from ..widgets.plan_view import PlanViewWidget
 from ..widgets.status_bar import StatusBar
+from ..theme.colors import TEXT_SECONDARY
 from ..widgets.task_detail_panels import (
     NotificationStripWidget,
     SubagentActivityWidget,
@@ -95,10 +96,11 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         self.query_one(NotificationStripWidget).update_notifications(task_notifications(state))
         self.query_one(InputBoxWidget).update_actions(task_action_bar(state))
         timeline_state = timeline_state_summary(state)
-        footer = footer_hints(state).plain
-        footer = (
-            f"{footer}\nTimeline filter: {timeline_state.filter_label}   "
-            f"Search: {timeline_state.search_query if timeline_state.search_query else 'none'}"
+        footer = footer_hints(state)
+        footer.append(
+            f"\nTimeline filter: {escape(timeline_state.filter_label)}   "
+            f"Search: {escape(timeline_state.search_query) if timeline_state.search_query else 'none'}",
+            style=TEXT_SECONDARY,
         )
         self.query_one("#task-detail-footer", Static).update(footer)
 
