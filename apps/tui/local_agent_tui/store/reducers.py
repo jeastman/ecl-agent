@@ -115,6 +115,7 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         task_detail_show_logs=bool(
             message.get("task_detail_show_logs", state.task_detail_show_logs)
         ),
+        navigation_stack=list(message.get("navigation_stack", state.navigation_stack)),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -124,6 +125,17 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         selected_artifacts = dict(state_next.selected_artifact_id_by_task)
         selected_artifacts[task_key] = selected_artifact_id
         state_next = replace(state_next, selected_artifact_id_by_task=selected_artifacts)
+
+    # When focused_pane changes, record it in last_focused_pane_by_screen
+    if "focused_pane" in message and "last_focused_pane_by_screen" not in message:
+        updated_focus_map = dict(state_next.last_focused_pane_by_screen)
+        updated_focus_map[state_next.active_screen] = state_next.focused_pane
+        state_next = replace(state_next, last_focused_pane_by_screen=updated_focus_map)
+    elif "last_focused_pane_by_screen" in message:
+        state_next = replace(
+            state_next,
+            last_focused_pane_by_screen=dict(message["last_focused_pane_by_screen"]),
+        )
 
     preview_status = message.get("artifact_preview_status")
     preview_artifact_id = message.get("artifact_preview_artifact_id")

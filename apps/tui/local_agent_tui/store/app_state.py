@@ -59,6 +59,8 @@ class UiMessage(TypedDict, total=False):
     diagnostics_request_error: str | None
     selected_diagnostic_id: str | None
     task_detail_show_logs: bool
+    navigation_stack: list[str]
+    last_focused_pane_by_screen: dict[str, str]
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -128,6 +130,8 @@ class AppState:
     diagnostics_request_error: str | None = None
     selected_diagnostic_id: str | None = None
     task_detail_show_logs: bool = False
+    navigation_stack: list[str] = field(default_factory=lambda: ["dashboard"])
+    last_focused_pane_by_screen: dict[str, str] = field(default_factory=dict)
 
 
 class AppStateStore:
