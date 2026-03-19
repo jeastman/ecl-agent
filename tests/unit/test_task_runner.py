@@ -304,6 +304,58 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertIsNotNone(metrics.started_at)
         self.assertIsNotNone(metrics.ended_at)
 
+    def test_task_runner_resumes_after_transient_upstream_pause(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=TransientPauseThenResumeHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        paused_snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(paused_snapshot.status, TaskStatus.PAUSED)
+        self.assertTrue(paused_snapshot.is_resumable)
+        self.assertEqual(paused_snapshot.pause_reason, "awaiting resume")
+        self.assertEqual(
+            paused_snapshot.latest_summary,
+            "Execution paused after a transient upstream error. Resume from the latest checkpoint.",
+        )
+
+        resumed_snapshot = runner.resume_run(
+            task_id,
+            run_id,
+            identity_bundle_text="identity",
+        )
+        self.assertEqual(resumed_snapshot.status, TaskStatus.COMPLETED)
+        self.assertFalse(resumed_snapshot.is_resumable)
+        self.assertEqual(
+            [event.event.event_type for event in bus.list_events(task_id, run_id)],
+            [
+                "task.created",
+                "task.started",
+                "checkpoint.saved",
+                "task.paused",
+                "task.resumed",
+                "checkpoint.saved",
+                "artifact.created",
+                "task.completed",
+            ],
+        )
+
     def test_task_runner_replies_and_continues_same_checkpoint_thread(self) -> None:
         store = InMemoryRunStateStore()
         bus = InMemoryEventBus()
@@ -797,6 +849,34 @@ class PauseThenResumeHarness:
                 success=False,
                 summary="Paused until explicitly resumed.",
                 output_artifacts=[],
+                paused=True,
+                pause_reason="awaiting resume",
+            )
+        metadata = controller.record_checkpoint("resumed")
+        if on_event is not None:
+            on_event("checkpoint.saved", metadata.to_dict())
+        request.sandbox.write_text("/workspace/artifacts/resumed.md", "# Resumed\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Completed after resume.",
+            output_artifacts=["/workspace/artifacts/resumed.md"],
+        )
+
+
+class TransientPauseThenResumeHarness:
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        controller = request.checkpoint_controller
+        if controller is None:
+            raise AssertionError("checkpoint controller is required for pause/resume tests")
+        if request.resume_from_checkpoint_id is None:
+            metadata = controller.record_checkpoint("transient_failure")
+            if on_event is not None:
+                on_event("checkpoint.saved", metadata.to_dict())
+            return AgentExecutionResult(
+                success=False,
+                summary="Execution paused after a transient upstream error. Resume from the latest checkpoint.",
+                output_artifacts=[],
+                error_message="Internal Server Error (ref: 976bb844-48dc-4d2a-ab25-0de36fbab735) (status code: -1)",
                 paused=True,
                 pause_reason="awaiting resume",
             )

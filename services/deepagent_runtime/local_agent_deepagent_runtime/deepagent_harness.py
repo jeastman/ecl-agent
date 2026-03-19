@@ -222,6 +222,15 @@ class LangChainDeepAgentHarness:
                 error_message=str(exc),
             )
         except Exception as exc:
+            if _is_resumable_transient_execution_error(exc, request):
+                return AgentExecutionResult(
+                    success=False,
+                    summary="Execution paused after a transient upstream error. Resume from the latest checkpoint.",
+                    output_artifacts=[],
+                    error_message=str(exc),
+                    paused=True,
+                    pause_reason="awaiting resume",
+                )
             return AgentExecutionResult(
                 success=False,
                 summary="Agent harness failed during Deep Agent execution.",
@@ -526,3 +535,27 @@ def _invoke_agent(
         return agent.invoke(payload, config=config)
     except TypeError:
         return agent.invoke(payload)
+
+
+def _is_resumable_transient_execution_error(
+    exc: Exception,
+    request: "AgentExecutionRequest",
+) -> bool:
+    if request.checkpoint_controller is None:
+        return False
+    message = str(exc).lower()
+    transient_markers = (
+        "internal server error",
+        "status code: -1",
+        "service unavailable",
+        "bad gateway",
+        "gateway timeout",
+        "temporarily unavailable",
+        "connection reset",
+        "connection aborted",
+        "timed out",
+        "timeout",
+        "rate limit",
+        "too many requests",
+    )
+    return any(marker in message for marker in transient_markers)

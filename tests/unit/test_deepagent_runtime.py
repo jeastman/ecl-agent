@@ -886,6 +886,41 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(completed_events[0]["status"], "failed")
         self.assertEqual(completed_events[0]["subagentId"], "researcher")
 
+    def test_harness_pauses_for_resumable_transient_upstream_error(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+            checkpoint_controller=FakeCheckpointController(),
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: TransientInternalServerErrorAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertFalse(result.success)
+        self.assertTrue(result.paused)
+        self.assertEqual(result.pause_reason, "awaiting resume")
+        self.assertEqual(
+            result.summary,
+            "Execution paused after a transient upstream error. Resume from the latest checkpoint.",
+        )
+        self.assertEqual(
+            result.error_message,
+            "Internal Server Error (ref: 976bb844-48dc-4d2a-ab25-0de36fbab735) (status code: -1)",
+        )
+
     def test_harness_captures_final_response_artifact_for_failed_result_payload(self) -> None:
         request = AgentExecutionRequest(
             task_id="task_1",
@@ -2134,6 +2169,19 @@ class PostInvokeExecutionErrorMCPAgent:
             }
         )
         return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class TransientInternalServerErrorAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        raise RuntimeError(
+            "Internal Server Error (ref: 976bb844-48dc-4d2a-ab25-0de36fbab735) (status code: -1)"
+        )
 
 
 class MissingLocalToolArgumentAgent:
