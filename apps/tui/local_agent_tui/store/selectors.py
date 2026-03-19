@@ -4,7 +4,15 @@ from dataclasses import dataclass
 import json
 from typing import Any, cast
 
+from rich.text import Text as _RichText
+
 from .app_state import AppState, TaskEventRecord
+from ..theme.colors import (
+    TEXT_PRIMARY as _TEXT_PRIMARY,
+    TEXT_SECONDARY as _TEXT_SECONDARY,
+    TEXT_MUTED_DEEP as _TEXT_MUTED_DEEP,
+)
+from ..utils.text import truncate_id as _truncate_id
 
 
 @dataclass(frozen=True, slots=True)
@@ -313,6 +321,44 @@ class DiagnosticsDetailViewModel:
     status: str
     summary: str
     body: str
+
+
+_SCREEN_DISPLAY_NAMES: dict[str, str] = {
+    "dashboard": "Dashboard",
+    "task_detail": "Task",
+    "approvals": "Approvals",
+    "artifacts": "Artifacts",
+    "memory": "Memory",
+    "config": "Config",
+    "diagnostics": "Diagnostics",
+    "markdown_viewer": "Viewer",
+}
+
+
+def screen_breadcrumb(state: AppState) -> _RichText:
+    """Return a Rich Text breadcrumb from the navigation stack.
+
+    Screen names use TEXT_SECONDARY; the current (last) screen uses TEXT_PRIMARY.
+    Separators use TEXT_MUTED_DEEP. task_detail nodes show the truncated task ID.
+    Colors imported from theme.colors — not theme.typography.
+    """
+    result = _RichText()
+    stack = state.navigation_stack or ["dashboard"]
+    for index, screen in enumerate(stack):
+        is_last = index == len(stack) - 1
+        color = _TEXT_PRIMARY if is_last else _TEXT_SECONDARY
+
+        if screen == "task_detail":
+            task_id = state.selected_task_id or ""
+            short_id = _truncate_id(task_id, width=16) if task_id else ""
+            label = f"Task {short_id}".strip()
+        else:
+            label = _SCREEN_DISPLAY_NAMES.get(screen, screen)
+
+        if index > 0:
+            result.append(" › ", style=_TEXT_MUTED_DEEP)
+        result.append(label, style=color)
+    return result
 
 
 def connection_label(state: AppState) -> str:
