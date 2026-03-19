@@ -325,7 +325,53 @@ class AgentTUI(App):  # type: ignore[misc]
         self.run_worker(self._sync_selected_task(), group="selection-sync", exclusive=True)
 
     def _set_active_screen(self, screen_name: str) -> None:
-        message: UiMessage = {"kind": "ui", "active_screen": screen_name}
+        state = self._store.snapshot()
+        # Compute new navigation stack
+        if screen_name == "dashboard":
+            new_stack: list[str] = ["dashboard"]
+        else:
+            new_stack = list(state.navigation_stack) + [screen_name]
+        message: UiMessage = {
+            "kind": "ui",
+            "active_screen": screen_name,
+            "navigation_stack": new_stack,
+        }
+        # Restore focused pane if we've been here before
+        restored_pane = state.last_focused_pane_by_screen.get(screen_name)
+        if restored_pane:
+            message["focused_pane"] = restored_pane
+        if screen_name != "approvals":
+            message["approval_feedback"] = None
+        if screen_name != "artifacts":
+            message["artifact_action_feedback"] = None
+        if screen_name != "task_detail":
+            message["task_input_feedback"] = None
+        self._store.dispatch(message)
+        self.switch_screen(screen_name)
+        self._render_state()
+
+    def _pop_active_screen(self, screen_name: str) -> None:
+        """Navigate back to screen_name, popping the navigation stack."""
+        state = self._store.snapshot()
+        # Pop the last entry from the stack (we're going back)
+        if len(state.navigation_stack) > 1:
+            new_stack = list(state.navigation_stack[:-1])
+        else:
+            new_stack = ["dashboard"]
+        # If the popped-to screen doesn't match, reset appropriately
+        if not new_stack or new_stack[-1] != screen_name:
+            if screen_name == "dashboard":
+                new_stack = ["dashboard"]
+            else:
+                new_stack = ["dashboard", screen_name]
+        message: UiMessage = {
+            "kind": "ui",
+            "active_screen": screen_name,
+            "navigation_stack": new_stack,
+        }
+        restored_pane = state.last_focused_pane_by_screen.get(screen_name)
+        if restored_pane:
+            message["focused_pane"] = restored_pane
         if screen_name != "approvals":
             message["approval_feedback"] = None
         if screen_name != "artifacts":
@@ -756,21 +802,21 @@ class AgentTUI(App):  # type: ignore[misc]
             self.close_create_task()
             return
         if state.active_screen == "artifacts":
-            self._set_active_screen(state.artifact_browser_origin_screen or "dashboard")
+            self._pop_active_screen(state.artifact_browser_origin_screen or "dashboard")
             return
         if state.active_screen == "markdown_viewer":
-            self._set_active_screen("artifacts")
+            self._pop_active_screen("artifacts")
             return
         if state.active_screen == "memory":
-            self._set_active_screen(state.memory_origin_screen or "dashboard")
+            self._pop_active_screen(state.memory_origin_screen or "dashboard")
             return
         if state.active_screen == "config":
-            self._set_active_screen(state.config_origin_screen or "dashboard")
+            self._pop_active_screen(state.config_origin_screen or "dashboard")
             return
         if state.active_screen == "diagnostics":
-            self._set_active_screen(state.diagnostics_origin_screen or "dashboard")
+            self._pop_active_screen(state.diagnostics_origin_screen or "dashboard")
             return
-        self._set_active_screen("dashboard")
+        self._pop_active_screen("dashboard")
 
     async def action_quit(self) -> None:
         if self._store.snapshot().active_screen == "markdown_viewer":
