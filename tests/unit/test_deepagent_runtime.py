@@ -8,7 +8,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 from langchain_core.messages import AIMessage
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from packages.config.local_agent_config.models import CompactionConfig, MCPConfig, MCPServerConfig
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
@@ -309,6 +309,28 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(events[-1][1]["code"], "path_validation")
         self.assertEqual(events[-1][1]["arguments"]["path"], "<host-native-path>")
 
+    def test_missing_file_returns_recoverable_tool_feedback(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        message = bindings.read_file("/workspace/missing.md")
+
+        self.assertIn("TOOL_REJECTED [file_not_found]", message)
+        self.assertIn("does not exist", message)
+        self.assertIn("Verify the path exists or list nearby files", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "read_file")
+        self.assertEqual(events[-1][1]["code"], "file_not_found")
+        self.assertEqual(events[-1][1]["category"], "file_access")
+        self.assertTrue(events[-1][1]["retryable"])
+
     def test_missing_command_returns_recoverable_tool_feedback(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         bindings = SandboxToolBindings(
@@ -327,6 +349,132 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(events[-1][0], "tool.rejected")
         self.assertEqual(events[-1][1]["code"], "command_not_found")
         self.assertTrue(events[-1][1]["retryable"])
+
+    def test_execute_command_langchain_tool_accepts_argv_list_unchanged(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        result = execute_tool.invoke({"command": ["pwd"], "cwd": "/workspace"})
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["stdout"], "/workspace\n")
+        self.assertEqual(result["cwd"], "/workspace")
+        self.assertEqual(events[-1][0], "tool.called")
+        self.assertEqual(events[-1][1]["command"], ["pwd"])
+        self.assertFalse(any(event_type == "tool.rejected" for event_type, _ in events))
+
+    def test_read_file_langchain_tool_returns_retryable_missing_file_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("read_files", ("read_file", "list_files"), True),)
+        )
+        read_tool = next(tool for tool in tools if tool.name == "read_file")
+
+        message = read_tool.invoke({"path": "/workspace/missing.md"})
+
+        self.assertIn("TOOL_REJECTED [file_not_found]", message)
+        self.assertIn("Verify the path exists or list nearby files", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "read_file")
+        self.assertEqual(events[-1][1]["code"], "file_not_found")
+        self.assertTrue(events[-1][1]["retryable"])
+
+    def test_execute_command_langchain_tool_recovers_stringified_json_argv(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        result = execute_tool.invoke({"command": "[\"pwd\"]", "cwd": "/workspace"})
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["stdout"], "/workspace\n")
+        self.assertEqual(result["cwd"], "/workspace")
+        self.assertEqual(events[-1][0], "tool.called")
+        self.assertEqual(events[-1][1]["command"], ["pwd"])
+        self.assertEqual(events[-1][1]["cwd"], "/workspace")
+        self.assertFalse(any(event_type == "tool.rejected" for event_type, _ in events))
+
+    def test_execute_command_langchain_tool_rejects_plain_shell_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": "pwd", "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("argv list of strings", message)
+        self.assertIn("stringified JSON array is a common mistake", message)
+        self.assertIn('{"command":["python3","-c","print(1)"],"cwd":"/workspace"}', message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+
+    def test_execute_command_langchain_tool_rejects_parsed_non_string_argv(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": "[\"python3\", 1]", "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("argv list of strings", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
 
     def test_web_tools_return_normalized_payloads_and_emit_events(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
@@ -1325,6 +1473,49 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertEqual(rejection_event["code"], "invalid_arguments")
         self.assertTrue(rejection_event["retryable"])
 
+    def test_harness_keeps_running_after_post_invoke_invalid_mcp_tool_arguments(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        async def _fake_load_mcp_tools(*args: Any, **kwargs: Any) -> list[BaseTool]:
+            return [_post_invoke_invalid_mcp_search_tool()]
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider.load_mcp_tools",
+            _fake_load_mcp_tools,
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                mcp_config=_fixture_mcp_config(),
+                model_factory=lambda model_name, *, model_provider: {},
+                agent_factory=lambda **kwargs: PostInvokeInvalidMCPArgumentsAgent(kwargs, {}),
+            ).execute(
+                request,
+                on_event=lambda event_type, payload: events.append((event_type, payload)),
+            )
+
+        self.assertTrue(result.success)
+        artifact_text = self.sandbox.read_text("/workspace/artifacts/task_1/run_1/final_response.md")
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", artifact_text)
+        self.assertIn("Unexpected keyword argument", artifact_text)
+        rejection_event = next(payload for event_type, payload in events if event_type == "tool.rejected")
+        self.assertEqual(rejection_event["tool"], "fixture_search")
+        self.assertEqual(rejection_event["code"], "invalid_arguments")
+        self.assertTrue(rejection_event["retryable"])
+
     def test_harness_keeps_running_after_missing_local_tool_argument(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         request = AgentExecutionRequest(
@@ -1382,6 +1573,30 @@ class MCPToolProviderTests(unittest.TestCase):
 
         self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
         self.assertIn("Adjust the tool arguments to satisfy the schema", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "fixture_search")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertTrue(events[-1][1]["retryable"])
+
+    def test_post_invoke_validation_errors_return_retryable_rejection(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        provider = MCPToolProvider(
+            config=_fixture_mcp_config(),
+            task_id="task_1",
+            run_id="run_1",
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tool = provider._wrap_tool(
+            role="primary",
+            server=_fixture_mcp_config().servers["fixture"],
+            raw_tool=_post_invoke_invalid_mcp_search_tool(),
+        )
+
+        message = tool.invoke({"query": "agent runtime", "limit": 20, "project_key": "AP"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("Unexpected keyword argument", message)
         self.assertEqual(events[-1][0], "tool.rejected")
         self.assertEqual(events[-1][1]["tool"], "fixture_search")
         self.assertEqual(events[-1][1]["code"], "invalid_arguments")
@@ -1567,6 +1782,27 @@ class InvalidMCPArgumentsAgent:
         search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         message = search_tool.invoke({"query": "agent runtime", "limit": 100})
+        write_tool.invoke(
+            {
+                "path": "/workspace/artifacts/task_1/run_1/final_response.md",
+                "content": f"{message}\n",
+            }
+        )
+        return {"messages": [{"role": "assistant", "content": str(message)}]}
+
+
+class PostInvokeInvalidMCPArgumentsAgent:
+    def __init__(self, kwargs: dict[str, Any], captures: dict[str, Any]) -> None:
+        self._tools = cast(list[BaseTool], kwargs["tools"])
+        self._captures = captures
+        captures["agent_kwargs"] = kwargs
+
+    def invoke(self, input: dict[str, Any], config: dict[str, Any] | None = None) -> dict[str, Any]:
+        self._captures["invoke_config"] = config
+        self._captures["invoke_payload"] = input
+        search_tool = next(tool for tool in self._tools if tool.name == "fixture_search")
+        write_tool = next(tool for tool in self._tools if tool.name == "write_file")
+        message = search_tool.invoke({"query": "agent runtime", "limit": 20, "project_key": "AP"})
         write_tool.invoke(
             {
                 "path": "/workspace/artifacts/task_1/run_1/final_response.md",
@@ -1765,6 +2001,12 @@ class _InvalidSearchArgs(BaseModel):
     limit: int = Field(default=5, le=50)
 
 
+class _PostInvokeInvalidSearchArgs(BaseModel):
+    query: str
+    limit: int = 5
+    project_key: str | None = None
+
+
 def _invalid_mcp_search_tool() -> BaseTool:
     return StructuredTool.from_function(
         func=lambda query, limit=5: [{"text": f"{query}:{limit}"}],
@@ -1772,6 +2014,30 @@ def _invalid_mcp_search_tool() -> BaseTool:
         description="Search fixture MCP tool.",
         args_schema=_InvalidSearchArgs,
     )
+
+
+class _PostInvokeInvalidMCPTool:
+    name = "fixture_search"
+    description = "Search fixture MCP tool."
+    args_schema = _PostInvokeInvalidSearchArgs
+    metadata: dict[str, Any] | None = None
+
+    async def ainvoke(self, arguments: dict[str, Any]) -> Any:
+        raise ValidationError.from_exception_data(
+            "call[search]",
+            [
+                {
+                    "type": "unexpected_keyword_argument",
+                    "loc": ("project_key",),
+                    "msg": "Unexpected keyword argument",
+                    "input": arguments.get("project_key"),
+                }
+            ],
+        )
+
+
+def _post_invoke_invalid_mcp_search_tool() -> BaseTool:
+    return cast(BaseTool, _PostInvokeInvalidMCPTool())
 
 
 def _tool_result_text(value: Any) -> str:

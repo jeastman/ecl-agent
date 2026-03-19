@@ -132,7 +132,15 @@ class LocalExecutionSandbox:
 
     def read_text(self, path: str) -> str:
         resolved = self._resolve(path)
-        return resolved.read_text(encoding="utf-8")
+        try:
+            return resolved.read_text(encoding="utf-8")
+        except FileNotFoundError as exc:
+            raise RecoverableToolRejection(
+                code="file_not_found",
+                message=f"Sandbox path '{path}' does not exist.",
+                category="file_access",
+                details={"path": path, "errno": getattr(exc, "errno", None)},
+            ) from exc
 
     def write_text(self, path: str, content: str) -> None:
         resolved = self._resolve(path)

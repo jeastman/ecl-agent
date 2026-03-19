@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -515,7 +516,7 @@ class SandboxToolBindings:
         if "execute_commands" in allowed_tool_ids:
 
             @tool
-            def execute_command(command: list[str], cwd: str | None = None) -> dict[str, Any] | str:
+            def execute_command(command: Any, cwd: str | None = None) -> dict[str, Any] | str:
                 """Execute a command inside the virtual sandbox filesystem and return structured output."""
                 try:
                     self._ensure_filesystem_scope(
@@ -523,11 +524,22 @@ class SandboxToolBindings:
                         filesystem_scopes,
                         operation="execute_command",
                     )
-                    return self.execute_command(command, cwd)
+                    parsed_command = _coerce_execute_command(command)
+                    if parsed_command is None:
+                        return self._handle_recoverable_rejection(
+                            "execute_command",
+                            {"command": command, "cwd": cwd or self.sandbox.get_workspace_root()},
+                            RecoverableToolRejection(
+                                code="invalid_arguments",
+                                message="`command` must be a list[str] or a JSON string that parses to list[str].",
+                                category="argument_validation",
+                            ),
+                        )
+                    return self.execute_command(parsed_command, cwd)
                 except RecoverableToolRejection as exc:
                     return self._handle_recoverable_rejection(
                         "execute_command",
-                        {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()},
+                        {"command": command, "cwd": cwd or self.sandbox.get_workspace_root()},
                         exc,
                     )
 
@@ -738,6 +750,8 @@ class SandboxToolBindings:
             "summary": f"{tool_name} rejected: {rejection.message}",
         }
         self._emit("tool.rejected", payload)
+        if rejection.code == "invalid_arguments":
+            return _format_invalid_arguments_message(tool_name, rejection.message)
         return _format_tool_rejection_message(rejection)
 
     def _with_validation_handler(self, tool_obj: BaseTool, tool_name: str) -> BaseTool:
@@ -765,10 +779,7 @@ class SandboxToolBindings:
             "summary": f"{tool_name} rejected: {message}",
         }
         self._emit("tool.rejected", payload)
-        return (
-            f"TOOL_REJECTED [invalid_arguments]: {message} "
-            "Adjust the tool arguments to satisfy the schema and try again."
-        )
+        return _format_invalid_arguments_message(tool_name, message)
 
     def _normalize_memory_write_scope(self, scope: str) -> str:
         normalized = scope.strip().lower()
@@ -789,6 +800,34 @@ def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
     if artifact.persistence_class == "ephemeral":
         return artifact.logical_path
     return artifact.logical_path or "/"
+
+
+def _coerce_execute_command(command: Any) -> list[str] | None:
+    if isinstance(command, list) and all(isinstance(part, str) for part in command):
+        return command
+    if not isinstance(command, str):
+        return None
+    try:
+        parsed = json.loads(command)
+    except json.JSONDecodeError:
+        return None
+    if isinstance(parsed, list) and all(isinstance(part, str) for part in parsed):
+        return parsed
+    return None
+
+
+def _format_invalid_arguments_message(tool_name: str, message: str) -> str:
+    if tool_name == "execute_command":
+        return (
+            f"TOOL_REJECTED [invalid_arguments]: {message} "
+            "execute_command requires `command` to be an argv list of strings. "
+            "A stringified JSON array is a common mistake; if you have one, pass it as a real list instead, "
+            'for example {"command":["python3","-c","print(1)"],"cwd":"/workspace"}.'
+        )
+    return (
+        f"TOOL_REJECTED [invalid_arguments]: {message} "
+        "Adjust the tool arguments to satisfy the schema and try again."
+    )
 
 
 def _classify_command(command: list[str]) -> str:
@@ -813,6 +852,7 @@ def _format_tool_rejection_message(rejection: RecoverableToolRejection) -> str:
         message = f"Path '{rejected_path}' is invalid for the sandbox. {rejection.message}"
     guidance = {
         "path_validation": "Use a virtual path under '/workspace', '/tmp', or '/.memory'.",
+        "file_access": "Verify the path exists or list nearby files before retrying.",
         "scope_denied": "Use a path within the delegated filesystem scope for this tool call.",
         "policy_denied": "Use a non-destructive or otherwise policy-compliant alternative.",
         "command_execution": "Pick an installed command or verify the executable name before retrying.",

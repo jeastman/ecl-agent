@@ -159,7 +159,16 @@ class MCPToolProvider:
                 exposed_tool_name=exposed_name,
                 arguments=arguments,
             )
-            return asyncio.run(raw_tool.ainvoke(arguments))
+            try:
+                return asyncio.run(raw_tool.ainvoke(arguments))
+            except ValidationError as exc:
+                return self._handle_validation_error(
+                    role=role,
+                    server=server,
+                    raw_tool_name=original_name,
+                    exposed_tool_name=exposed_name,
+                    exc=exc,
+                )
 
         async def _ainvoke(**arguments: Any) -> Any:
             self._emit_tool_called(
@@ -169,7 +178,16 @@ class MCPToolProvider:
                 exposed_tool_name=exposed_name,
                 arguments=arguments,
             )
-            return await raw_tool.ainvoke(arguments)
+            try:
+                return await raw_tool.ainvoke(arguments)
+            except ValidationError as exc:
+                return self._handle_validation_error(
+                    role=role,
+                    server=server,
+                    raw_tool_name=original_name,
+                    exposed_tool_name=exposed_name,
+                    exc=exc,
+                )
 
         return StructuredTool(
             name=exposed_name,

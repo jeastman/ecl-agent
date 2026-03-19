@@ -72,6 +72,16 @@ class LocalExecutionSandboxTests(unittest.TestCase):
         with self.assertRaisesRegex(RecoverableToolRejection, "host-native path"):
             self.sandbox.read_text(str(host_path))
 
+    def test_missing_sandbox_file_raises_retryable_rejection(self) -> None:
+        with self.assertRaises(RecoverableToolRejection) as exc_info:
+            self.sandbox.read_text("/workspace/missing.md")
+
+        rejection = exc_info.exception
+        self.assertEqual(rejection.code, "file_not_found")
+        self.assertEqual(rejection.category, "file_access")
+        self.assertTrue(rejection.retryable)
+        self.assertEqual(rejection.details["path"], "/workspace/missing.md")
+
     def test_virtual_root_getters_do_not_expose_host_paths(self) -> None:
         self.assertEqual(self.sandbox.get_workspace_root(), "/workspace")
         self.assertEqual(self.sandbox.get_scratch_root(), "/tmp")
