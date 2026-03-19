@@ -414,6 +414,59 @@ class RuntimeIntegrationTests(unittest.TestCase):
                 serve_thread.join(timeout=5)
                 self.assertFalse(serve_thread.is_alive())
 
+    def test_runtime_logs_stream_includes_write_todos_events_from_harness(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_TodoEventHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            correlation_id = new_correlation_id()
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Inspect the repo",
+                        workspace_roots=["/workspace"],
+                    )
+                ).to_dict(),
+                id="todo-stream",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = server.handle_line(json.dumps(create_request.to_dict()))
+            payload = create_response.to_dict()["result"]
+
+            logs_response, stream_events = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={
+                            "task_id": payload["task_id"],
+                            "run_id": payload["run_id"],
+                            "include_history": True,
+                        },
+                        id="todo-stream-logs",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            todo_event = next(
+                event.event
+                for event in stream_events
+                if event.event.event_type == "tool.called"
+                and event.event.payload.get("tool") == "write_todos"
+            )
+            self.assertEqual(todo_event.payload["todo_count"], 2)
+            self.assertEqual(todo_event.payload["in_progress_count"], 1)
+            self.assertIn("Updated todo list", todo_event.payload["summary"])
+
     def test_runtime_uses_configured_workspace_root_instead_of_process_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp_path = Path(temp_dir)
@@ -1886,6 +1939,35 @@ def _pause_then_resume_harness() -> _PauseThenResumeHarness:
     return _PauseThenResumeHarness()
 
 
+class _TodoEventHarness:
+    def execute(self, request, on_event=None) -> Any:
+        if on_event is not None:
+            on_event(
+                "tool.called",
+                {
+                    "tool": "write_todos",
+                    "arguments": {
+                        "todos": [
+                            {"content": "Inspect files", "status": "completed"},
+                            {"content": "Write summary", "status": "in_progress"},
+                        ]
+                    },
+                    "summary": "Updated todo list (2 items; 1 in progress, 0 pending, 1 completed)",
+                    "todo_count": 2,
+                    "completed_count": 1,
+                    "in_progress_count": 1,
+                    "pending_count": 0,
+                },
+            )
+        request.sandbox.write_text("/workspace/artifacts/repo_summary.md", "# Summary\n")
+        return AgentExecutionResult(
+            success=True,
+            summary="Generated the repository summary artifact.",
+            output_artifacts=["/workspace/artifacts/repo_summary.md"],
+            error_message=None,
+        )
+
+
 class _ApprovalHarness:
     def execute(self, request, on_event=None) -> Any:
         bridge = InterruptBridge(
@@ -2020,8 +2102,11 @@ class _CapturingCompiledAgent:
         self._captures["invoke_config"] = config
         for subagent in self._subagents:
             if subagent.get("name") == "Researcher":
-                for middleware in subagent.get("middleware", []):
-                    middleware.wrap_model_call(_FakeModelRequest(), lambda request: {"ok": True})
+                _run_model_middleware(
+                    subagent.get("middleware", []),
+                    _FakeModelRequest(),
+                    lambda request: {"ok": True},
+                )
                 break
         write_tool = next(tool for tool in self._tools if tool.name == "write_file")
         write_tool.invoke(
@@ -2061,11 +2146,11 @@ class _FailingCompiledAgent:
         self._captures["invoke_config"] = config
         for subagent in self._subagents:
             if subagent.get("name") == "Researcher":
-                for middleware in subagent.get("middleware", []):
-                    middleware.wrap_model_call(
-                        _FakeModelRequest(),
-                        lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
-                    )
+                _run_model_middleware(
+                    subagent.get("middleware", []),
+                    _FakeModelRequest(),
+                    lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
+                )
         raise AssertionError("expected delegated failure to abort execution")
 
 
@@ -2091,6 +2176,16 @@ class _DelayedStreamHarness:
 
 def _delayed_stream_harness() -> _DelayedStreamHarness:
     return _DelayedStreamHarness()
+
+
+def _run_model_middleware(middleware: list[Any], request: Any, terminal_handler: Any) -> Any:
+    handler = terminal_handler
+    for current in reversed(middleware):
+        next_handler = handler
+        handler = lambda request, current=current, next_handler=next_handler: current.wrap_model_call(
+            request, next_handler
+        )
+    return handler(request)
 
 
 class _BlockingLineReader:

@@ -146,6 +146,7 @@ class TaskRunnerTests(unittest.TestCase):
                 "subagent.started",
                 "subagent.completed",
                 "tool.called",
+                "tool.called",
                 "artifact.created",
                 "task.completed",
             ],
@@ -685,6 +686,23 @@ class EventingHarness:
                     "role": "researcher",
                     "summary": "Researcher finished repository inspection.",
                     "outcome": "success",
+                },
+            )
+            on_event(
+                "tool.called",
+                {
+                    "tool": "write_todos",
+                    "arguments": {
+                        "todos": [
+                            {"content": "Inspect files", "status": "completed"},
+                            {"content": "Write summary", "status": "in_progress"},
+                        ]
+                    },
+                    "summary": "Updated todo list (2 items; 1 in progress, 0 pending, 1 completed)",
+                    "todo_count": 2,
+                    "completed_count": 1,
+                    "in_progress_count": 1,
+                    "pending_count": 0,
                 },
             )
             on_event(

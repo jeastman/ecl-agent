@@ -11,6 +11,9 @@ from langchain_core.tools import BaseTool
 from apps.runtime.local_agent_runtime.subagents import ResolvedSubagentConfiguration
 from packages.protocol.local_agent_protocol.models import utc_now_timestamp
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
+from services.deepagent_runtime.local_agent_deepagent_runtime.todo_observer import (
+    TodoStateObserverMiddleware,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
 )
@@ -66,6 +69,7 @@ class SubagentCompiler:
             skill_payloads = _load_skill_payloads(resolved)
             middleware: list[AgentMiddleware] = []
             if on_event is not None:
+                middleware.append(TodoStateObserverMiddleware(on_event))
                 middleware.append(
                     _SubagentEventMiddleware(
                         role=definition.role_id,

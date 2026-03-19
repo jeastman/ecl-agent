@@ -875,6 +875,40 @@ class TuiStoreTests(unittest.TestCase):
 
         self.assertEqual(timeline.events[-1].summary, "rm -f '/tmp/ecl/cache file.txt' (/tmp/ecl)")
 
+    def test_tool_called_write_todos_summary_prefers_payload_summary(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.called",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "tool": "write_todos",
+                            "summary": "Updated todo list (2 items; 1 in progress, 0 pending, 1 completed)",
+                            "arguments": {
+                                "todos": [
+                                    {"content": "Inspect files", "status": "completed"},
+                                    {"content": "Write summary", "status": "in_progress"},
+                                ]
+                            },
+                        },
+                    }
+                },
+            }
+        )
+
+        timeline = task_timeline(store.snapshot())
+
+        self.assertEqual(
+            timeline.events[-1].summary,
+            "Updated todo list (2 items; 1 in progress, 0 pending, 1 completed)",
+        )
+
     def test_task_logs_stream_does_not_change_selected_task(self) -> None:
         store = AppStateStore()
         store.dispatch(

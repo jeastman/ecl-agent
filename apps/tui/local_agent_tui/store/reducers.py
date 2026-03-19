@@ -578,6 +578,8 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
         command = _tool_command_summary(payload)
         if command is not None:
             return command
+        if isinstance(payload.get("summary"), str) and payload["summary"].strip():
+            return payload["summary"].strip()
         if isinstance(payload.get("path"), str):
             return f"{tool} {payload['path']}"
         if isinstance(payload.get("logical_path"), str):

@@ -7,7 +7,10 @@ import sys
 from typing import Any, cast
 from unittest.mock import patch
 
+from langchain.agents.middleware.types import ToolCallRequest
+from langchain_core.language_models.fake_chat_models import FakeMessagesListChatModel
 from langchain_core.messages import AIMessage
+from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 from packages.config.local_agent_config.models import CompactionConfig, MCPConfig, MCPServerConfig
 from apps.runtime.local_agent_runtime.subagents import (
@@ -38,6 +41,9 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler 
 from services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider import (
     MCPToolProvider,
     _connection_payload,
+)
+from services.deepagent_runtime.local_agent_deepagent_runtime.todo_observer import (
+    TodoStateObserverMiddleware,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import (
     SandboxToolBindings,
@@ -624,6 +630,7 @@ class SubagentCompilerTests(unittest.TestCase):
             delegation_description="Inspect the repository",
             run_id="run_1",
             tool_bindings=bindings,
+            on_event=lambda *_: None,
         )
 
         self.assertEqual(len(compiled), 1)
@@ -632,6 +639,7 @@ class SubagentCompilerTests(unittest.TestCase):
         self.assertEqual(captures, [("gpt-5-mini", "openai")])
         self.assertEqual(_tool_names(compiled[0]["tools"]), ["list_files", "read_file"])
         self.assertEqual(compiled[0]["skills"], ["# Skill\nFollow the skill."])
+        self.assertIsInstance(compiled[0]["middleware"][0], TodoStateObserverMiddleware)
 
     def test_compiler_preserves_multi_role_model_tool_and_skill_isolation(self) -> None:
         captures: list[tuple[str, str]] = []
@@ -677,6 +685,7 @@ class SubagentCompilerTests(unittest.TestCase):
             delegation_description="Inspect the repository",
             run_id="run_1",
             tool_bindings=bindings,
+            on_event=lambda *_: None,
         )
 
         self.assertEqual(len(compiled), 2)
@@ -688,6 +697,12 @@ class SubagentCompilerTests(unittest.TestCase):
         )
         self.assertEqual(compiled[0]["skills"], ["# Research"])
         self.assertEqual(compiled[1]["skills"], ["# Code"])
+        self.assertTrue(
+            all(
+                isinstance(subagent["middleware"][0], TodoStateObserverMiddleware)
+                for subagent in compiled
+            )
+        )
 
     def test_compiler_fails_when_skill_cannot_be_read(self) -> None:
         compiler = SubagentCompiler(
@@ -1056,6 +1071,109 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertTrue(result.success)
         middleware = captures["agent_kwargs"]["middleware"]
         self.assertGreaterEqual(len(middleware), 2)
+        self.assertIsInstance(middleware[0], TodoStateObserverMiddleware)
+
+    def test_harness_default_factory_preserves_primary_todo_middleware(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness._invoke_agent",
+            side_effect=lambda agent, payload, config: _capture_compiled_graph(
+                captures, agent, payload, config
+            ),
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                model_factory=lambda model_name, *, model_provider: FakeMessagesListChatModel(
+                    responses=[AIMessage(content="Primary task completed.")]
+                ),
+            ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        compiled_graph = captures["compiled_graph"]
+        self.assertIn("TodoListMiddleware.after_model", compiled_graph.nodes)
+        self.assertIn("write_todos", _compiled_tool_names(compiled_graph))
+        self.assertIn("task", _compiled_tool_names(compiled_graph))
+
+    def test_harness_default_factory_preserves_subagent_todo_middleware(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[_resolved_subagent(role_id="researcher")],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        with patch(
+            "services.deepagent_runtime.local_agent_deepagent_runtime.deepagent_harness._invoke_agent",
+            side_effect=lambda agent, payload, config: _capture_compiled_graph(
+                captures, agent, payload, config
+            ),
+        ):
+            result = LangChainDeepAgentHarness(
+                model_name="gpt-5",
+                model_provider="openai",
+                model_factory=lambda model_name, *, model_provider: FakeMessagesListChatModel(
+                    responses=[AIMessage(content="Delegated execution completed.")]
+                ),
+            ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        task_subagent_graphs = _task_subagent_graphs(captures["compiled_graph"])
+        self.assertIn("general-purpose", task_subagent_graphs)
+        self.assertIn("Researcher", task_subagent_graphs)
+        researcher_graph = task_subagent_graphs["Researcher"]
+        self.assertIn("TodoListMiddleware.after_model", researcher_graph.nodes)
+        self.assertIn("write_todos", _compiled_tool_names(researcher_graph))
+
+    def test_harness_adds_todo_observer_middleware_to_primary_agent(self) -> None:
+        captures: dict[str, Any] = {}
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Inspect the repository",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: FakeCompiledAgent(kwargs, captures),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.success)
+        self.assertIsInstance(
+            captures["agent_kwargs"]["middleware"][0], TodoStateObserverMiddleware
+        )
 
     def test_harness_pauses_for_request_user_input_tool(self) -> None:
         request = AgentExecutionRequest(
@@ -1614,8 +1732,11 @@ class FakeCompiledAgent:
         self._captures["invoke_config"] = config
         self._captures["invoke_payload"] = input
         for subagent in self._subagents:
-            for middleware in subagent.get("middleware", []):
-                middleware.wrap_model_call(FakeModelRequest(), lambda request: {"ok": True})
+            _run_model_middleware(
+                subagent.get("middleware", []),
+                FakeModelRequest(),
+                lambda request: {"ok": True},
+            )
         self._invoke_tool("list_files", {"root": "/workspace"})
         self._invoke_tool("read_file", {"path": "/workspace/README.md"})
         self._invoke_tool(
@@ -1649,11 +1770,11 @@ class FailingCompiledAgent:
         self._captures["invoke_config"] = config
         self._captures["invoke_payload"] = input
         for subagent in self._subagents:
-            for middleware in subagent.get("middleware", []):
-                middleware.wrap_model_call(
-                    FakeModelRequest(),
-                    lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
-                )
+            _run_model_middleware(
+                subagent.get("middleware", []),
+                FakeModelRequest(),
+                lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
+            )
         raise AssertionError("expected delegated failure before agent completion")
 
 
@@ -1865,6 +1986,111 @@ class FakeModelRequest:
     system_message = None
 
 
+class TodoStateObserverMiddlewareTests(unittest.TestCase):
+    def test_emits_tool_called_when_write_todos_changes_state(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        middleware = TodoStateObserverMiddleware(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+        request = ToolCallRequest(
+            tool_call={"name": "write_todos", "args": {}, "id": "tool_1"},
+            tool=None,
+            state={"todos": [{"content": "Inspect files", "status": "pending"}]},
+            runtime=None,
+        )
+
+        result = middleware.wrap_tool_call(
+            request,
+            lambda request: Command(
+                update={
+                    "todos": [
+                        {"content": "Inspect files", "status": "completed"},
+                        {"content": "Summarize findings", "status": "in_progress"},
+                    ]
+                }
+            ),
+        )
+
+        self.assertIsInstance(result, Command)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0][0], "tool.called")
+        payload = events[0][1]
+        self.assertEqual(payload["tool"], "write_todos")
+        self.assertEqual(payload["todo_count"], 2)
+        self.assertEqual(payload["completed_count"], 1)
+        self.assertEqual(payload["in_progress_count"], 1)
+        self.assertEqual(payload["pending_count"], 0)
+        self.assertIn("Updated todo list (2 items; 1 in progress, 0 pending, 1 completed)", payload["summary"])
+
+    def test_does_not_emit_for_non_write_todos_tool(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        middleware = TodoStateObserverMiddleware(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+        request = ToolCallRequest(
+            tool_call={"name": "read_file", "args": {}, "id": "tool_1"},
+            tool=None,
+            state={"todos": []},
+            runtime=None,
+        )
+
+        middleware.wrap_tool_call(
+            request,
+            lambda request: Command(update={"todos": [{"content": "Inspect", "status": "pending"}]}),
+        )
+
+        self.assertEqual(events, [])
+
+    def test_does_not_emit_when_todos_do_not_change(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        middleware = TodoStateObserverMiddleware(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+        todos = [{"content": "Inspect files", "status": "pending"}]
+        request = ToolCallRequest(
+            tool_call={"name": "write_todos", "args": {}, "id": "tool_1"},
+            tool=None,
+            state={"todos": list(todos)},
+            runtime=None,
+        )
+
+        middleware.wrap_tool_call(
+            request,
+            lambda request: Command(update={"todos": list(todos)}),
+        )
+
+        self.assertEqual(events, [])
+
+    def test_does_not_emit_when_result_lacks_todo_update(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        middleware = TodoStateObserverMiddleware(
+            lambda event_type, payload: events.append((event_type, payload))
+        )
+        request = ToolCallRequest(
+            tool_call={"name": "write_todos", "args": {}, "id": "tool_1"},
+            tool=None,
+            state={"todos": []},
+            runtime=None,
+        )
+
+        middleware.wrap_tool_call(request, lambda request: {"ok": True})
+        middleware.wrap_tool_call(request, lambda request: Command(update={"messages": []}))
+
+        self.assertEqual(events, [])
+
+
+def _capture_compiled_graph(
+    captures: dict[str, Any],
+    agent: Any,
+    payload: dict[str, Any],
+    config: dict[str, Any] | None,
+) -> dict[str, Any]:
+    captures["compiled_graph"] = agent
+    captures["invoke_payload"] = payload
+    captures["invoke_config"] = config
+    return {"messages": [AIMessage(content="Completed.")], "success": True}
+
+
 def _capture_model_factory(captures: dict[str, Any]):
     def _factory(model_name: str, *, model_provider: str) -> dict[str, Any]:
         captures.setdefault("models", []).append(
@@ -1886,6 +2112,30 @@ def _recording_model_factory(captures: list[tuple[str, str]]):
 def _tool_names(tools: object) -> list[str]:
     typed_tools = cast(list[BaseTool], tools)
     return sorted(tool.name for tool in typed_tools)
+
+
+def _compiled_tool_names(compiled_graph: Any) -> list[str]:
+    return list(compiled_graph.nodes["tools"].bound._tools_by_name.keys())
+
+
+def _task_subagent_graphs(compiled_graph: Any) -> dict[str, Any]:
+    task_tool = compiled_graph.nodes["tools"].bound._tools_by_name["task"]
+    assert task_tool.func is not None
+    closure = task_tool.func.__closure__ or ()
+    for name, cell in zip(task_tool.func.__code__.co_freevars, closure):
+        if name == "subagent_graphs":
+            return cast(dict[str, Any], cell.cell_contents)
+    raise AssertionError("task tool did not expose subagent graphs")
+
+
+def _run_model_middleware(middleware: list[Any], request: Any, terminal_handler: Any) -> Any:
+    handler = terminal_handler
+    for current in reversed(middleware):
+        next_handler = handler
+        handler = lambda request, current=current, next_handler=next_handler: current.wrap_model_call(
+            request, next_handler
+        )
+    return handler(request)
 
 
 def _resolved_subagent(

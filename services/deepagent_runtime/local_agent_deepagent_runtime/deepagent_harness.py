@@ -23,6 +23,9 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge i
     InterruptBridge,
     PolicyDeniedInterrupt,
 )
+from services.deepagent_runtime.local_agent_deepagent_runtime.todo_observer import (
+    TodoStateObserverMiddleware,
+)
 from services.deepagent_runtime.local_agent_deepagent_runtime.subagent_compiler import (
     SubagentCompilationError,
     SubagentCompiler,
@@ -267,12 +270,14 @@ class LangChainDeepAgentHarness:
         )
         primary_tools.extend(mcp_provider.tools_for_role("primary"))
         try:
-            middleware = []
+            middleware = [TodoStateObserverMiddleware(callback)]
             if self._compaction_strategy is not None and self._compaction_policy.enabled:
-                middleware = self._compaction_strategy.build_middleware(
-                    model=model,
-                    policy=self._compaction_policy,
-                    on_compaction=callback,
+                middleware.extend(
+                    self._compaction_strategy.build_middleware(
+                        model=model,
+                        policy=self._compaction_policy,
+                        on_compaction=callback,
+                    )
                 )
             agent = self._agent_factory(
                 model=model,
@@ -281,6 +286,9 @@ class LangChainDeepAgentHarness:
                 subagents=subagents_for_agent,
                 skills=_skill_payloads(request.primary_skills),
                 name="primary",
+                # create_deep_agent prepends its own default middleware stack,
+                # including TodoListMiddleware, so adapter-owned middleware stays
+                # additive here instead of duplicating that baseline behavior.
                 middleware=middleware,
                 **(
                     request.checkpoint_controller.build_agent_kwargs()
