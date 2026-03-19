@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, cast
 
 from rich.console import Group
+from rich.markup import escape
 from rich.text import Text
 
 from ..renderables import muted, text
@@ -96,8 +97,8 @@ def _highlight_matches(text_value: str, spans: list[tuple[int, int]]) -> Text:
     cursor = 0
     for start, end in spans:
         if start > cursor:
-            rendered.append(escape(text[cursor:start]))
-        rendered.append(f"[bold #67b7dc]{escape(text[start:end])}[/]")
+            rendered.append(text_value[cursor:start])
+        rendered.append(text_value[start:end], style="bold #67b7dc")
         cursor = end
     if cursor < len(text_value):
         rendered.append(text_value[cursor:])
