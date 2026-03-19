@@ -64,7 +64,7 @@ class ConfigScreen(Screen):  # type: ignore[misc]
         )
         detail_model = selected_config_detail(state)
         self.query_one(ConfigDetailWidget).update_detail(detail_model)
-        footer = "   ".join(footer_hints(state))
+        footer = footer_hints(state).plain
         footer = f"{footer}\nConfig viewer is read-only."
         if state.config_request_error:
             footer = f"{footer}\n{state.config_request_error}"

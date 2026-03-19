@@ -91,8 +91,15 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         artifacts_pane.border_subtitle = "Focused" if state.focused_pane == "artifacts" else ""
         artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
         artifacts = recent_artifacts(state)
-        artifacts_pane.update(_recent_artifacts_renderable(artifacts))
-        self.query_one("#dashboard-footer", Static).update("   ".join(footer_hints(state)))
+        artifacts_pane.update(
+            "\n".join(
+                f"{escape(artifact.task_id)}  {escape(artifact.display_name)}\n"
+                f"{escape(artifact.content_type)}"
+                for artifact in artifacts
+            )
+            or "No recent artifacts."
+        )
+        self.query_one("#dashboard-footer", Static).update(footer_hints(state))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id != "dashboard-task-list":

@@ -1334,33 +1334,51 @@ def selected_config_detail(state: AppState) -> ConfigDetailViewModel:
     )
 
 
-def footer_hints(state: AppState) -> list[str]:
+def footer_hints(state: AppState) -> _RichText:
+    """Return styled footer hints as a Rich Text object.
+
+    Each hint is rendered via key_hint() from theme.typography.
+    Hints are separated by three plain spaces.
+    """
+    from ..theme.typography import key_hint as _key_hint
+
+    def _hints_to_text(hints: list[str]) -> _RichText:
+        result = _RichText()
+        for index, hint in enumerate(hints):
+            parts = hint.split(" ", 1)
+            key = parts[0]
+            action = parts[1] if len(parts) > 1 else ""
+            if index > 0:
+                result.append("   ")
+            result.append_text(_key_hint(key, action))
+        return result
+
     if state.command_palette_visible:
-        return [
+        return _hints_to_text([
             "Up/Down Move",
             "Enter Run",
             "Esc Close",
             "Q Quit",
-        ]
+        ])
     if state.active_screen == "diagnostics":
-        return [
+        return _hints_to_text([
             "G Palette",
             "N New Task",
             "Up/Down Move",
             "Esc Back",
             "Q Quit",
-        ]
+        ])
     if state.active_screen == "config":
-        return [
+        return _hints_to_text([
             "Up/Down Move",
             "G Palette",
             "N New Task",
             "C Refresh",
             "Esc Back",
             "Q Quit",
-        ]
+        ])
     if state.active_screen == "approvals":
-        return [
+        return _hints_to_text([
             "A Approve",
             "R Reject",
             "Enter Open Task",
@@ -1369,7 +1387,7 @@ def footer_hints(state: AppState) -> list[str]:
             "C Config",
             "Esc Dashboard",
             "Q Quit",
-        ]
+        ])
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
         hints = [
@@ -1389,9 +1407,9 @@ def footer_hints(state: AppState) -> list[str]:
             hints.insert(0, "Up/Down Scroll Logs")
         if action_bar.resume_enabled:
             hints.insert(0, "R Resume")
-        return hints
+        return _hints_to_text(hints)
     if state.active_screen == "artifacts":
-        return [
+        return _hints_to_text([
             "G Palette",
             "N New Task",
             "Up/Down Move",
@@ -1402,11 +1420,11 @@ def footer_hints(state: AppState) -> list[str]:
             "R Group Run",
             "Y Group Type",
             "Esc Back",
-        ]
+        ])
     if state.active_screen == "markdown_viewer":
-        return ["Esc Back", "Q Quit"]
+        return _hints_to_text(["Esc Back", "Q Quit"])
     if state.active_screen == "memory":
-        return [
+        return _hints_to_text([
             "G Palette",
             "N New Task",
             "Up/Down Move",
@@ -1415,9 +1433,9 @@ def footer_hints(state: AppState) -> list[str]:
             "M Refresh",
             "Esc Back",
             "Q Quit",
-        ]
+        ])
     if state.focused_pane == "approvals":
-        return [
+        return _hints_to_text([
             "G Palette",
             "N New Task",
             "Up/Down Move Approval",
@@ -1425,9 +1443,9 @@ def footer_hints(state: AppState) -> list[str]:
             "Enter Open Approvals",
             "A Approvals",
             "Q Quit",
-        ]
+        ])
     if state.focused_pane == "summary":
-        return [
+        return _hints_to_text([
             "G Palette",
             "N New Task",
             "Up/Down Scroll Summary",
@@ -1436,8 +1454,8 @@ def footer_hints(state: AppState) -> list[str]:
             "C Config",
             "Ctrl+R Reconnect",
             "Q Quit",
-        ]
-    return [
+        ])
+    return _hints_to_text([
         "G Palette",
         "N New Task",
         "Up/Down Move",
@@ -1447,7 +1465,7 @@ def footer_hints(state: AppState) -> list[str]:
         "C Config",
         "Ctrl+R Reconnect",
         "Q Quit",
-    ]
+    ])
 
 
 def dashboard_empty_state(state: AppState) -> str | None:

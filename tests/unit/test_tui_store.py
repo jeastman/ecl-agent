@@ -454,8 +454,10 @@ class TuiStoreTests(unittest.TestCase):
     def test_footer_hints_include_palette_and_new_task(self) -> None:
         store = AppStateStore()
         hints = footer_hints(store.snapshot())
-        self.assertIn("G Palette", hints)
-        self.assertIn("N New Task", hints)
+        self.assertIn("G", hints.plain)
+        self.assertIn("Palette", hints.plain)
+        self.assertIn("N", hints.plain)
+        self.assertIn("New Task", hints.plain)
 
     def test_approval_refresh_falls_back_to_next_pending_selection(self) -> None:
         store = AppStateStore()

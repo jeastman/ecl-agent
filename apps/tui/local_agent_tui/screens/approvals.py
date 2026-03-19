@@ -56,7 +56,7 @@ class ApprovalsScreen(Screen):  # type: ignore[misc]
             inbox_mode=True,
         )
         self.query_one(ApprovalDetailWidget).update_detail(selected_approval_detail(state))
-        footer = "   ".join(footer_hints(state))
+        footer = footer_hints(state).plain
         if state.approval_feedback:
             footer = f"{footer}\n{escape(state.approval_feedback)}"
         self.query_one("#approvals-screen-footer", Static).update(footer)

@@ -126,7 +126,7 @@ class MemoryScreen(Screen):  # type: ignore[misc]
                 )
             )
             self._last_detail_signature = detail_signature
-        footer = "   ".join(footer_hints(state))
+        footer = footer_hints(state).plain
         footer = f"{footer}\nMemory inspector is read-only."
         if state.memory_request_error:
             footer = f"{footer}\n{state.memory_request_error}"

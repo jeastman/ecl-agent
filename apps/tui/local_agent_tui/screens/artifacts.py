@@ -61,8 +61,8 @@ class ArtifactsScreen(Screen):  # type: ignore[misc]
             group_by=toolbar.group_by,
         )
         self.query_one(ArtifactPreviewWidget).update_preview(selected_artifact_preview(state))
-        footer = "   ".join(footer_hints(state))
-        footer = f"{footer}\nGrouping: {toolbar.group_by}   Artifacts: {toolbar.total_count}"
+        footer = footer_hints(state).plain
+        footer = f"{footer}\nGrouping: {escape(toolbar.group_by)}   Artifacts: {toolbar.total_count}"
         if state.artifact_action_feedback:
             footer = f"{footer}\n{state.artifact_action_feedback}"
         self.query_one("#artifacts-screen-footer", Static).update(footer)

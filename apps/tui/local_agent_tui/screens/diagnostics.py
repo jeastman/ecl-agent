@@ -60,7 +60,7 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
         detail_panel = self.query_one("#diagnostics-screen-detail", Static)
         detail_panel.border_title = detail.title
         detail_panel.update(_render_diagnostic_detail(detail.title, detail.summary, detail.body))
-        self.query_one("#diagnostics-screen-footer", Static).update("   ".join(footer_hints(state)))
+        self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state))
 
 
 def _render_diagnostic_list_item(item: Any) -> Text:

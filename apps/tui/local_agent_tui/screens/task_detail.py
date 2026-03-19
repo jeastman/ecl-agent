@@ -95,7 +95,7 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         self.query_one(NotificationStripWidget).update_notifications(task_notifications(state))
         self.query_one(InputBoxWidget).update_actions(task_action_bar(state))
         timeline_state = timeline_state_summary(state)
-        footer = "   ".join(footer_hints(state))
+        footer = footer_hints(state).plain
         footer = (
             f"{footer}\nTimeline filter: {timeline_state.filter_label}   "
             f"Search: {timeline_state.search_query if timeline_state.search_query else 'none'}"
