@@ -716,11 +716,15 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(header.current_phase, "planning")  # type: ignore[union-attr]
         self.assertEqual(plan.current_step, "Inspect docs")
         self.assertEqual(timeline.events[2].repeat_count, 2)
+        self.assertRegex(timeline.events[2].timestamp_display, r"\d{2}:\d{2}:\d{2}")
         self.assertEqual(subagents[0].subagent_id, "researcher")
         self.assertEqual(subagents[0].status, "RUNNING")
+        self.assertEqual(subagents[0].status_icon, "●")
         self.assertTrue(actions.resume_enabled)
         self.assertTrue(actions.artifact_open_enabled)
+        self.assertEqual(actions.status_tone, "warning")
         self.assertEqual(notifications.items[-1].summary, "report.md")
+        self.assertEqual(notifications.items[-1].tone, "success")
 
     def test_task_plan_view_tracks_live_subagent_summary(self) -> None:
         store = AppStateStore()
@@ -762,6 +766,7 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(plan.current_phase, "planning")
         self.assertEqual(plan.current_step, "Inspect docs")
         self.assertEqual(plan.recent_updates[-1].summary, "Analyze repository")
+        self.assertRegex(plan.recent_updates[-1].timestamp_display, r"\d{2}:\d{2}")
 
     def test_task_subagent_activity_falls_back_to_active_snapshot(self) -> None:
         store = AppStateStore()
@@ -793,7 +798,56 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(len(subagents), 1)
         self.assertEqual(subagents[0].subagent_id, "researcher")
         self.assertEqual(subagents[0].status, "RUNNING")
+        self.assertEqual(subagents[0].status_icon, "●")
         self.assertEqual(subagents[0].latest_summary, "Inspect docs")
+
+    def test_task_timeline_projects_detail_lines_for_approval_and_rejected_tool(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "approval.requested",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "approval": {
+                                "approval_id": "appr_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "type": "tool_execution",
+                                "status": "pending",
+                                "scope": {"boundary_key": "sandbox_policy"},
+                            }
+                        },
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.rejected",
+                        "timestamp": "2026-03-12T00:00:03Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {"tool": "execute_command", "reason": "sandbox denied"},
+                    }
+                },
+            }
+        )
+
+        timeline = task_timeline(store.snapshot())
+
+        approval_event = next(event for event in timeline.events if event.event_type == "approval.requested")
+        rejected_event = next(event for event in timeline.events if event.event_type == "tool.rejected")
+        self.assertEqual(approval_event.detail_lines, ["Policy: sandbox_policy", "Status: PENDING"])
+        self.assertEqual(rejected_event.detail_lines, ["Tool: execute_command", "Reason: sandbox denied"])
 
     def test_tool_called_execute_command_summary_shows_command_and_cwd(self) -> None:
         store = AppStateStore()

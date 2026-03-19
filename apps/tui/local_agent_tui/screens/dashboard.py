@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.table import Table
 from rich.text import Text
 
 from ..renderables import badge, block, highlighted_row, join, metadata_line, muted, text
@@ -20,6 +21,7 @@ from ..theme.empty_states import render_empty_state
 from ..theme.typography import label, muted, status_badge, title, value
 from ..utils.time_format import compact_datetime
 from ..utils.text import truncate_id
+from ..utils.text import truncate
 from ..widgets.approval_queue import ApprovalQueueWidget
 from ..widgets.status_bar import StatusBar
 from ..widgets.task_list import TaskListRow, TaskListWidget
@@ -131,38 +133,32 @@ def _task_summary_renderable(state: AppState) -> Text:
 
 
 def _task_summary_text(summary: TaskSummaryViewModel) -> Text:
+    metadata = Table.grid(padding=(0, 2))
+    metadata.add_column(style=TEXT_MUTED_DEEP, width=10)
+    metadata.add_column(style="default")
+    metadata.add_row("Task", truncate_id(summary.task_id, width=24))
+    metadata.add_row("Run", summary.run_id or "unknown")
+    metadata.add_row("Created", compact_datetime(summary.created_at))
+    metadata.add_row("Updated", compact_datetime(summary.updated_at))
+    metadata.add_row("Artifacts", str(summary.artifact_count))
+
     text = Text()
-    text.append_text(title(truncate_id(summary.task_id, width=28)))
-    text.append(" ")
     text.append_text(status_badge(summary.status))
-    text.append("\n")
-    text.append_text(label("Next"))
-    text.append(": ")
+    text.append("  ")
+    text.append_text(label("Next: "))
     text.append_text(value(summary.actionable_label))
-    text.append("\n")
-    text.append_text(label("Run"))
-    text.append(": ")
-    text.append_text(muted(summary.run_id or "unknown"))
-    text.append("   ")
-    text.append_text(label("Artifacts"))
-    text.append(": ")
-    text.append_text(value(str(summary.artifact_count)))
-    text.append("\n")
-    text.append_text(label("Created"))
-    text.append(": ")
-    text.append_text(muted(compact_datetime(summary.created_at)))
-    text.append("   ")
-    text.append_text(label("Updated"))
-    text.append(": ")
-    text.append_text(muted(compact_datetime(summary.updated_at)))
     text.append("\n\n")
     text.append_text(title("Objective"))
     text.append("\n")
-    text.append(summary.objective or "No objective available.")
+    text.append(truncate(summary.objective or "No objective available.", 240))
     text.append("\n\n")
     text.append_text(title("Latest Summary"))
     text.append("\n")
-    text.append(summary.latest_summary)
+    text.append(truncate(summary.latest_summary, 240))
+    text.append("\n\n")
+    text.append_text(title("Metadata"))
+    text.append("\n")
+    text.append(str(metadata))
     text.append("\n\n")
     text.append_text(muted(summary.actionable_hint))
     if summary.awaiting_approval:
@@ -185,13 +181,11 @@ def _recent_artifacts_renderable(artifacts: list[ArtifactItemViewModel]) -> Text
 def _artifact_card(artifact: ArtifactItemViewModel) -> Text:
     text = Text()
     text.append(f"{_artifact_icon(artifact)} ", style=ACCENT)
-    text.append(artifact.display_name, style="bold")
-    text.append("\n")
-    text.append(f"{truncate_id(artifact.task_id, width=18)}", style=TEXT_MUTED_DEEP)
-    text.append("   ", style=TEXT_MUTED_DEEP)
+    text.append(truncate(artifact.display_name, 24), style="bold")
+    text.append("  ")
+    text.append(truncate(_artifact_type_label(artifact.content_type), 10), style=TEXT_MUTED_DEEP)
+    text.append("  ")
     text.append(artifact.created_at_relative, style=TEXT_MUTED_DEEP)
-    text.append("\n")
-    text.append(artifact.content_type, style=TEXT_MUTED_DEEP)
     return text
 
 
@@ -199,11 +193,26 @@ def _artifact_icon(artifact: ArtifactItemViewModel) -> str:
     content_type = artifact.content_type.lower()
     name = artifact.display_name.lower()
     if "markdown" in content_type or name.endswith(".md"):
-        return "M"
+        return "📝"
+    if "yaml" in content_type or name.endswith((".yaml", ".yml")):
+        return "📄"
     if "json" in content_type or name.endswith(".json"):
-        return "J"
+        return "📋"
     if name.endswith(".py") or "python" in content_type:
-        return "P"
+        return "💻"
     if "image" in content_type:
-        return "I"
-    return "F"
+        return "🖼"
+    return "📎"
+
+
+def _artifact_type_label(content_type: str) -> str:
+    lowered = content_type.lower()
+    if "markdown" in lowered:
+        return "markdown"
+    if "yaml" in lowered:
+        return "yaml"
+    if "json" in lowered:
+        return "json"
+    if "python" in lowered:
+        return "python"
+    return content_type

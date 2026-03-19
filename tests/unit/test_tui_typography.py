@@ -82,6 +82,7 @@ class TestStatusBadge(unittest.TestCase):
         result = status_badge("executing")
         self.assertIn(STATUS_RUNNING, self._get_style_str(result))
         self.assertIn("bold", self._get_style_str(result))
+        self.assertIn("on", self._get_style_str(result))
 
     def test_planning_uses_status_running(self) -> None:
         result = status_badge("planning")

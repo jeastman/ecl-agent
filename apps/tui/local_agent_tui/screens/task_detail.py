@@ -110,6 +110,10 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         if store is None:
             return
         state = store.snapshot()
+        if not state.task_detail_show_logs and getattr(event, "key", "") in {"G", "shift+g"}:
+            self.query_one(EventTimelineWidget).jump_to_latest()
+            event.stop()
+            return
         if not state.task_detail_show_logs:
             return
         log_view = self.query_one(LogViewWidget)

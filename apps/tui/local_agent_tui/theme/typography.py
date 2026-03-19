@@ -46,7 +46,7 @@ def status_badge(status: str) -> Text:
     Format: ' {STATUS.UPPER()} ' with padding spaces.
     """
     color = STATUS_COLORS.get(status.lower(), STATUS_INFO)
-    return Text(f" {status.upper()} ", style=f"bold {color}")
+    return Text(f" {status.upper()} ", style=f"bold black on {color}")
 
 
 def key_hint(key: str, action: str) -> Text:

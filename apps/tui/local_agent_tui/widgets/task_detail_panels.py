@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
-from rich.console import Group
+from rich.markup import escape
 from rich.text import Text
 
 from ..renderables import badge, block, join, metadata_line, muted, text
@@ -11,7 +11,10 @@ from ..store.selectors import (
     SubagentActivityItemViewModel,
     TaskDetailHeaderViewModel,
 )
-from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
+from ..theme.empty_states import render_empty_state
+from ..theme.typography import label, muted, status_badge, title, value
+from ..utils.text import truncate, truncate_id
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
@@ -46,56 +49,27 @@ class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
         body = self.query_one("#task-detail-header-body", Static)
         if model is None:
             body.update("No task selected.")
-            self.scroll_to(y=0, animate=False, immediate=True)
             return
-        status_style = {
-            "executing": ACCENT,
-            "planning": ACCENT,
-            "running": ACCENT,
-            "completed": SUCCESS,
-            "failed": DANGER,
-            "paused": WARNING,
-            "awaiting_approval": WARNING,
-        }.get(model.status.lower(), ACCENT)
-        meta_pairs = [
-            ("Created", model.created_at),
-            ("Updated", model.updated_at),
-            ("Phase", model.current_phase),
-            ("Next", model.actionable_label),
-        ]
+
+        heading = Text()
+        heading.append_text(title(truncate_id(model.task_id, width=28)))
+        heading.append("  ")
+        heading.append_text(status_badge(model.status))
+        heading.append("  ")
+        heading.append_text(label("Phase: "))
+        heading.append_text(value(model.current_phase))
         if model.active_subagent:
-            meta_pairs.append(("Active", model.active_subagent))
-        body.update(
-            block(
-                [
-                    join(
-                        [
-                            text(model.task_id, style="bold"),
-                            badge(model.status.upper(), style=status_style),
-                            muted(model.run_id),
-                        ],
-                        separator="  ",
-                    ),
-                    metadata_line(meta_pairs),
-                    Text(""),
-                    text("Objective", style="bold"),
-                    text(model.objective or "No objective available."),
-                    Text(""),
-                    muted(model.actionable_hint),
-                ]
-            )
-        )
-        self.scroll_to(y=0, animate=False, immediate=True)
+            heading.append("  ")
+            heading.append_text(label("Active: "))
+            heading.append_text(value(truncate(model.active_subagent, 16)))
+        if model.run_id:
+            heading.append("  ")
+            heading.append_text(muted(f"\N{BLACK RIGHT-POINTING SMALL TRIANGLE} {truncate_id(model.run_id, width=20)}"))
 
-    def scroll_line(self, delta: int) -> None:
-        next_y = max(0.0, min(self.max_scroll_y, self.scroll_y + delta))
-        self.scroll_to(y=next_y, animate=False, immediate=True)
-
-    def scroll_to_home(self) -> None:
-        self.scroll_to(y=0, animate=False, immediate=True)
-
-    def scroll_to_end(self) -> None:
-        self.scroll_to(y=self.max_scroll_y, animate=False, immediate=True)
+        objective = Text()
+        objective.append_text(label("Objective: "))
+        objective.append_text(value(truncate(model.objective or "No objective available.", 120)))
+        body.update(Text("\n").join([heading, objective]))
 
 
 class SubagentActivityWidget(Static):  # type: ignore[misc]
@@ -104,36 +78,19 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Subagent Activity"
         if not items:
-            self.update("No subagent activity yet.")
+            self.update(render_empty_state("subagents"))
             return
-        rows: list[Text] = []
+        lines: list[Text] = []
         for item in items:
-            status_style = {
-                "running": ACCENT,
-                "completed": SUCCESS,
-                "failed": DANGER,
-                "paused": WARNING,
-            }.get(item.status.lower(), ACCENT)
-            rows.append(
-                join(
-                    [
-                        text(item.subagent_id, style="bold"),
-                        badge(item.status.upper(), style=status_style),
-                    ],
-                    separator="  ",
-                )
-            )
-            rows.append(text(item.latest_summary))
-            if item.started_at or item.completed_at:
-                pairs = []
-                if item.started_at:
-                    pairs.append(("Started", item.started_at))
-                if item.completed_at:
-                    pairs.append(("Completed", item.completed_at))
-                rows.append(metadata_line(pairs))
-            rows.append(Text(""))
-        rows.pop()
-        self.update(Group(*rows))
+            line = Text()
+            line.append(f"{item.status_icon} ", style=_status_style(item.status))
+            line.append(truncate(item.subagent_id, 20), style="bold")
+            line.append("  ")
+            line.append_text(status_badge(item.status))
+            line.append("  ")
+            line.append(truncate(item.latest_summary, 56), style=TEXT_SECONDARY)
+            lines.append(line)
+        self.update(Text("\n").join(lines))
 
 
 class NotificationStripWidget(Static):  # type: ignore[misc]
@@ -142,9 +99,25 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Attention"
         if not model.items:
-            self.update("No urgent updates.")
+            self.set_class(False, "-urgent-pane")
+            self.update(render_empty_state("notifications"))
             return
-        self.update(Group(*(_render_notification_line(timestamp=item.timestamp, severity=item.severity, summary=item.summary) for item in model.items)))
+        self.set_class(any(item.tone in {"warning", "danger"} for item in model.items), "-urgent-pane")
+        self.update(
+            Text("\n").join(
+                [
+                    _render_notification_line(
+                        timestamp=item.timestamp,
+                        timestamp_relative=item.timestamp_relative,
+                        severity=item.severity,
+                        summary=item.summary,
+                        icon=item.icon,
+                        tone=item.tone,
+                    )
+                    for item in model.items
+                ]
+            )
+        )
 
 
 def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> Group:
@@ -153,9 +126,44 @@ def _render_notification_line(*, timestamp: str, severity: str, summary: str) ->
         "attention": WARNING,
         "success": SUCCESS,
     }.get(severity.lower(), ACCENT)
-    return block(
-        [
-            join([muted(timestamp), badge(severity.upper(), style=severity_style)], separator="  "),
-            text(summary),
-        ]
-    )
+    return f"[{color}]\\[{escape(severity.upper())}\\][/]"
+
+
+def _status_style(status: str) -> str:
+    return {
+        "running": ACCENT,
+        "executing": ACCENT,
+        "planning": ACCENT,
+        "completed": SUCCESS,
+        "failed": DANGER,
+        "paused": WARNING,
+        "awaiting_approval": WARNING,
+    }.get(status.lower(), TEXT_SECONDARY)
+
+
+def _notification_tone_style(tone: str) -> str:
+    return {
+        "warning": WARNING,
+        "danger": DANGER,
+        "success": SUCCESS,
+        "info": ACCENT,
+    }.get(tone, TEXT_SECONDARY)
+
+
+def _render_notification_line(
+    *,
+    timestamp: str,
+    timestamp_relative: str,
+    severity: str,
+    summary: str,
+    icon: str,
+    tone: str,
+) -> Text:
+    del timestamp, severity
+    line = Text()
+    line.append("▐ ", style=_notification_tone_style(tone))
+    line.append(f"{icon} ", style=_notification_tone_style(tone))
+    line.append(summary)
+    line.append("  ")
+    line.append(timestamp_relative, style=TEXT_MUTED_DEEP)
+    return line

@@ -3,13 +3,15 @@ from __future__ import annotations
 import re
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Group
 from rich.text import Text
 
 from ..store.selectors import TaskListItemViewModel
 from ..theme.empty_states import render_empty_state
-from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, WARNING
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, TEXT_MUTED_DEEP, WARNING
 from ..theme.typography import status_badge
 from ..utils.time_format import relative_time
+from ..utils.text import truncate
 from ..utils.text import truncate_id
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -66,21 +68,23 @@ class TaskListWidget(ListView):  # type: ignore[misc]
             self.border_subtitle = "Focused" if focused else ""
             self.set_class(focused, "-focused-pane")
             return
+        if list(self.query(TaskListEmptyRow)):
+            self.clear()
         new_task_ids = [item.task_id for item in items]
         selected_index = None
-        if self._task_id_list == new_task_ids:
-            existing_rows = [row for row in self.query(TaskListRow)]
-            for index, item in enumerate(items):
-                existing_rows[index].update_item(item)
-                if item.is_selected:
-                    selected_index = index
-        else:
-            self.clear()
-            for index, item in enumerate(items):
-                self.append(TaskListRow(item))
-                if item.is_selected:
-                    selected_index = index
-            self._task_id_list = new_task_ids
+        existing_rows = [row for row in self.query(TaskListRow)]
+        while len(existing_rows) < len(items):
+            row = TaskListRow(items[len(existing_rows)])
+            self.append(row)
+            existing_rows.append(row)
+        for extra_row in existing_rows[len(items):]:
+            extra_row.remove()
+        existing_rows = existing_rows[: len(items)]
+        for index, item in enumerate(items):
+            existing_rows[index].update_item(item)
+            if item.is_selected:
+                selected_index = index
+        self._task_id_list = new_task_ids
         if selected_index is not None:
             self.index = selected_index
         elif not items:
@@ -96,32 +100,56 @@ def _status_text(status: str) -> Text:
 
 
 def _row_content(item: TaskListItemViewModel) -> Text:
-    content = Text()
-    content.append(_status_dot(item.status))
-    content.append(" ")
-    content.append(truncate_id(item.task_id, width=18), style="bold")
-    content.append(" ")
-    content.append_text(status_badge(item.status))
-    if item.awaiting_approval:
-        content.append(" ")
-        content.append(" APPROVAL ", style=f"bold {WARNING}")
+    lines: list[Text] = []
+
+    top = Text()
+    top.append(_selection_glyph(item))
+    top.append(" ")
+    top.append(_status_symbol(item.status), style=_status_color(item.status))
+    top.append(" ")
+    top.append(truncate(_objective_preview(item.objective), 48), style="bold")
+    top.append("   ")
+    top.append(relative_time(item.updated_at), style=TEXT_MUTED)
     if item.artifact_count:
-        content.append(" ")
-        content.append(f" ART {item.artifact_count} ", style=f"bold {ACCENT}")
-    content.append("\n")
-    content.append(_objective_preview(item.objective))
-    content.append("\n")
-    content.append("Updated ", style=TEXT_MUTED)
-    content.append(relative_time(item.updated_at), style=TEXT_MUTED)
-    content.append("   ", style=TEXT_MUTED)
-    content.append(truncate_id(item.run_id, width=18), style=TEXT_MUTED)
-    if item.is_highlighted:
-        content.stylize("reverse")
-    return content
+        top.append("  ")
+        top.append(f" {item.artifact_count} ", style=f"bold black on {ACCENT}")
+    lines.append(top)
+
+    bottom = Text()
+    bottom.append("   ")
+    bottom.append(truncate_id(item.task_id, width=18), style=TEXT_MUTED_DEEP)
+    if item.run_id:
+        bottom.append(" · ", style=TEXT_MUTED_DEEP)
+        bottom.append(truncate_id(item.run_id, width=18), style=TEXT_MUTED_DEEP)
+    if item.awaiting_approval:
+        bottom.append(" · ", style=TEXT_MUTED_DEEP)
+        bottom.append("approval", style=WARNING)
+    lines.append(bottom)
+    return Text("\n").join(lines)
 
 
 def _status_dot(status: str) -> Text:
     return Text("●", style=_status_color(status))
+
+
+def _status_symbol(status: str) -> str:
+    return {
+        "executing": "●",
+        "planning": "●",
+        "completed": "✓",
+        "failed": "✗",
+        "paused": "⏸",
+        "awaiting_approval": "⚠",
+        "accepted": "●",
+    }.get(status.lower(), "●")
+
+
+def _selection_glyph(item: TaskListItemViewModel) -> str:
+    if item.is_selected:
+        return "▎"
+    if item.is_highlighted:
+        return "•"
+    return " "
 
 
 def _status_color(status: str) -> str:
@@ -139,6 +167,7 @@ def _status_color(status: str) -> str:
 def _objective_preview(objective: str) -> str:
     normalized = re.sub(r"[*_`>#-]+", " ", objective)
     normalized = " ".join(normalized.split())
+    normalized = re.sub(r"^OBJECTIVE\s+", "", normalized, flags=re.IGNORECASE)
     if not normalized:
         return "No objective provided."
     if len(normalized) <= 84:

@@ -28,15 +28,18 @@ _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
     from textual.app import ComposeResult
+    from textual.css.query import NoMatches
     from textual.widget import Widget as _Widget
     from textual.widgets import Static
 else:  # pragma: no cover
     try:
         from textual.app import ComposeResult
+        from textual.css.query import NoMatches
         from textual.widget import Widget as _Widget
         from textual.widgets import Static
     except ModuleNotFoundError as exc:
         ComposeResult = cast(Any, object)
+        NoMatches = cast(Any, RuntimeError)
         _Widget = cast(Any, object)
         Static = cast(Any, object)
         _TEXTUAL_IMPORT_ERROR = exc
@@ -49,34 +52,41 @@ def _render_identity_bar(state: AppState, clock_str: str) -> Text:
 
     Format: APP NAME  ● runtime-name  model-name  HH:MM:SS
     """
-    result = Text()
-    # App name
-    result.append("LOCAL AGENT HARNESS", style=f"bold {ACCENT_PRIMARY}")
-    result.append("  ")
+    left = Text()
+    left.append("LOCAL AGENT HARNESS", style=f"bold {ACCENT_PRIMARY}")
+    left.append("  ")
 
-    # Connection dot
     dot_color = {
         "connected": STATUS_RUNNING,
         "connecting": STATUS_WARNING,
         "error": STATUS_DANGER,
     }.get(state.connection_status, TEXT_MUTED_DEEP)
     dot = "●" if state.connection_status == "connected" else "○"
-    result.append(dot, style=dot_color)
-    result.append("  ")
+    left.append(dot, style=dot_color)
+    left.append(" ")
+    left.append(
+        {
+            "connected": "Connected",
+            "connecting": "Connecting",
+            "error": "Error",
+        }.get(state.connection_status, "Disconnected"),
+        style=TEXT_SECONDARY,
+    )
+    left.append("  ")
 
-    # Runtime name
     runtime_name = str(state.runtime_health.get("runtime_name", "runtime"))
-    result.append(runtime_name, style=TEXT_SECONDARY)
+    left.append(runtime_name, style=TEXT_SECONDARY)
 
-    # Model name
     model_name = status_bar_model_name(state)
     if model_name:
-        result.append("  ")
-        result.append(model_name, style=TEXT_SECONDARY)
+        left.append("  ")
+        left.append(model_name, style=TEXT_SECONDARY)
 
-    # Clock
+    result = Text()
+    result.append_text(left)
     if clock_str:
-        result.append("  ")
+        padding = max(2, 72 - len(left.plain) - len(clock_str))
+        result.append(" " * padding)
         result.append(clock_str, style=TEXT_MUTED_DEEP)
 
     return result
@@ -147,13 +157,19 @@ class StatusBar(_Widget):  # type: ignore[misc]
     def _refresh_identity_bar(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             return
-        self.query_one("#identity-bar", Static).update(
-            _render_identity_bar(state, self._clock_str)
-        )
+        try:
+            self.query_one("#identity-bar", Static).update(
+                _render_identity_bar(state, self._clock_str)
+            )
+        except NoMatches:
+            return
 
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required") from _TEXTUAL_IMPORT_ERROR
         self._last_state = state
         self._refresh_identity_bar(state)
-        self.query_one("#context-bar", Static).update(_render_context_bar(state))
+        try:
+            self.query_one("#context-bar", Static).update(_render_context_bar(state))
+        except NoMatches:
+            return

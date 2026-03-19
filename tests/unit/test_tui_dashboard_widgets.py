@@ -32,10 +32,10 @@ class DashboardWidgetRenderTests(unittest.TestCase):
         )
 
         plain = rendered.plain
-        self.assertIn("boundary", plain)
+        self.assertIn("boundary approval", plain)
         self.assertIn("tool permission", plain)
-        self.assertIn("Approve filesystem write", plain)
         self.assertIn("filesystem.write", plain)
+        self.assertIn("⚠", plain)
         self.assertIn("2m ago", plain)
         self.assertNotIn("Task        Type", plain)
 
@@ -77,5 +77,6 @@ class DashboardWidgetRenderTests(unittest.TestCase):
 
         plain = rendered.plain
         self.assertIn("report.md", plain)
-        self.assertIn("text/markdown", plain)
+        self.assertIn("markdown", plain)
         self.assertIn("1m ago", plain)
+        self.assertIn("📝", plain)

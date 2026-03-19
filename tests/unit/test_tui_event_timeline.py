@@ -28,3 +28,18 @@ class EventTimelineWidgetTests(unittest.TestCase):
         self.assertIn("task-runner[worker]", plain)
         self.assertIn("FAILED[hard]", plain)
         self.assertIn("[type=less_than_equal, input_value=100, input_type=int]", plain)
+
+    def test_render_event_line_marks_collapsed_events_as_repeated(self) -> None:
+        rendered = _render_event_line(
+            timestamp="16:27:39",
+            event_type="tool.called",
+            severity="success",
+            summary="npm install",
+            repeat_count=3,
+            source_name="executor",
+            highlight=False,
+            highlight_label=None,
+        )
+
+        self.assertIn("×3", rendered.plain)
+        self.assertIn("npm install (repeated)", rendered.plain)

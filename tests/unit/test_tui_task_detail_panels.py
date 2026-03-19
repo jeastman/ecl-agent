@@ -11,6 +11,7 @@ class TaskDetailPanelsTests(unittest.TestCase):
     def test_notification_line_shape_can_include_bracketed_error_text(self) -> None:
         rendered = _render_notification_line(
             timestamp="2026-03-18T16:27:39Z",
+            timestamp_relative="just now",
             severity="error",
             summary=(
                 "1 validation error for call[search]\n"
@@ -18,7 +19,9 @@ class TaskDetailPanelsTests(unittest.TestCase):
                 "  Input should be less than or equal to 20 "
                 "[type=less_than_equal, input_value=100, input_type=int]"
             ),
+            icon="✗",
+            tone="danger",
         )
-        combined = "\n".join(segment.plain for segment in rendered.renderables)
-        self.assertIn("call[search]", combined)
-        self.assertIn("[type=less_than_equal, input_value=100, input_type=int]", combined)
+        plain = rendered.plain
+        self.assertIn("call[search]", plain)
+        self.assertIn("[type=less_than_equal, input_value=100, input_type=int]", plain)

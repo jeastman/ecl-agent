@@ -47,27 +47,26 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
 def _approval_card(item: ApprovalQueueItemViewModel, *, inbox_mode: bool) -> Text:
     urgency = DANGER if item.status.lower() in {"pending", "waiting"} else WARNING
     text = Text()
-    if item.is_selected or item.is_highlighted:
-        text.append("▶ ", style=urgency)
+    if item.is_selected:
+        text.append("▎ ", style=urgency)
+    elif item.is_highlighted:
+        text.append("• ", style=urgency)
     else:
         text.append("  ")
-    text.append(item.request_type, style="bold")
-    text.append(" ")
+    text.append("⚠ ", style=urgency)
+    text.append(f"{item.request_type} approval", style="bold")
+    text.append("  ")
     text.append_text(status_badge(item.status))
     text.append("\n")
-    text.append(truncate_id(item.task_id, width=18), style="bold")
-    if item.run_id:
-        text.append("  ")
-        text.append(truncate_id(item.run_id, width=18), style=muted("").style)
+    text.append(item.policy_context, style=muted("").style)
     text.append("\n")
     text.append(item.description)
     text.append("\n")
-    text.append(item.requested_action, style=muted("").style)
-    text.append("   ", style=muted("").style)
-    text.append(item.policy_context, style=muted("").style)
-    text.append("\n")
-    text.append(item.scope_summary, style=muted("").style)
-    text.append("   ", style=muted("").style)
+    text.append(truncate_id(item.task_id, width=18), style=muted("").style)
+    if item.run_id:
+        text.append(" · ", style=muted("").style)
+        text.append(truncate_id(item.run_id, width=18), style=muted("").style)
+    text.append(" · ", style=muted("").style)
     text.append(item.created_at_relative, style=muted("").style)
     if inbox_mode:
         text.append("\n")

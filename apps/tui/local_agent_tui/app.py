@@ -123,6 +123,7 @@ class AgentTUI(App):  # type: ignore[misc]
         self._render_interval = 1 / 30
         self._render_scheduled = False
         self._last_render_at = 0.0
+        self._task_feedback_generation = 0
         self.install_screen(DashboardScreen(), name="dashboard")
         self.install_screen(TaskDetailScreen(), name="task_detail")
         self.install_screen(ApprovalsScreen(), name="approvals")
@@ -304,6 +305,24 @@ class AgentTUI(App):  # type: ignore[misc]
     def _flush_scheduled_render(self) -> None:
         self._render_scheduled = False
         self._render_state()
+
+    def _set_task_input_feedback(self, message: str | None, *, auto_clear: bool = True) -> None:
+        self._store.dispatch({"kind": "ui", "task_input_feedback": message})
+        self._render_state()
+        if message is None or not auto_clear:
+            return
+        self._task_feedback_generation += 1
+        generation = self._task_feedback_generation
+
+        def clear_feedback() -> None:
+            if generation != self._task_feedback_generation:
+                return
+            if self._store.snapshot().task_input_feedback != message:
+                return
+            self._store.dispatch({"kind": "ui", "task_input_feedback": None})
+            self._render_state()
+
+        self.set_timer(3.0, clear_feedback)
 
     def _render_state(self) -> None:
         self._last_render_at = time.monotonic()
@@ -622,13 +641,9 @@ class AgentTUI(App):  # type: ignore[misc]
         if callable(clear_input):
             clear_input()
         if not command:
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "task_input_feedback": "Supported commands: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help.",
-                }
+            self._set_task_input_feedback(
+                "Supported commands: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
             )
-            self._render_state()
             return
         if command.startswith("reply "):
             state = self._store.snapshot()
@@ -636,26 +651,15 @@ class AgentTUI(App):  # type: ignore[misc]
             if task is None:
                 return
             if str(task.get("pause_reason", "")).lower() != "awaiting_user_input":
-                self._store.dispatch(
-                    {
-                        "kind": "ui",
-                        "task_input_feedback": "Reply is only available when the task is awaiting user input.",
-                    }
+                self._set_task_input_feedback(
+                    "Reply is only available when the task is awaiting user input."
                 )
-                self._render_state()
                 return
             message = stripped[6:].strip()
             if not message:
-                self._store.dispatch(
-                    {
-                        "kind": "ui",
-                        "task_input_feedback": "Reply requires a non-empty message.",
-                    }
-                )
-                self._render_state()
+                self._set_task_input_feedback("Reply requires a non-empty message.")
                 return
-            self._store.dispatch({"kind": "ui", "task_input_feedback": "Submitting reply..."})
-            self._render_state()
+            self._set_task_input_feedback("Submitting reply...")
             self.run_worker(
                 self._reply_selected_task(
                     task_id=str(task["task_id"]),
@@ -677,18 +681,11 @@ class AgentTUI(App):  # type: ignore[misc]
         }
         handler = commands.get(command)
         if handler is None and command != "help":
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "task_input_feedback": (
-                        f"Unsupported command '{command}'. Use: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
-                    ),
-                }
+            self._set_task_input_feedback(
+                f"Unsupported command '{command}'. Use: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
             )
-            self._render_state()
             return
-        self._store.dispatch({"kind": "ui", "task_input_feedback": f"Ran '{command}'."})
-        self._render_state()
+        self._set_task_input_feedback(f"Ran '{command}'.")
         if handler is not None:
             handler()
 
@@ -726,18 +723,13 @@ class AgentTUI(App):  # type: ignore[misc]
         try:
             response = await self._client.task_resume(task_id, run_id)
             self._store.dispatch({"kind": "rpc", "name": "task.resume", "payload": response})
-            self._store.dispatch({"kind": "ui", "task_input_feedback": "Resume requested."})
-            self._render_state()
+            self._set_task_input_feedback("Resume requested.")
             self._start_selected_task_stream(task_id=task_id, run_id=run_id)
         except ProtocolClientError as exc:
             await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "task_input_feedback": f"Resume failed: {_protocol_error_message(exc)}",
-                }
+            self._set_task_input_feedback(
+                f"Resume failed: {_protocol_error_message(exc)}"
             )
-            self._render_state()
 
     async def _reply_selected_task(
         self,
@@ -749,18 +741,13 @@ class AgentTUI(App):  # type: ignore[misc]
         try:
             response = await self._client.task_reply(task_id, message, run_id)
             self._store.dispatch({"kind": "rpc", "name": "task.reply", "payload": response})
-            self._store.dispatch({"kind": "ui", "task_input_feedback": "Reply accepted."})
-            self._render_state()
+            self._set_task_input_feedback("Reply accepted.")
             self._start_selected_task_stream(task_id=task_id, run_id=run_id)
         except ProtocolClientError as exc:
             await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
-            self._store.dispatch(
-                {
-                    "kind": "ui",
-                    "task_input_feedback": f"Reply failed: {_protocol_error_message(exc)}",
-                }
+            self._set_task_input_feedback(
+                f"Reply failed: {_protocol_error_message(exc)}"
             )
-            self._render_state()
 
     def action_open_artifacts(self) -> None:
         state = self._store.snapshot()

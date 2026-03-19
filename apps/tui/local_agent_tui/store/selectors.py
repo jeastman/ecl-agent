@@ -12,7 +12,9 @@ from ..theme.colors import (
     TEXT_SECONDARY as _TEXT_SECONDARY,
     TEXT_MUTED_DEEP as _TEXT_MUTED_DEEP,
 )
+from ..utils.time_format import compact_time as _compact_time
 from ..utils.time_format import relative_time as _relative_time
+from ..utils.text import truncate as _truncate
 from ..utils.text import truncate_id as _truncate_id
 
 
@@ -92,25 +94,25 @@ class TaskDetailHeaderViewModel:
     task_id: str
     run_id: str
     status: str
-    created_at: str
-    updated_at: str
     objective: str
     current_phase: str
     active_subagent: str | None
     actionable_label: str
-    actionable_hint: str
 
 
 @dataclass(frozen=True, slots=True)
 class TimelineEventViewModel:
     timestamp: str
+    timestamp_display: str
     event_type: str
+    severity_label: str
     summary: str
     severity: str
+    detail_lines: list[str]
     repeat_count: int
-    source_name: str | None
-    highlight: bool
-    highlight_label: str | None
+    source_label: str | None
+    show_priority_highlight: bool
+    priority_label: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -123,6 +125,7 @@ class TimelineGroupViewModel:
 @dataclass(frozen=True, slots=True)
 class PlanHistoryItemViewModel:
     timestamp: str
+    timestamp_display: str
     summary: str
     phase: str
 
@@ -138,6 +141,7 @@ class PlanViewModel:
 class SubagentActivityItemViewModel:
     subagent_id: str
     status: str
+    status_icon: str
     started_at: str | None
     completed_at: str | None
     latest_summary: str
@@ -157,6 +161,7 @@ class ArtifactPanelItemViewModel:
 class TaskActionBarViewModel:
     resume_enabled: bool
     approvals_enabled: bool
+    approval_count: int
     artifact_open_enabled: bool
     artifact_external_open_enabled: bool
     diagnostics_enabled: bool
@@ -165,13 +170,17 @@ class TaskActionBarViewModel:
     back_enabled: bool
     input_placeholder: str
     status_message: str
+    status_tone: str
 
 
 @dataclass(frozen=True, slots=True)
 class NotificationStripItemViewModel:
     timestamp: str
+    timestamp_relative: str
     summary: str
     severity: str
+    icon: str
+    tone: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -449,13 +458,10 @@ def selected_task_header(state: AppState) -> TaskDetailHeaderViewModel | None:
         task_id=str(task["task_id"]),
         run_id=str(task.get("run_id", "")),
         status=str(task.get("status", "unknown")),
-        created_at=str(task.get("created_at", "")),
-        updated_at=str(task.get("last_event_at") or task.get("updated_at") or ""),
         objective=str(task.get("objective", "")),
         current_phase=str(task.get("current_phase") or "unknown"),
         active_subagent=_str_or_none(task.get("active_subagent")),
         actionable_label=_actionable_status_label(task),
-        actionable_hint=_actionable_status_hint(task),
     )
 
 
@@ -545,18 +551,23 @@ def task_timeline(state: AppState) -> TimelineGroupViewModel:
             previous is not None
             and previous.event_type == current.event_type
             and previous.summary == current.summary
-            and previous.source_name == current.source_name
+            and previous.source_label == current.source_label
             and _should_collapse_timeline_event(current.event_type)
         ):
             collapsed[-1] = TimelineEventViewModel(
                 timestamp=current.timestamp,
+                timestamp_display=current.timestamp_display,
                 event_type=previous.event_type,
+                severity_label=previous.severity_label,
                 summary=previous.summary,
                 severity=previous.severity,
+                detail_lines=previous.detail_lines,
                 repeat_count=previous.repeat_count + 1,
-                source_name=previous.source_name,
-                highlight=previous.highlight or current.highlight,
-                highlight_label=previous.highlight_label or current.highlight_label,
+                source_label=previous.source_label,
+                show_priority_highlight=(
+                    previous.show_priority_highlight or current.show_priority_highlight
+                ),
+                priority_label=previous.priority_label or current.priority_label,
             )
             continue
         collapsed.append(current)
@@ -582,6 +593,7 @@ def task_plan_view(state: AppState) -> PlanViewModel:
     recent_updates = [
         PlanHistoryItemViewModel(
             timestamp=event.timestamp,
+            timestamp_display=_compact_time(event.timestamp)[:5],
             summary=event.summary,
             phase=str(event.payload.get("phase") or task.get("current_phase") or "unknown"),
         )
@@ -611,6 +623,7 @@ def task_subagent_activity(state: AppState) -> list[SubagentActivityItemViewMode
             SubagentActivityItemViewModel(
                 subagent_id=subagent_id,
                 status="UNKNOWN",
+                status_icon=_subagent_status_icon("UNKNOWN"),
                 started_at=None,
                 completed_at=None,
                 latest_summary="",
@@ -620,26 +633,38 @@ def task_subagent_activity(state: AppState) -> list[SubagentActivityItemViewMode
             items[subagent_id] = SubagentActivityItemViewModel(
                 subagent_id=subagent_id,
                 status="RUNNING",
+                status_icon=_subagent_status_icon("RUNNING"),
                 started_at=event.timestamp,
                 completed_at=current.completed_at,
-                latest_summary=str(event.payload.get("taskDescription") or event.summary),
+                latest_summary=_truncate(
+                    str(event.payload.get("taskDescription") or event.summary),
+                    72,
+                ),
             )
         elif event.event_type == "subagent.completed":
             items[subagent_id] = SubagentActivityItemViewModel(
                 subagent_id=subagent_id,
                 status=str(event.payload.get("status", "completed")).upper(),
+                status_icon=_subagent_status_icon(str(event.payload.get("status", "completed"))),
                 started_at=current.started_at,
                 completed_at=event.timestamp,
-                latest_summary=str(event.payload.get("summary") or event.summary),
+                latest_summary=_truncate(
+                    str(event.payload.get("summary") or event.summary),
+                    72,
+                ),
             )
     active_subagent = _str_or_none(task.get("active_subagent")) if task is not None else None
     if active_subagent and active_subagent not in items:
         items[active_subagent] = SubagentActivityItemViewModel(
             subagent_id=active_subagent,
             status="RUNNING",
+            status_icon=_subagent_status_icon("RUNNING"),
             started_at=None,
             completed_at=None,
-            latest_summary=str(task.get("latest_summary") or "Subagent is running."),
+            latest_summary=_truncate(
+                str(task.get("latest_summary") or "Subagent is running."),
+                72,
+            ),
         )
     return list(items.values())
 
@@ -688,8 +713,11 @@ def task_notifications(state: AppState) -> NotificationStripViewModel:
         items=[
             NotificationStripItemViewModel(
                 timestamp=event.timestamp,
+                timestamp_relative=_relative_time(event.timestamp),
                 summary=event.summary,
                 severity=event.severity,
+                icon=_notification_icon(event.severity),
+                tone=_notification_tone(event),
             )
             for event in priority_events
         ]
@@ -699,22 +727,23 @@ def task_notifications(state: AppState) -> NotificationStripViewModel:
 def task_action_bar(state: AppState) -> TaskActionBarViewModel:
     task = _selected_task(state)
     artifacts = task_artifact_panel(state)
-    approvals_enabled = bool(selected_task_pending_approvals(state))
+    approval_count = len(selected_task_pending_approvals(state))
+    approvals_enabled = approval_count > 0
     resume_enabled = False
     diagnostics_enabled = _selected_task_key(state) is not None
     artifact_external_open_enabled = selected_artifact_preview(state).external_open_supported
     status_message = state.task_input_feedback or _actionable_status_hint(task)
-    input_placeholder = "Enter a task command and press Enter"
+    input_placeholder = _task_command_placeholder(task)
+    status_tone = _task_action_status_tone(task, feedback=state.task_input_feedback)
     if task is not None:
         links = task.get("links", {})
         resume_enabled = bool(task.get("is_resumable")) or (
             isinstance(links, dict) and links.get("resume") == "task.resume"
         )
-        if str(task.get("pause_reason", "")).lower() == "awaiting_user_input":
-            input_placeholder = "Type: reply <message>"
     return TaskActionBarViewModel(
         resume_enabled=resume_enabled,
         approvals_enabled=approvals_enabled,
+        approval_count=approval_count,
         artifact_open_enabled=bool(artifacts),
         artifact_external_open_enabled=artifact_external_open_enabled,
         diagnostics_enabled=diagnostics_enabled,
@@ -723,6 +752,7 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
         back_enabled=True,
         input_placeholder=input_placeholder,
         status_message=status_message,
+        status_tone=status_tone,
     )
 
 
@@ -1541,13 +1571,16 @@ def _filtered_task_events(state: AppState) -> list[TaskEventRecord]:
 def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
     return TimelineEventViewModel(
         timestamp=event.timestamp,
+        timestamp_display=_compact_time(event.timestamp),
         event_type=event.event_type,
+        severity_label=_timeline_severity_label(event.severity),
         summary=event.summary,
         severity=event.severity,
+        detail_lines=_timeline_detail_lines(event),
         repeat_count=1,
-        source_name=event.source_name,
-        highlight=_is_priority_event(event.event_type),
-        highlight_label=_priority_event_label(event.event_type),
+        source_label=event.source_name,
+        show_priority_highlight=_is_priority_event(event.event_type),
+        priority_label=_priority_event_label(event.event_type),
     )
 
 
@@ -1634,6 +1667,65 @@ def _subagent_id(event: TaskEventRecord) -> str | None:
     if isinstance(value, str) and value.strip():
         return value
     return None
+
+
+def _timeline_severity_label(severity: str) -> str:
+    return {
+        "error": "ERR ",
+        "attention": "ATTN",
+        "success": " OK ",
+    }.get(severity.lower(), "INFO")
+
+
+def _timeline_detail_lines(event: TaskEventRecord) -> list[str]:
+    if event.event_type == "approval.requested":
+        approval = event.payload.get("approval")
+        if not isinstance(approval, dict):
+            return []
+        policy = _approval_policy_context(approval)
+        status = str(approval.get("status", "pending")).upper()
+        return [f"Policy: {policy}", f"Status: {status}"]
+    if event.event_type == "tool.rejected":
+        details: list[str] = []
+        tool_name = event.payload.get("tool")
+        if isinstance(tool_name, str) and tool_name.strip():
+            details.append(f"Tool: {tool_name}")
+        reason = event.payload.get("reason") or event.payload.get("message")
+        if isinstance(reason, str) and reason.strip():
+            details.append(f"Reason: {reason}")
+        return details
+    return []
+
+
+def _subagent_status_icon(status: str) -> str:
+    normalized = status.lower()
+    if normalized in {"running", "executing", "planning", "accepted"}:
+        return "●"
+    if normalized in {"completed", "success"}:
+        return "✓"
+    if normalized in {"failed", "error", "rejected"}:
+        return "✗"
+    if normalized in {"paused", "awaiting_approval"}:
+        return "⚠"
+    return "•"
+
+
+def _notification_icon(severity: str) -> str:
+    return {
+        "attention": "⚠",
+        "error": "✗",
+        "success": "✓",
+    }.get(severity.lower(), "•")
+
+
+def _notification_tone(event: TaskEventRecord) -> str:
+    if event.event_type in {"approval.requested", "tool.rejected"}:
+        return "warning"
+    if event.severity == "error" or event.event_type == "task.failed":
+        return "danger"
+    if event.severity == "success" or event.event_type == "task.completed":
+        return "success"
+    return "info"
 
 
 def _artifact_item_view_model(artifact: dict[str, Any]) -> ArtifactItemViewModel:
@@ -2027,6 +2119,46 @@ def _actionable_status_hint(task: dict[str, Any] | None) -> str:
     if status in {"executing", "running", "planning", "accepted"}:
         return "Running. Press L to toggle logs or / to search the timeline."
     return "Commands: approvals, artifacts, diagnostics, memory, config, help."
+
+
+def _task_command_placeholder(task: dict[str, Any] | None) -> str:
+    if task is None:
+        return "Enter a task command and press Enter"
+    pause_reason = str(task.get("pause_reason", "")).lower()
+    status = str(task.get("status", "unknown")).lower()
+    if pause_reason == "awaiting_user_input":
+        return "Type 'resume' to continue or 'reply <message>' to respond"
+    if status == "awaiting_approval":
+        return "Go to Approvals (a) to approve or reject the pending request"
+    if status in {"executing", "running", "planning", "accepted"}:
+        return "Task is executing. Type 'help' for available commands"
+    if status in {"completed", "failed"}:
+        return "Task is finished. Press Esc to return to dashboard"
+    if status == "paused" or bool(task.get("is_resumable")):
+        return "Type 'resume' to continue or 'reply <message>' to respond"
+    return "Enter a task command and press Enter"
+
+
+def _task_action_status_tone(task: dict[str, Any] | None, *, feedback: str | None) -> str:
+    if feedback:
+        lowered = feedback.lower()
+        if "fail" in lowered or "error" in lowered or "unsupported" in lowered or "invalid" in lowered:
+            return "danger"
+        if "reply" in lowered or "approval" in lowered or "paused" in lowered:
+            return "warning"
+        if "completed" in lowered or "resume requested" in lowered or lowered.startswith("ran '"):
+            return "success"
+    if task is None:
+        return "info"
+    pause_reason = str(task.get("pause_reason", "")).lower()
+    status = str(task.get("status", "unknown")).lower()
+    if pause_reason == "awaiting_user_input" or status in {"paused", "awaiting_approval"}:
+        return "warning"
+    if status == "failed":
+        return "danger"
+    if status == "completed":
+        return "success"
+    return "info"
 
 
 def _highlighted_task_ids(state: AppState) -> set[str]:
