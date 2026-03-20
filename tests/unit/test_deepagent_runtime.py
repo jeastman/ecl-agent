@@ -432,7 +432,7 @@ class SandboxToolBindingsTests(unittest.TestCase):
         self.assertEqual(events[-1][1]["cwd"], "/workspace")
         self.assertFalse(any(event_type == "tool.rejected" for event_type, _ in events))
 
-    def test_execute_command_langchain_tool_rejects_plain_shell_string(self) -> None:
+    def test_execute_command_langchain_tool_recovers_plain_command_string(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         bindings = SandboxToolBindings(
             sandbox=self.sandbox,
@@ -450,13 +450,41 @@ class SandboxToolBindingsTests(unittest.TestCase):
 
         message = execute_tool.invoke({"command": "pwd", "cwd": "/workspace"})
 
-        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
-        self.assertIn("argv list of strings", message)
-        self.assertIn("stringified JSON array is a common mistake", message)
-        self.assertIn('{"command":["python3","-c","print(1)"],"cwd":"/workspace"}', message)
-        self.assertEqual(events[-1][0], "tool.rejected")
-        self.assertEqual(events[-1][1]["tool"], "execute_command")
-        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+        self.assertEqual(message["exit_code"], 0)
+        self.assertEqual(message["stdout"], "/workspace\n")
+        self.assertEqual(message["cwd"], "/workspace")
+        self.assertEqual(events[-1][0], "tool.called")
+        self.assertEqual(events[-1][1]["command"], ["pwd"])
+        self.assertFalse(any(event_type == "tool.rejected" for event_type, _ in events))
+
+    def test_execute_command_langchain_tool_recovers_quoted_plain_command_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        result = execute_tool.invoke(
+            {"command": 'python3 -c "import sys; print(sys.argv[1])" "hello world"', "cwd": "/workspace"}
+        )
+
+        self.assertEqual(result["exit_code"], 0)
+        self.assertEqual(result["stdout"], "hello world\n")
+        self.assertEqual(events[-1][0], "tool.called")
+        self.assertEqual(
+            events[-1][1]["command"],
+            ["python3", "-c", "import sys; print(sys.argv[1])", "hello world"],
+        )
+        self.assertFalse(any(event_type == "tool.rejected" for event_type, _ in events))
 
     def test_execute_command_langchain_tool_rejects_parsed_non_string_argv(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
@@ -478,6 +506,103 @@ class SandboxToolBindingsTests(unittest.TestCase):
 
         self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
         self.assertIn("argv list of strings", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+
+    def test_execute_command_langchain_tool_rejects_empty_plain_command_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": "   ", "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("must not be empty", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+
+    def test_execute_command_langchain_tool_rejects_malformed_plain_command_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": 'python3 -c "print(1)', "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("could not be parsed as shell-style argv", message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+
+    def test_execute_command_langchain_tool_rejects_shell_operator_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": "pwd | cat", "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("contains shell control syntax", message)
+        self.assertIn('["sh","-lc","..."]', message)
+        self.assertEqual(events[-1][0], "tool.rejected")
+        self.assertEqual(events[-1][1]["tool"], "execute_command")
+        self.assertEqual(events[-1][1]["code"], "invalid_arguments")
+
+    def test_execute_command_langchain_tool_rejects_command_substitution_string(self) -> None:
+        events: list[tuple[str, dict[str, Any]]] = []
+        bindings = SandboxToolBindings(
+            sandbox=self.sandbox,
+            task_id="task_1",
+            run_id="run_1",
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            on_event=lambda event_type, payload: events.append((event_type, payload)),
+        )
+
+        tools = bindings.as_langchain_tools(
+            (ResolvedToolBinding("execute_commands", ("execute_command", "commands"), True),)
+        )
+        execute_tool = next(tool for tool in tools if tool.name == "execute_command")
+
+        message = execute_tool.invoke({"command": "echo $(pwd)", "cwd": "/workspace"})
+
+        self.assertIn("TOOL_REJECTED [invalid_arguments]", message)
+        self.assertIn("contains shell control syntax", message)
         self.assertEqual(events[-1][0], "tool.rejected")
         self.assertEqual(events[-1][1]["tool"], "execute_command")
         self.assertEqual(events[-1][1]["code"], "invalid_arguments")

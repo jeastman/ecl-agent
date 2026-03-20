@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from dataclasses import dataclass
 from typing import Any, Callable
 
@@ -525,16 +526,6 @@ class SandboxToolBindings:
                         operation="execute_command",
                     )
                     parsed_command = _coerce_execute_command(command)
-                    if parsed_command is None:
-                        return self._handle_recoverable_rejection(
-                            "execute_command",
-                            {"command": command, "cwd": cwd or self.sandbox.get_workspace_root()},
-                            RecoverableToolRejection(
-                                code="invalid_arguments",
-                                message="`command` must be a list[str] or a JSON string that parses to list[str].",
-                                category="argument_validation",
-                            ),
-                        )
                     return self.execute_command(parsed_command, cwd)
                 except RecoverableToolRejection as exc:
                     return self._handle_recoverable_rejection(
@@ -802,27 +793,83 @@ def _artifact_to_sandbox_path(artifact: ArtifactReference) -> str:
     return artifact.logical_path or "/"
 
 
-def _coerce_execute_command(command: Any) -> list[str] | None:
+def _coerce_execute_command(command: Any) -> list[str]:
     if isinstance(command, list) and all(isinstance(part, str) for part in command):
         return command
     if not isinstance(command, str):
-        return None
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message="`command` must be a list[str], a JSON string that parses to list[str], or a plain command string.",
+            category="argument_validation",
+        )
     try:
         parsed = json.loads(command)
     except json.JSONDecodeError:
-        return None
+        return _split_plain_command_string(command)
     if isinstance(parsed, list) and all(isinstance(part, str) for part in parsed):
         return parsed
-    return None
+    if isinstance(parsed, (list, dict, str, int, float, bool)) or parsed is None:
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message="`command` JSON input must parse to list[str].",
+            category="argument_validation",
+        )
+    return _split_plain_command_string(command)
+
+
+def _split_plain_command_string(command: str) -> list[str]:
+    stripped = command.strip()
+    if not stripped:
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message="`command` must not be empty.",
+            category="argument_validation",
+        )
+    if "$(" in stripped or "`" in stripped:
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message=(
+                "`command` contains shell control syntax. "
+                "Pass a real argv list or explicitly invoke a shell as argv, for example "
+                '["sh","-lc","..."].'
+            ),
+            category="argument_validation",
+        )
+    try:
+        tokens = list(
+            shlex.shlex(
+                stripped,
+                posix=True,
+                punctuation_chars="|&;<>",
+            )
+        )
+    except ValueError as exc:
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message=f"`command` could not be parsed as shell-style argv: {exc}",
+            category="argument_validation",
+        ) from exc
+    if any(token in {"|", "||", "&", "&&", ";", "<", "<<", ">", ">>"} for token in tokens):
+        raise RecoverableToolRejection(
+            code="invalid_arguments",
+            message=(
+                "`command` contains shell control syntax. "
+                "Pass a real argv list or explicitly invoke a shell as argv, for example "
+                '["sh","-lc","..."].'
+            ),
+            category="argument_validation",
+        )
+    return tokens
 
 
 def _format_invalid_arguments_message(tool_name: str, message: str) -> str:
     if tool_name == "execute_command":
         return (
             f"TOOL_REJECTED [invalid_arguments]: {message} "
-            "execute_command requires `command` to be an argv list of strings. "
-            "A stringified JSON array is a common mistake; if you have one, pass it as a real list instead, "
-            'for example {"command":["python3","-c","print(1)"],"cwd":"/workspace"}.'
+            "execute_command prefers a real argv list of strings. "
+            "It also accepts a JSON string that parses to argv, then falls back to safe shell-style tokenization "
+            "for plain strings. Shell operators are not supported by fallback parsing; use explicit argv or "
+            'an explicit shell invocation such as {"command":["sh","-lc","..."],"cwd":"/workspace"}.'
         )
     return (
         f"TOOL_REJECTED [invalid_arguments]: {message} "
