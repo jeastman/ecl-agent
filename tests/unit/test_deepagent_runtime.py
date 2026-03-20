@@ -964,6 +964,19 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
                 if event_type == "subagent.completed"
             )
         )
+        event_types = [event_type for event_type, _ in events]
+        self.assertLess(event_types.index("subagent.started"), event_types.index("subagent.completed"))
+        activity_indexes = [
+            index
+            for index, event_type in enumerate(event_types)
+            if event_type in {"tool.called", "tool.rejected"}
+        ]
+        self.assertTrue(
+            any(
+                event_types.index("subagent.started") < index < event_types.index("subagent.completed")
+                for index in activity_indexes
+            )
+        )
 
     def test_harness_emits_failed_completion_when_subagent_raises(self) -> None:
         events: list[tuple[str, dict[str, object]]] = []
@@ -2051,10 +2064,10 @@ class FakeCompiledAgent:
         self._captures["invoke_config"] = config
         self._captures["invoke_payload"] = input
         for subagent in self._subagents:
-            _run_model_middleware(
+            _run_agent_middleware(
                 subagent.get("middleware", []),
                 FakeModelRequest(),
-                lambda request: {"ok": True},
+                lambda request: _invoke_first_tool(subagent.get("tools") or []),
             )
         self._invoke_tool("list_files", {"root": "/workspace"})
         self._invoke_tool("read_file", {"path": "/workspace/README.md"})
@@ -2089,7 +2102,7 @@ class FailingCompiledAgent:
         self._captures["invoke_config"] = config
         self._captures["invoke_payload"] = input
         for subagent in self._subagents:
-            _run_model_middleware(
+            _run_agent_middleware(
                 subagent.get("middleware", []),
                 FakeModelRequest(),
                 lambda request: (_ for _ in ()).throw(RuntimeError("delegated failure")),
@@ -2512,6 +2525,34 @@ def _run_model_middleware(middleware: list[Any], request: Any, terminal_handler:
             request, next_handler
         )
     return handler(request)
+
+
+def _run_agent_middleware(middleware: list[Any], request: Any, terminal_handler: Any) -> Any:
+    for current in middleware:
+        before_agent = getattr(current, "before_agent", None)
+        if callable(before_agent):
+            before_agent({}, None)
+    try:
+        result = _run_model_middleware(middleware, request, terminal_handler)
+    except Exception:
+        raise
+    for current in reversed(middleware):
+        after_agent = getattr(current, "after_agent", None)
+        if callable(after_agent):
+            after_agent({}, None)
+    return result
+
+
+def _invoke_first_tool(tools: list[Any]) -> Any:
+    if not tools:
+        return {"ok": True}
+    tool_names = {cast(BaseTool, tool).name: cast(BaseTool, tool) for tool in tools}
+    tool = tool_names.get("list_files") or tool_names.get("read_file") or cast(BaseTool, tools[0])
+    if tool.name == "list_files":
+        return tool.invoke({"root": "/workspace"})
+    if tool.name == "read_file":
+        return tool.invoke({"path": "/workspace/README.md"})
+    return tool.invoke({})
 
 
 def _resolved_subagent(
