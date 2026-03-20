@@ -10,6 +10,7 @@ from ..store.selectors import (
     NotificationStripViewModel,
     SubagentActivityItemViewModel,
     TaskDetailHeaderViewModel,
+    TodoPanelViewModel,
 )
 from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
 from ..theme.empty_states import render_empty_state
@@ -93,6 +94,28 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
         self.update(Text("\n").join(lines))
 
 
+class TodoPanelWidget(Static):  # type: ignore[misc]
+    def update_todos(self, model: TodoPanelViewModel) -> None:
+        if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
+            raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.border_title = "Todos"
+        if not model.items:
+            self.update(render_empty_state("todos"))
+            return
+        lines: list[Text] = []
+        summary = Text()
+        summary.append(f"◉ {model.in_progress_count}", style=ACCENT)
+        summary.append("  ")
+        summary.append(f"○ {model.pending_count}", style=TEXT_SECONDARY)
+        summary.append("  ")
+        summary.append(f"✓ {model.completed_count}", style=SUCCESS)
+        lines.append(summary)
+        lines.append(Text("─" * 22, style=TEXT_SECONDARY))
+        for item in model.items:
+            lines.append(_render_todo_line(item.status_icon, item.content, item.status))
+        self.update(Text("\n").join(lines))
+
+
 class NotificationStripWidget(Static):  # type: ignore[misc]
     def update_notifications(self, model: NotificationStripViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
@@ -139,6 +162,29 @@ def _status_style(status: str) -> str:
         "paused": WARNING,
         "awaiting_approval": WARNING,
     }.get(status.lower(), TEXT_SECONDARY)
+
+
+def _todo_status_style(status: str) -> str:
+    return {
+        "in_progress": ACCENT,
+        "pending": TEXT_SECONDARY,
+        "completed": SUCCESS,
+    }.get(status.lower(), TEXT_SECONDARY)
+
+
+def _todo_content_style(status: str) -> str:
+    return {
+        "in_progress": "bold",
+        "pending": "none",
+        "completed": TEXT_MUTED_DEEP,
+    }.get(status.lower(), "none")
+
+
+def _render_todo_line(icon: str, content: str, status: str) -> Text:
+    line = Text()
+    line.append(f"{icon} ", style=_todo_status_style(status))
+    line.append(content, style=_todo_content_style(status))
+    return line
 
 
 def _notification_tone_style(tone: str) -> str:

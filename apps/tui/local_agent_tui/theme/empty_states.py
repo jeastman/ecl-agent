@@ -9,6 +9,7 @@ EMPTY_STATES: dict[str, tuple[str, str, str]] = {
     "artifacts":     ("◇", "No artifacts",            "Artifacts will appear as the agent produces output"),
     "subagents":     ("◇", "No subagent activity",    "Subagents will appear when the task delegates work"),
     "plan":          ("◇", "No plan yet",             "A plan will appear when the agent begins strategizing"),
+    "todos":         ("◇", "No todo list yet",        "The agent will populate tasks as it plans and executes"),
     "notifications": ("✓", "No urgent updates",       "You're all caught up"),
     "memory":        ("◇", "No memory entries",       "The agent hasn't stored any memories yet"),
     "diagnostics":   ("✓", "No diagnostics",          "No issues detected"),

@@ -31,6 +31,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     task_notifications,
     task_plan_view,
     task_subagent_activity,
+    task_todo_view,
     task_timeline,
     command_palette,
 )
@@ -800,6 +801,72 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(subagents[0].status, "RUNNING")
         self.assertEqual(subagents[0].status_icon, "●")
         self.assertEqual(subagents[0].latest_summary, "Inspect docs")
+
+    def test_task_todo_view_projects_snapshot_todos_in_order(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "executing",
+                            "objective": "Inspect repo",
+                            "todos": [
+                                {"content": "Inspect files", "status": "completed"},
+                                {"content": "Write summary", "status": "in_progress"},
+                                {"content": "Send reply", "status": "pending"},
+                            ],
+                        }
+                    }
+                },
+            }
+        )
+
+        todos = task_todo_view(store.snapshot())
+
+        self.assertEqual([item.content for item in todos.items], ["Inspect files", "Write summary", "Send reply"])
+        self.assertEqual(todos.completed_count, 1)
+        self.assertEqual(todos.in_progress_count, 1)
+        self.assertEqual(todos.pending_count, 1)
+        self.assertTrue(todos.items[1].is_active)
+
+    def test_tool_called_write_todos_updates_snapshot_todos(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.called",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "tool": "write_todos",
+                            "summary": "Updated todo list (2 items; 1 in progress, 1 pending, 0 completed)",
+                            "arguments": {
+                                "todos": [
+                                    {"content": "Inspect files", "status": "in_progress"},
+                                    {"content": "Write summary", "status": "pending"},
+                                ]
+                            },
+                        },
+                    }
+                },
+            }
+        )
+
+        snapshot = store.snapshot().task_snapshots["task_1"]
+        todos = task_todo_view(store.snapshot())
+
+        self.assertEqual(snapshot["todos"][0]["status"], "in_progress")
+        self.assertEqual([item.status for item in todos.items], ["in_progress", "pending"])
 
     def test_task_timeline_projects_detail_lines_for_approval_and_rejected_tool(self) -> None:
         store = AppStateStore()

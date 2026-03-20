@@ -6,7 +6,7 @@ from enum import StrEnum
 from pathlib import PurePosixPath
 from typing import Any
 
-from packages.task_model.local_agent_task_model.models import FailureInfo, TaskStatus
+from packages.task_model.local_agent_task_model.models import FailureInfo, TaskStatus, TodoItem
 
 PROTOCOL_VERSION = "1.0.0"
 
@@ -256,6 +256,7 @@ class TaskSnapshot:
     workspace_roots: list[str] | None = None
     current_phase: str | None = None
     latest_summary: str | None = None
+    todos: list[TodoItem] | None = None
     awaiting_approval: bool | None = None
     pending_approval_id: str | None = None
     is_resumable: bool | None = None

@@ -31,7 +31,6 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge i
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
-from packages.task_model.local_agent_task_model.models import CompactionTrigger
 from packages.task_model.local_agent_task_model.models import EventType
 from packages.task_model.local_agent_task_model.models import TaskStatus
 
@@ -157,6 +156,12 @@ class TaskRunnerTests(unittest.TestCase):
         self.assertEqual(snapshot.status, TaskStatus.COMPLETED)
         self.assertEqual(snapshot.latest_summary, "Generated the repository summary artifact.")
         self.assertIsNone(snapshot.active_subagent)
+        assert snapshot.todos is not None
+        self.assertEqual(
+            [todo.content for todo in snapshot.todos],
+            ["Inspect files", "Write summary"],
+        )
+        self.assertEqual(snapshot.todos[1].status.value, "in_progress")
 
     def test_task_runner_marks_run_failed_when_harness_raises(self) -> None:
         store = InMemoryRunStateStore()

@@ -11,7 +11,13 @@ from packages.protocol.local_agent_protocol.models import (
     RuntimeEvent,
 )
 from packages.task_model.local_agent_task_model.ids import new_event_id
-from packages.task_model.local_agent_task_model.models import FailureInfo, RunState, TaskStatus
+from packages.task_model.local_agent_task_model.models import (
+    FailureInfo,
+    RunState,
+    TaskStatus,
+    TodoItem,
+    normalize_todos,
+)
 from services.checkpoint_service.local_agent_checkpoint_service.checkpoint_models import (
     ResumeHandle,
 )
@@ -76,6 +82,7 @@ def _rebuild_run_state(
     status = _status_from_events(events, resume_handle)
     latest_summary = _latest_summary(events)
     active_subagent = _latest_active_subagent(events)
+    todos = _latest_todos(events)
     latest_checkpoint_id = resume_handle.latest_checkpoint_id if resume_handle is not None else None
     checkpoint_thread_id = resume_handle.thread_id if resume_handle is not None else None
     pause_reason = _pause_reason(events, status)
@@ -98,6 +105,7 @@ def _rebuild_run_state(
         current_phase=_phase_from_events(events, status),
         latest_summary=latest_summary,
         active_subagent=active_subagent,
+        todos=todos,
         artifact_count=sum(1 for event in events if event.event_type == "artifact.created"),
         last_event_at=events[-1].timestamp,
         failure=_failure_from_events(events),
@@ -243,6 +251,19 @@ def _latest_active_subagent(events: list[PersistedEvent]) -> str | None:
             if isinstance(role, str) and role.strip():
                 return role.strip()
     return None
+
+
+def _latest_todos(events: list[PersistedEvent]) -> list[TodoItem]:
+    for event in reversed(events):
+        if event.event_type != "tool.called":
+            continue
+        if str(event.payload.get("tool", "")).strip() != "write_todos":
+            continue
+        arguments = event.payload.get("arguments")
+        if not isinstance(arguments, dict):
+            return []
+        return normalize_todos(arguments.get("todos"))
+    return []
 
 
 def _failure_from_events(events: list[PersistedEvent]) -> FailureInfo | None:

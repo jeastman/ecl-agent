@@ -440,6 +440,10 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         snapshot["current_phase"] = event_payload.get(
             "phase", snapshot.get("current_phase", "planning")
         )
+    elif event_type == "tool.called":
+        todos = _event_todos(event_payload)
+        if todos is not None:
+            snapshot["todos"] = todos
     elif event_type == "subagent.started":
         snapshot["active_subagent"] = event_payload.get("subagentId")
         snapshot["latest_summary"] = event_payload.get(
@@ -645,6 +649,31 @@ def _event_severity(event_type: str) -> str:
     if event_type in {"artifact.created", "task.completed", "task.resumed", "task.user_input_received"}:
         return "success"
     return "info"
+
+
+def _event_todos(payload: dict[str, Any]) -> list[dict[str, str]] | None:
+    if str(payload.get("tool", "")).strip() != "write_todos":
+        return None
+    arguments = payload.get("arguments")
+    if not isinstance(arguments, dict):
+        return []
+    todos = arguments.get("todos")
+    if not isinstance(todos, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in todos:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        status = item.get("status")
+        if not isinstance(content, str) or not isinstance(status, str):
+            continue
+        stripped_content = content.strip()
+        stripped_status = status.strip().lower()
+        if not stripped_content or stripped_status not in {"pending", "in_progress", "completed"}:
+            continue
+        normalized.append({"content": stripped_content, "status": stripped_status})
+    return normalized
 
 
 def _extract_task_run_from_entries(entries: list[dict[str, Any]]) -> tuple[str | None, str | None]:

@@ -14,6 +14,7 @@ from ..store.selectors import (
     task_notifications,
     task_plan_view,
     task_subagent_activity,
+    task_todo_view,
     task_timeline,
     timeline_state_summary,
 )
@@ -29,6 +30,7 @@ from ..widgets.task_detail_panels import (
     NotificationStripWidget,
     SubagentActivityWidget,
     TaskHeaderWidget,
+    TodoPanelWidget,
 )
 
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
@@ -69,6 +71,7 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
                 LogViewWidget(id="task-detail-logs", classes="-hidden"),
                 Vertical(
                     PlanViewWidget(id="task-detail-plan"),
+                    TodoPanelWidget(id="task-detail-todos"),
                     SubagentActivityWidget(id="task-detail-subagents"),
                     ArtifactPanelWidget(id="task-detail-artifacts"),
                     NotificationStripWidget(id="task-detail-notifications"),
@@ -95,6 +98,7 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
             visible=state.task_detail_show_logs,
         )
         self.query_one(PlanViewWidget).update_plan(task_plan_view(state))
+        self.query_one(TodoPanelWidget).update_todos(task_todo_view(state))
         self.query_one(SubagentActivityWidget).update_subagents(task_subagent_activity(state))
         self.query_one(ArtifactPanelWidget).update_artifacts(task_artifact_panel(state))
         self.query_one(NotificationStripWidget).update_notifications(task_notifications(state))

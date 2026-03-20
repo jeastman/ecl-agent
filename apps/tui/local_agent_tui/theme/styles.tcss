@@ -200,6 +200,7 @@ Screen {
 #task-detail-header,
 #task-detail-timeline,
 #task-detail-plan,
+#task-detail-todos,
 #task-detail-subagents,
 #task-detail-artifacts,
 #task-detail-notifications,
@@ -287,6 +288,7 @@ Screen {
 }
 
 #task-detail-plan,
+#task-detail-todos,
 #task-detail-subagents,
 #task-detail-artifacts,
 #task-detail-notifications {

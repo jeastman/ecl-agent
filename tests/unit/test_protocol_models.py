@@ -42,9 +42,15 @@ from packages.protocol.local_agent_protocol.models import (
     TaskReplyParams,
     TaskResumeParams,
     TaskSnapshot,
+    TodoItem,
     utc_now_timestamp,
 )
-from packages.task_model.local_agent_task_model.models import EventType, FailureInfo, TaskStatus
+from packages.task_model.local_agent_task_model.models import (
+    EventType,
+    FailureInfo,
+    TaskStatus,
+    TodoStatus,
+)
 
 
 class ProtocolModelTests(unittest.TestCase):
@@ -82,6 +88,7 @@ class ProtocolModelTests(unittest.TestCase):
             objective="Inspect the repo",
             created_at=utc_now_timestamp(),
             updated_at=utc_now_timestamp(),
+            todos=[TodoItem(content="Inspect repo", status=TodoStatus.IN_PROGRESS)],
             awaiting_approval=False,
             is_resumable=False,
             recoverable_rejection_count=1,
@@ -95,6 +102,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["status"], "executing")
         self.assertNotIn("failure", payload)
         self.assertEqual(payload["links"]["events"], METHOD_TASK_LOGS_STREAM)
+        self.assertEqual(payload["todos"][0]["status"], "in_progress")
         self.assertFalse(payload["awaiting_approval"])
         self.assertFalse(payload["is_resumable"])
         self.assertEqual(payload["recoverable_rejection_count"], 1)
@@ -225,6 +233,7 @@ class ProtocolModelTests(unittest.TestCase):
                     objective="Inspect repo",
                     created_at=utc_now_timestamp(),
                     updated_at=utc_now_timestamp(),
+                    todos=[TodoItem(content="Inspect repo", status=TodoStatus.PENDING)],
                 )
             ],
             count=1,
@@ -232,6 +241,7 @@ class ProtocolModelTests(unittest.TestCase):
         payload = result.to_dict()
         self.assertEqual(payload["count"], 1)
         self.assertEqual(payload["tasks"][0]["task_id"], "task_1")
+        self.assertEqual(payload["tasks"][0]["todos"][0]["status"], "pending")
 
     def test_task_diagnostics_list_params_and_result_validate(self) -> None:
         params = TaskDiagnosticsListParams.from_dict({"task_id": "task_1", "run_id": "run_1"})

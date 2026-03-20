@@ -122,6 +122,11 @@ class _FakeProtocolClient:
                 "created_at": "2026-03-12T00:00:00Z",
                 "updated_at": "2026-03-12T00:00:00Z",
                 "latest_summary": "Scanning repository",
+                "todos": [
+                    {"content": "Inspect files", "status": "completed"},
+                    {"content": "Write summary", "status": "in_progress"},
+                    {"content": "Send reply", "status": "pending"},
+                ],
             },
             "task_2": {
                 "task_id": "task_2",
@@ -1412,7 +1417,12 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_opens_artifact_browser_and_markdown_viewer(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import selected_task_header, task_artifact_panel, task_plan_view
+        from apps.tui.local_agent_tui.store.selectors import (
+            task_artifact_panel,
+            task_plan_view,
+            task_todo_view,
+        )
+        from apps.tui.local_agent_tui.widgets.event_timeline import EventTimelineWidget
         from apps.tui.local_agent_tui.widgets.task_detail_panels import TaskHeaderWidget
         from apps.tui.local_agent_tui.widgets.markdown_viewer import MarkdownViewerWidget
         from textual.widgets import Static
@@ -1433,13 +1443,15 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
-                header = app.screen.query_one("#task-detail-header", TaskHeaderWidget)
-                timeline = app.screen.query_one("#task-detail-timeline", Static)
-                plan = app.screen.query_one("#task-detail-plan", Static)
-                artifacts = app.screen.query_one("#task-detail-artifacts", Static)
+                app.screen.query_one("#task-detail-header", TaskHeaderWidget)
+                app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
+                timeline_body = app.screen.query_one("#task-detail-timeline-body", Static)
+                todos = app.screen.query_one("#task-detail-todos", Static)
                 self.assertIn("task_1", str(app.screen.query_one("#task-detail-header-body", Static).visual))
-                self.assertIn("No events yet", str(timeline.visual))
+                self.assertIn("No events yet", str(timeline_body.visual))
                 self.assertIn("Scanning repository", task_plan_view(app._store.snapshot()).current_step)  # type: ignore[attr-defined]
+                self.assertEqual(task_todo_view(app._store.snapshot()).in_progress_count, 1)  # type: ignore[attr-defined]
+                self.assertIn("Write summary", str(todos.visual))
                 self.assertIn(
                     "report.md",
                     [item.display_name for item in task_artifact_panel(app._store.snapshot())],  # type: ignore[attr-defined]
@@ -1483,7 +1495,12 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_task_detail_side_panels_update_for_streamed_subagent_event(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.store.selectors import selected_task_header, task_plan_view, task_subagent_activity
+        from apps.tui.local_agent_tui.store.selectors import (
+            selected_task_header,
+            task_plan_view,
+            task_subagent_activity,
+            task_todo_view,
+        )
         from textual.widgets import Static
 
         with (
@@ -1503,11 +1520,13 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
 
                 plan = app.screen.query_one("#task-detail-plan", Static)
+                todos = app.screen.query_one("#task-detail-todos", Static)
                 subagents = app.screen.query_one("#task-detail-subagents", Static)
                 header = app.screen.query_one("#task-detail-header-body", Static)
 
                 self.assertIn("Scanning repository", task_plan_view(app._store.snapshot()).current_step)  # type: ignore[attr-defined]
                 self.assertEqual(task_subagent_activity(app._store.snapshot()), [])  # type: ignore[attr-defined]
+                self.assertIn("Write summary", str(todos.visual))
 
                 app._dispatch_and_render(  # type: ignore[attr-defined]
                     {
@@ -1534,6 +1553,36 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertIn("researcher", [item.subagent_id for item in subagent_items])
                 self.assertIn("RUNNING", [item.status for item in subagent_items])
                 self.assertIn("Inspect docs", [item.latest_summary for item in subagent_items])
+
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "tool.called",
+                                "timestamp": "2026-03-12T00:00:05Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {
+                                    "tool": "write_todos",
+                                    "summary": "Updated todo list (3 items; 1 in progress, 1 pending, 1 completed)",
+                                    "arguments": {
+                                        "todos": [
+                                            {"content": "Inspect files", "status": "completed"},
+                                            {"content": "Inspect docs", "status": "in_progress"},
+                                            {"content": "Write summary", "status": "pending"},
+                                        ]
+                                    },
+                                },
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+
+                todo_view = task_todo_view(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertEqual([item.content for item in todo_view.items][1], "Inspect docs")
+                self.assertIn("Inspect docs", str(todos.visual))
 
     async def test_task_detail_header_stays_compact_with_long_objective(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1864,9 +1913,11 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await pilot.pause()
                 plan = app.screen.query_one("#task-detail-plan", Static)
+                todos = app.screen.query_one("#task-detail-todos", Static)
                 subagents = app.screen.query_one("#task-detail-subagents", Static)
                 notifications = app.screen.query_one("#task-detail-notifications", Static)
                 self.assertGreaterEqual(plan.region.height, 7)
+                self.assertGreaterEqual(todos.region.height, 7)
                 self.assertGreaterEqual(subagents.region.height, 7)
                 self.assertIn("Inspect docs", task_plan_view(app._store.snapshot()).current_step)  # type: ignore[attr-defined]
                 self.assertIn(

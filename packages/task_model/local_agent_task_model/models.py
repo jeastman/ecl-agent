@@ -51,6 +51,21 @@ class TaskStatus(StrEnum):
     FAILED = "failed"
 
 
+class TodoStatus(StrEnum):
+    PENDING = "pending"
+    IN_PROGRESS = "in_progress"
+    COMPLETED = "completed"
+
+
+@dataclass(slots=True)
+class TodoItem:
+    content: str
+    status: TodoStatus
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"content": self.content, "status": self.status.value}
+
+
 @dataclass(slots=True)
 class FailureInfo:
     message: str
@@ -119,6 +134,7 @@ class RunState:
     pending_approval_id: str | None = None
     is_resumable: bool = False
     pause_reason: str | None = None
+    todos: list[TodoItem] = field(default_factory=list)
     checkpoint_thread_id: str | None = None
     latest_checkpoint_id: str | None = None
     is_compacted: bool = False
@@ -134,3 +150,25 @@ class RunState:
         if self.last_recoverable_rejection is not None:
             payload["last_recoverable_rejection"] = self.last_recoverable_rejection.to_dict()
         return payload
+
+
+def normalize_todos(value: Any) -> list[TodoItem]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[TodoItem] = []
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        status = item.get("status")
+        if not isinstance(content, str) or not isinstance(status, str):
+            continue
+        stripped_content = content.strip()
+        stripped_status = status.strip().lower()
+        if not stripped_content:
+            continue
+        try:
+            normalized.append(TodoItem(content=stripped_content, status=TodoStatus(stripped_status)))
+        except ValueError:
+            continue
+    return normalized

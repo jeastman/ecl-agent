@@ -143,6 +143,23 @@ class PlanViewModel:
 
 
 @dataclass(frozen=True, slots=True)
+class TodoItemViewModel:
+    content: str
+    status: str
+    status_label: str
+    status_icon: str
+    is_active: bool
+
+
+@dataclass(frozen=True, slots=True)
+class TodoPanelViewModel:
+    items: list[TodoItemViewModel]
+    pending_count: int
+    in_progress_count: int
+    completed_count: int
+
+
+@dataclass(frozen=True, slots=True)
 class SubagentActivityItemViewModel:
     subagent_id: str
     status: str
@@ -679,6 +696,33 @@ def task_plan_view(state: AppState) -> PlanViewModel:
         current_phase=str(task.get("current_phase") or "unknown"),
         current_step=current_step,
         recent_updates=recent_updates,
+    )
+
+
+def task_todo_view(state: AppState) -> TodoPanelViewModel:
+    task = _selected_task(state)
+    if task is None:
+        return TodoPanelViewModel(
+            items=[],
+            pending_count=0,
+            in_progress_count=0,
+            completed_count=0,
+        )
+    todos = _task_todos(task)
+    return TodoPanelViewModel(
+        items=[
+            TodoItemViewModel(
+                content=todo["content"],
+                status=todo["status"],
+                status_label=_todo_status_label(todo["status"]),
+                status_icon=_todo_status_icon(todo["status"]),
+                is_active=todo["status"] == "in_progress",
+            )
+            for todo in todos
+        ],
+        pending_count=sum(1 for todo in todos if todo["status"] == "pending"),
+        in_progress_count=sum(1 for todo in todos if todo["status"] == "in_progress"),
+        completed_count=sum(1 for todo in todos if todo["status"] == "completed"),
     )
 
 
@@ -2563,6 +2607,42 @@ def _sorted_task_snapshots(state: AppState) -> list[dict[str, Any]]:
         reverse=True,
     )
     return tasks
+
+
+def _task_todos(task: dict[str, Any]) -> list[dict[str, str]]:
+    todos = task.get("todos")
+    if not isinstance(todos, list):
+        return []
+    normalized: list[dict[str, str]] = []
+    for item in todos:
+        if not isinstance(item, dict):
+            continue
+        content = item.get("content")
+        status = item.get("status")
+        if not isinstance(content, str) or not isinstance(status, str):
+            continue
+        stripped_content = content.strip()
+        stripped_status = status.strip().lower()
+        if not stripped_content or stripped_status not in {"pending", "in_progress", "completed"}:
+            continue
+        normalized.append({"content": stripped_content, "status": stripped_status})
+    return normalized
+
+
+def _todo_status_icon(status: str) -> str:
+    return {
+        "pending": "○",
+        "in_progress": "◉",
+        "completed": "✓",
+    }.get(status, "•")
+
+
+def _todo_status_label(status: str) -> str:
+    return {
+        "pending": "PENDING",
+        "in_progress": "IN PROGRESS",
+        "completed": "COMPLETED",
+    }.get(status, status.upper())
 
 
 def _int_value(value: object) -> int:

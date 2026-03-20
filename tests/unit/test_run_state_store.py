@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 
 from apps.runtime.local_agent_runtime.run_state_store import InMemoryRunStateStore
-from packages.task_model.local_agent_task_model.models import RunState, TaskStatus
+from packages.task_model.local_agent_task_model.models import RunState, TaskStatus, TodoItem, TodoStatus
 
 
 class RunStateStoreTests(unittest.TestCase):
@@ -18,6 +18,7 @@ class RunStateStoreTests(unittest.TestCase):
             updated_at="2026-03-10T00:00:00Z",
             accepted_at="2026-03-10T00:00:00Z",
             workspace_roots=["."],
+            todos=[TodoItem(content="Inspect repo", status=TodoStatus.PENDING)],
         )
         store.create(state)
         updated = store.update(
@@ -31,6 +32,7 @@ class RunStateStoreTests(unittest.TestCase):
         self.assertEqual(updated.status, TaskStatus.COMPLETED)
         self.assertEqual(store.get("task_1", "run_1").current_phase, "completed")
         self.assertEqual(store.get("task_1", "run_1").active_subagent, "primary")
+        self.assertEqual(store.get("task_1", "run_1").todos[0].content, "Inspect repo")
 
     def test_missing_task_raises(self) -> None:
         store = InMemoryRunStateStore()

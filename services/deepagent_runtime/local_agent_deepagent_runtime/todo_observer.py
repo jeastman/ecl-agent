@@ -10,6 +10,7 @@ from langchain.agents.middleware.types import (
 )
 from langchain_core.messages import AIMessage
 from langgraph.types import Command
+from packages.task_model.local_agent_task_model.models import normalize_todos
 
 EventCallback = Callable[[str, dict[str, Any]], None]
 
@@ -61,7 +62,7 @@ class TodoStateObserverMiddleware(AgentMiddleware[Any, Any, Any]):
 def _todos_from_state(state: Any) -> list[dict[str, str]]:
     if not isinstance(state, dict):
         return []
-    return _normalize_todos(state.get("todos"))
+    return [todo.to_dict() for todo in normalize_todos(state.get("todos"))]
 
 
 def _todos_from_command(result: Any) -> list[dict[str, str]] | None:
@@ -70,26 +71,7 @@ def _todos_from_command(result: Any) -> list[dict[str, str]] | None:
     update = getattr(result, "update", None)
     if not isinstance(update, dict) or "todos" not in update:
         return None
-    return _normalize_todos(update.get("todos"))
-
-
-def _normalize_todos(value: Any) -> list[dict[str, str]]:
-    if not isinstance(value, list):
-        return []
-    normalized: list[dict[str, str]] = []
-    for item in value:
-        if not isinstance(item, dict):
-            continue
-        content = item.get("content")
-        status = item.get("status")
-        if not isinstance(content, str) or not isinstance(status, str):
-            continue
-        stripped_content = content.strip()
-        stripped_status = status.strip()
-        if not stripped_content or not stripped_status:
-            continue
-        normalized.append({"content": stripped_content, "status": stripped_status})
-    return normalized
+    return [todo.to_dict() for todo in normalize_todos(update.get("todos"))]
 
 
 def _todo_counts(todos: list[dict[str, str]]) -> dict[str, int]:

@@ -34,6 +34,8 @@ from packages.task_model.local_agent_task_model.models import (
     RecoverableToolRejectionThresholdExceeded,
     RunState,
     TaskStatus,
+    TodoItem,
+    normalize_todos,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.checkpoint_adapter import (
     CheckpointController,
@@ -556,6 +558,7 @@ class TaskRunner:
             workspace_roots=state.workspace_roots or None,
             current_phase=state.current_phase,
             latest_summary=state.latest_summary,
+            todos=list(state.todos) or None,
             awaiting_approval=state.awaiting_approval,
             pending_approval_id=state.pending_approval_id,
             is_resumable=state.is_resumable,
@@ -1151,6 +1154,9 @@ class TaskRunner:
         summary = payload.get("summary")
         if isinstance(summary, str) and summary.strip():
             updates["latest_summary"] = summary.strip()
+        todos = _todos_from_event_payload(payload)
+        if todos is not None:
+            updates["todos"] = todos
         if event_type == EventType.CHECKPOINT_SAVED.value:
             checkpoint_id = payload.get("checkpoint_id")
             thread_id = payload.get("thread_id")
@@ -2085,6 +2091,15 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
             component="sandbox-tool-bindings",
         )
     return EventSource(kind=EventSourceKind.RUNTIME, component="langchain-deepagent-harness")
+
+
+def _todos_from_event_payload(payload: dict[str, Any]) -> list[TodoItem] | None:
+    if str(payload.get("tool", "")).strip() != "write_todos":
+        return None
+    arguments = payload.get("arguments")
+    if not isinstance(arguments, dict) or "todos" not in arguments:
+        return []
+    return normalize_todos(arguments.get("todos"))
 
 
 def _run_metrics_record(
