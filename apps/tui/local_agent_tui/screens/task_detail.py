@@ -114,14 +114,17 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         if store is None:
             return
         state = store.snapshot()
-        if not state.task_detail_show_logs and getattr(event, "key", "") in {"G", "shift+g"}:
-            self.query_one(EventTimelineWidget).jump_to_latest()
-            event.stop()
-            return
+        key = getattr(event, "key", "")
         if not state.task_detail_show_logs:
+            timeline_view = self.query_one(EventTimelineWidget)
+            if key == "g":
+                timeline_view.scroll_to_home()
+                event.stop()
+            elif key in {"G", "shift+g"}:
+                timeline_view.jump_to_latest()
+                event.stop()
             return
         log_view = self.query_one(LogViewWidget)
-        key = getattr(event, "key", "")
         if key == "j":
             log_view.scroll_line(1)
             event.stop()

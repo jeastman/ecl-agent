@@ -1609,7 +1609,13 @@ def footer_hints(state: AppState) -> _RichText:
             "Q Quit",
         ]
         if state.task_detail_show_logs:
-            hints.insert(0, "Up/Down Scroll Logs")
+            hints.insert(0, "J/K Scroll Logs")
+            hints.insert(1, "g Top")
+            hints.insert(2, "G Bottom")
+        else:
+            hints.insert(0, "J/K Scroll Timeline")
+            hints.insert(1, "g Top")
+            hints.insert(2, "G Latest")
         if action_bar.resume_enabled:
             hints.insert(0, "R Resume")
         return _hints_to_text(hints)
@@ -2432,7 +2438,10 @@ def _actionable_status_hint(task: dict[str, Any] | None) -> str:
     if status == "failed":
         return "Failed. Press D to view diagnostics."
     if status in {"executing", "running", "planning", "accepted"}:
-        return "Running. Press L to toggle logs or / to search the timeline."
+        return (
+            "Running. Press J/K to scroll the timeline, G for latest, "
+            "or L to toggle logs."
+        )
     return "Commands: approvals, artifacts, diagnostics, memory, config, help."
 
 

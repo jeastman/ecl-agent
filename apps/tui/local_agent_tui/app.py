@@ -46,6 +46,7 @@ from .store.selectors import (
     task_action_bar,
     timeline_filter_options,
 )
+from .widgets.event_timeline import EventTimelineWidget
 from .widgets.input_box import InputBoxWidget
 from .widgets.log_view import LogViewWidget
 from .widgets.toast import ToastItem, ToastMessage, ToastRack
@@ -566,8 +567,11 @@ class AgentTUI(App):  # type: ignore[misc]
         if state.active_screen == "approvals":
             self._move_approval_selection(delta)
             return
-        if state.active_screen == "task_detail" and state.task_detail_show_logs:
-            self._scroll_task_detail_logs(delta)
+        if state.active_screen == "task_detail":
+            if state.task_detail_show_logs:
+                self._scroll_task_detail_logs(delta)
+            else:
+                self._scroll_task_detail_timeline(delta)
             return
         if state.active_screen == "dashboard" and state.focused_pane == "summary":
             self._scroll_dashboard_summary(delta)
@@ -621,6 +625,12 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         log_view = self.screen.query_one(LogViewWidget)
         log_view.scroll_line(delta)
+
+    def _scroll_task_detail_timeline(self, delta: int) -> None:
+        if self.screen.__class__.__name__ != "TaskDetailScreen":
+            return
+        timeline_view = self.screen.query_one(EventTimelineWidget)
+        timeline_view.scroll_line(delta)
 
     def action_open_task(self) -> None:
         state = self._store.snapshot()

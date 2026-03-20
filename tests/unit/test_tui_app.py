@@ -1642,7 +1642,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     )
                 await pilot.pause()
                 timeline = app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
-                timeline.scroll_to(y=0, animate=False, immediate=True)
+                await pilot.press("g")
                 await pilot.pause()
 
                 app._dispatch_and_render(  # type: ignore[attr-defined]
@@ -1664,6 +1664,167 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertTrue(timeline.is_showing_new_events_indicator())
                 await pilot.press("shift+g")
                 await pilot.pause()
+                self.assertFalse(timeline.is_showing_new_events_indicator())
+                self.assertTrue(timeline.is_at_bottom())
+
+    async def test_task_detail_timeline_scrolls_and_g_returns_to_top(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.event_timeline import EventTimelineWidget
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+
+                for index in range(60):
+                    app._dispatch_and_render(  # type: ignore[attr-defined]
+                        {
+                            "kind": "event",
+                            "payload": {
+                                "event": {
+                                    "event_type": "tool.called",
+                                    "timestamp": f"2026-03-12T00:00:{index:02d}Z",
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "payload": {"tool": f"tool_{index}"},
+                                }
+                            },
+                        }
+                    )
+                await pilot.pause()
+
+                timeline = app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
+                await pilot.press("g")
+                await pilot.pause()
+                await pilot.press("down")
+                await pilot.pause()
+                self.assertGreaterEqual(timeline.scroll_y, 0.0)
+                await pilot.press("g")
+                await pilot.pause()
+                self.assertEqual(timeline.scroll_y, 0.0)
+                self.assertFalse(timeline.is_at_bottom())
+
+    async def test_task_detail_timeline_auto_scrolls_when_new_event_arrives_at_bottom(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.event_timeline import EventTimelineWidget
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+
+                for index in range(20):
+                    app._dispatch_and_render(  # type: ignore[attr-defined]
+                        {
+                            "kind": "event",
+                            "payload": {
+                                "event": {
+                                    "event_type": "tool.called",
+                                    "timestamp": f"2026-03-12T00:00:{index:02d}Z",
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "payload": {"tool": f"tool_{index}"},
+                                }
+                            },
+                        }
+                    )
+                await pilot.pause()
+
+                timeline = app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
+                await pilot.press("shift+g")
+                await pilot.pause()
+                baseline_scroll = timeline.scroll_y
+
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "event",
+                        "payload": {
+                            "event": {
+                                "event_type": "tool.called",
+                                "timestamp": "2026-03-12T00:01:00Z",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                                "payload": {"tool": "tool_latest"},
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+
+                self.assertGreaterEqual(timeline.scroll_y, baseline_scroll)
+                self.assertFalse(timeline.is_showing_new_events_indicator())
+                self.assertTrue(timeline.is_at_bottom())
+
+    async def test_task_detail_timeline_filter_update_does_not_show_new_events_indicator(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.event_timeline import EventTimelineWidget
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 24)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+
+                for index in range(20):
+                    app._dispatch_and_render(  # type: ignore[attr-defined]
+                        {
+                            "kind": "event",
+                            "payload": {
+                                "event": {
+                                    "event_type": "tool.called" if index % 2 == 0 else "approval.requested",
+                                    "timestamp": f"2026-03-12T00:00:{index:02d}Z",
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "payload": (
+                                        {"tool": f"tool_{index}"}
+                                        if index % 2 == 0
+                                        else {
+                                            "approval": {
+                                                "approval_id": f"approval_{index}",
+                                                "task_id": "task_1",
+                                                "run_id": "run_1",
+                                                "status": "pending",
+                                            }
+                                        }
+                                    ),
+                                }
+                            },
+                        }
+                    )
+                await pilot.pause()
+
+                timeline = app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
+                await pilot.press("g")
+                await pilot.pause()
+                app._dispatch_and_render({"kind": "ui", "task_timeline_filter": "tools"})  # type: ignore[attr-defined]
+                await pilot.pause()
+
                 self.assertFalse(timeline.is_showing_new_events_indicator())
 
     async def test_task_detail_side_panels_keep_visible_content_on_tighter_height(self) -> None:

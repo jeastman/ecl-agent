@@ -13,22 +13,35 @@ from ..theme.empty_states import render_empty_state
 _TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
 
 if TYPE_CHECKING:
+    from textual.app import ComposeResult
+    from textual.containers import VerticalScroll
     from textual.widgets import Static
 else:  # pragma: no cover
     try:
+        from textual.app import ComposeResult
+        from textual.containers import VerticalScroll
         from textual.widgets import Static
     except ModuleNotFoundError as exc:
+        ComposeResult = cast(Any, object)
+        VerticalScroll = cast(Any, object)
         Static = cast(Any, object)
         _TEXTUAL_IMPORT_ERROR = exc
     else:
         _TEXTUAL_IMPORT_ERROR = None
 
 
-class EventTimelineWidget(Static):  # type: ignore[misc]
+class EventTimelineWidget(VerticalScroll):  # type: ignore[misc]
+    can_focus = True
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._last_event_signature: tuple[str, int] | None = None
+        self._last_view_state: tuple[str, str] | None = None
         self._show_new_events_indicator = False
+        self._is_tailing = True
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="task-detail-timeline-body")
 
     def update_timeline(self, model: TimelineGroupViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
@@ -37,36 +50,68 @@ class EventTimelineWidget(Static):  # type: ignore[misc]
         subtitle = f"Filter: {escape(model.filter_label)}"
         if model.search_query:
             subtitle = f"{subtitle} | Search: {escape(model.search_query)}"
-        is_at_bottom = self._is_at_bottom()
+        is_at_bottom = self.is_at_bottom()
+        if is_at_bottom:
+            self._is_tailing = True
         signature = _timeline_signature(model)
-        if (
-            self._last_event_signature is not None
-            and signature != self._last_event_signature
-            and not is_at_bottom
-        ):
+        view_state = (model.filter_label, model.search_query)
+        body = self.query_one("#task-detail-timeline-body", Static)
+        if view_state != self._last_view_state:
+            self._show_new_events_indicator = False
+        elif self._is_tailing:
+            self._show_new_events_indicator = False
+        elif self._last_event_signature is not None and signature != self._last_event_signature:
             self._show_new_events_indicator = True
         elif is_at_bottom:
             self._show_new_events_indicator = False
         self._last_event_signature = signature
+        self._last_view_state = view_state
         if self._show_new_events_indicator:
             subtitle = f"{subtitle} | \N{DOWNWARDS ARROW} New events"
         self.border_subtitle = subtitle
         if not model.events:
-            self.update(render_empty_state("events"))
+            body.update(render_empty_state("events"))
+            self._show_new_events_indicator = False
+            self._is_tailing = True
+            self.scroll_to_home()
             return
-        self.update(Group(*[_render_event_card(event) for event in model.events]))
-        if is_at_bottom:
-            self.jump_to_latest()
+        body.update(Group(*[_render_event_card(event) for event in model.events]))
+        if self._is_tailing:
+            self._schedule_jump_to_latest()
+
+    def scroll_line(self, delta: int) -> None:
+        next_y = max(0.0, min(self.max_scroll_y, self.scroll_y + delta))
+        self.scroll_to(y=next_y, animate=False, immediate=True)
+        if delta < 0:
+            self._is_tailing = False
+        if self.is_at_bottom():
+            self._is_tailing = True
+            self._show_new_events_indicator = False
+
+    def scroll_to_home(self) -> None:
+        self._is_tailing = False
+        self.scroll_home(animate=False)
+
+    def scroll_to_end(self) -> None:
+        self._is_tailing = True
+        self.scroll_end(animate=False, immediate=True)
 
     def jump_to_latest(self) -> None:
+        self._is_tailing = True
         self._show_new_events_indicator = False
-        self.scroll_end(animate=False, immediate=True)
+        self._schedule_jump_to_latest()
 
     def is_showing_new_events_indicator(self) -> bool:
         return self._show_new_events_indicator
 
-    def _is_at_bottom(self) -> bool:
-        return self.max_scroll_y <= 0 or self.scroll_y >= max(self.max_scroll_y - 1, 0)
+    def is_at_bottom(self) -> bool:
+        return self._is_tailing or self.max_scroll_y <= 0 or self.scroll_y >= max(self.max_scroll_y - 1, 0)
+
+    def _schedule_jump_to_latest(self) -> None:
+        self.call_after_refresh(self._scroll_to_latest_after_refresh)
+
+    def _scroll_to_latest_after_refresh(self) -> None:
+        self.scroll_to_end()
 
 
 def _timeline_signature(model: TimelineGroupViewModel) -> tuple[str, int]:
