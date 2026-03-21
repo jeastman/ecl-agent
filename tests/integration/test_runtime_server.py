@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -1824,6 +1825,85 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(event_types.count("approval.requested"), 1)
             self.assertIn("task.resumed", event_types)
             self.assertIn("task.completed", event_types)
+
+    def test_runtime_restart_recovers_completed_run_when_terminal_event_is_missing(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            (workspace_root / "README.md").write_text("# Demo\n", encoding="utf-8")
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            identity = load_identity_bundle(config.identity_path)
+            runtime_root = str(Path(temp_dir) / "runtime")
+            correlation_id = new_correlation_id()
+
+            first_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_fake_langchain_harness(),
+                runtime_root=runtime_root,
+            )
+            create_request = JsonRpcRequest(
+                method=METHOD_TASK_CREATE,
+                params=TaskCreateParams(
+                    task=TaskCreateRequest(
+                        objective="Create a repository summary",
+                        workspace_roots=["/workspace"],
+                    )
+                ).to_dict(),
+                id="1",
+                correlation_id=correlation_id,
+            )
+            create_response, _ = first_server.handle_line(json.dumps(create_request.to_dict()))
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+
+            database_path = Path(runtime_root) / "metadata" / "runtime.db"
+            with sqlite3.connect(database_path) as connection:
+                connection.execute(
+                    """
+                    DELETE FROM persisted_events
+                    WHERE task_id = ? AND run_id = ? AND event_type = 'task.completed'
+                    """,
+                    (task_id, run_id),
+                )
+                connection.commit()
+
+            recovered_server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_fake_langchain_harness(),
+                runtime_root=runtime_root,
+            )
+            recovered_status, _ = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="2",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            recovered_task = recovered_status.to_dict()["result"]["task"]
+            self.assertEqual(recovered_task["status"], "completed")
+            self.assertFalse(recovered_task["is_resumable"])
+            self.assertFalse(recovered_task["awaiting_approval"])
+
+            logs_response, stream_events = recovered_server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                        id="3",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertNotIn("recovery.discovered", event_types)
 
 
 def _fake_langchain_harness() -> LangChainDeepAgentHarness:

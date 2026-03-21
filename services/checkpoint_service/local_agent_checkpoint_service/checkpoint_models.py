@@ -23,6 +23,7 @@ class ResumeHandle:
     run_id: str
     thread_id: str
     latest_checkpoint_id: str | None = None
+    latest_checkpoint_reason: str | None = None
 
     def to_dict(self) -> dict[str, object]:
         return asdict(self)

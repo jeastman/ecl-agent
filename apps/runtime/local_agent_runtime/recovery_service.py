@@ -150,16 +150,7 @@ def _load_resume_handle(
     task_id: str,
     run_id: str,
 ) -> ResumeHandle | None:
-    try:
-        controller = checkpoint_adapter.resume_run(task_id, run_id)
-    except ValueError:
-        return None
-    return ResumeHandle(
-        task_id=task_id,
-        run_id=run_id,
-        thread_id=controller.thread_id,
-        latest_checkpoint_id=controller.latest_checkpoint_id,
-    )
+    return checkpoint_adapter.get_resume_handle(task_id, run_id)
 
 
 def _status_from_events(
@@ -177,6 +168,11 @@ def _status_from_events(
         return TaskStatus.PAUSED
     if latest_type == "task.resumed":
         return TaskStatus.EXECUTING
+    if (
+        resume_handle is not None
+        and resume_handle.latest_checkpoint_reason == "run_completed"
+    ):
+        return TaskStatus.COMPLETED
     if resume_handle is not None and resume_handle.latest_checkpoint_id is not None:
         return TaskStatus.PAUSED
     return TaskStatus.EXECUTING

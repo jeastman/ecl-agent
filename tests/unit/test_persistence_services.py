@@ -131,6 +131,7 @@ class ThreadRegistryTests(unittest.TestCase):
             assert handle is not None
             self.assertEqual(handle.thread_id, "thread_b")
             self.assertEqual(handle.latest_checkpoint_id, "ckpt_1")
+            self.assertIsNone(handle.latest_checkpoint_reason)
 
     def test_checkpoint_store_create_thread_and_empty_resume_handle(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
@@ -146,6 +147,18 @@ class ThreadRegistryTests(unittest.TestCase):
             assert handle is not None
             self.assertEqual(handle.thread_id, thread_id)
             self.assertIsNone(handle.latest_checkpoint_id)
+            self.assertIsNone(handle.latest_checkpoint_reason)
+
+    def test_checkpoint_store_persists_thread_state(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            database_path = str(Path(temp_dir) / "runtime.db")
+            registry = SQLiteThreadRegistry(database_path)
+            store = SQLiteCheckpointStore(database_path, thread_registry=registry)
+
+            store.save_thread_state("thread_1", b"checkpoint-state")
+
+            self.assertEqual(store.load_thread_state("thread_1"), b"checkpoint-state")
+            self.assertIsNone(store.load_thread_state("thread_missing"))
 
 
 class MemoryStoreTests(unittest.TestCase):

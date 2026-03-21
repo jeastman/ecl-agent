@@ -24,6 +24,10 @@ class CheckpointStore(Protocol):
 
     def bind_runtime_thread(self, task_id: str, run_id: str, thread_id: str) -> None: ...
 
+    def save_thread_state(self, thread_id: str, state: bytes) -> None: ...
+
+    def load_thread_state(self, thread_id: str) -> bytes | None: ...
+
 
 class SQLiteCheckpointStore:
     def __init__(self, database_path: str, *, thread_registry: ThreadRegistry) -> None:
@@ -93,16 +97,44 @@ class SQLiteCheckpointStore:
         if thread_id is None:
             return None
         checkpoints = self.list_checkpoints(task_id, run_id)
-        latest_checkpoint_id = checkpoints[-1].checkpoint_id if checkpoints else None
+        latest_checkpoint = checkpoints[-1] if checkpoints else None
         return ResumeHandle(
             task_id=task_id,
             run_id=run_id,
             thread_id=thread_id,
-            latest_checkpoint_id=latest_checkpoint_id,
+            latest_checkpoint_id=latest_checkpoint.checkpoint_id if latest_checkpoint else None,
+            latest_checkpoint_reason=latest_checkpoint.reason if latest_checkpoint else None,
         )
 
     def bind_runtime_thread(self, task_id: str, run_id: str, thread_id: str) -> None:
         self._thread_registry.bind_thread(task_id, run_id, thread_id)
+
+    def save_thread_state(self, thread_id: str, state: bytes) -> None:
+        with sqlite3.connect(self._database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO checkpoint_thread_state(thread_id, state)
+                VALUES(?, ?)
+                ON CONFLICT(thread_id)
+                DO UPDATE SET state = excluded.state
+                """,
+                (thread_id, sqlite3.Binary(state)),
+            )
+            connection.commit()
+
+    def load_thread_state(self, thread_id: str) -> bytes | None:
+        with sqlite3.connect(self._database_path) as connection:
+            row = connection.execute(
+                """
+                SELECT state
+                FROM checkpoint_thread_state
+                WHERE thread_id = ?
+                """,
+                (thread_id,),
+            ).fetchone()
+        if row is None or row[0] is None:
+            return None
+        return bytes(row[0])
 
     def _ensure_schema(self) -> None:
         with sqlite3.connect(self._database_path) as connection:
@@ -116,6 +148,14 @@ class SQLiteCheckpointStore:
                     checkpoint_index INTEGER NOT NULL,
                     created_at TEXT NOT NULL,
                     reason TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS checkpoint_thread_state(
+                    thread_id TEXT PRIMARY KEY,
+                    state BLOB NOT NULL
                 )
                 """
             )
