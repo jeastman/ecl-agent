@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pickle
 from dataclasses import dataclass
+from threading import RLock
 from typing import Any, Callable, Protocol, cast
 from uuid import uuid4
 
@@ -168,6 +169,7 @@ class PersistentInMemorySaver(InMemorySaver):
     ) -> None:
         super().__init__(serde=serde)
         self._save_state = save_state
+        self._state_lock = RLock()
 
     def put(
         self,
@@ -176,9 +178,10 @@ class PersistentInMemorySaver(InMemorySaver):
         metadata: Any,
         new_versions: Any,
     ) -> dict[str, Any]:
-        result = super().put(config, checkpoint, metadata, new_versions)
-        self._persist()
-        return result
+        with self._state_lock:
+            result = super().put(config, checkpoint, metadata, new_versions)
+            self._persist_locked()
+            return result
 
     def put_writes(
         self,
@@ -187,8 +190,9 @@ class PersistentInMemorySaver(InMemorySaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        super().put_writes(config, writes, task_id, task_path)
-        self._persist()
+        with self._state_lock:
+            super().put_writes(config, writes, task_id, task_path)
+            self._persist_locked()
 
     async def aput(
         self,
@@ -197,9 +201,10 @@ class PersistentInMemorySaver(InMemorySaver):
         metadata: Any,
         new_versions: Any,
     ) -> dict[str, Any]:
-        result = await super().aput(config, checkpoint, metadata, new_versions)
-        self._persist()
-        return result
+        with self._state_lock:
+            result = super().put(config, checkpoint, metadata, new_versions)
+            self._persist_locked()
+            return result
 
     async def aput_writes(
         self,
@@ -208,19 +213,34 @@ class PersistentInMemorySaver(InMemorySaver):
         task_id: str,
         task_path: str = "",
     ) -> None:
-        await super().aput_writes(config, writes, task_id, task_path)
-        self._persist()
+        with self._state_lock:
+            super().put_writes(config, writes, task_id, task_path)
+            self._persist_locked()
+
+    def get_tuple(self, config: dict[str, Any]) -> Any:
+        with self._state_lock:
+            return super().get_tuple(config)
+
+    def delete_thread(self, thread_id: str) -> None:
+        with self._state_lock:
+            super().delete_thread(thread_id)
+            self._persist_locked()
 
     def load_persisted_state(self, payload: bytes) -> None:
         state = cast(dict[str, Any], pickle.loads(payload))
-        self.storage.clear()
-        self.storage.update(_restore_storage(state.get("storage", {})))
-        self.writes.clear()
-        self.writes.update(_restore_writes(state.get("writes", {})))
-        self.blobs.clear()
-        self.blobs.update(_restore_blobs(state.get("blobs", {})))
+        with self._state_lock:
+            self.storage.clear()
+            self.storage.update(_restore_storage(state.get("storage", {})))
+            self.writes.clear()
+            self.writes.update(_restore_writes(state.get("writes", {})))
+            self.blobs.clear()
+            self.blobs.update(_restore_blobs(state.get("blobs", {})))
 
     def _persist(self) -> None:
+        with self._state_lock:
+            self._persist_locked()
+
+    def _persist_locked(self) -> None:
         self._save_state(
             pickle.dumps(
                 {
