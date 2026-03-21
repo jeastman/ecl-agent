@@ -12,6 +12,8 @@ from apps.runtime.local_agent_runtime.subagents import ResolvedToolBinding, Skil
 from packages.config.local_agent_config.models import CompactionConfig, MCPConfig
 from packages.task_model.local_agent_task_model.models import (
     RecoverableToolRejectionThresholdExceeded,
+    RemoteMCPActionState,
+    RemoteMCPAuthorizationState,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strategy import (
     CompactionStrategyPort,
@@ -35,6 +37,13 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.mcp_provider impor
     MCPToolProvider,
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.tool_bindings import SandboxToolBindings
+from services.remote_mcp_auth_service import (
+    AuthorizationRequiredError,
+    RemoteMCPConnectionResolver,
+)
+from services.remote_mcp_auth_service.local_agent_remote_mcp_auth_service.models import (
+    RemoteMCPAuthorizationState as ProviderRemoteMCPAuthorizationState,
+)
 from services.web_service.local_agent_web_service.ports import WebFetchPort, WebSearchPort
 
 if TYPE_CHECKING:
@@ -94,6 +103,7 @@ class LangChainDeepAgentHarness:
         prompt_builder: PromptBuilder | None = None,
         model_factory: ModelFactory | None = None,
         agent_factory: AgentFactory | None = None,
+        remote_mcp_connection_resolver: RemoteMCPConnectionResolver | None = None,
     ) -> None:
         self._model_name = model_name
         self._model_provider = model_provider
@@ -105,6 +115,9 @@ class LangChainDeepAgentHarness:
         self._prompt_builder = prompt_builder or PromptBuilder()
         self._model_factory = model_factory or init_chat_model
         self._agent_factory = agent_factory or create_deep_agent
+        self._remote_mcp_connection_resolver = (
+            remote_mcp_connection_resolver or RemoteMCPConnectionResolver()
+        )
         self._subagent_compiler = SubagentCompiler(
             prompt_builder=self._prompt_builder,
             model_factory=self._model_factory,
@@ -213,6 +226,17 @@ class LangChainDeepAgentHarness:
                 error_message=exc.reason,
                 failure_code="policy_denied",
             )
+        except AuthorizationRequiredError as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary=exc.state.summary,
+                output_artifacts=[],
+                paused=True,
+                pause_reason="remote_mcp_authorization_required",
+                remote_mcp_authorizations=[
+                    _task_remote_mcp_state(exc.state),
+                ],
+            )
         except RecoverableToolRejectionThresholdExceeded as exc:
             return AgentExecutionResult(
                 success=False,
@@ -270,9 +294,11 @@ class LangChainDeepAgentHarness:
             config=self._mcp_config,
             task_id=request.task_id,
             run_id=request.run_id,
+            runtime_user_id=request.runtime_user_id,
             allowed_capabilities=request.allowed_capabilities,
             governed_operation=interrupt_bridge.authorize,
             on_event=callback,
+            connection_resolver=self._remote_mcp_connection_resolver,
         )
         mcp_provider.start()
         compiled_subagents = self._subagent_compiler.compile_subagents(
@@ -578,3 +604,23 @@ def _is_resumable_transient_execution_error(
         "too many requests",
     )
     return any(marker in message for marker in transient_markers)
+
+
+def _task_remote_mcp_state(
+    state: ProviderRemoteMCPAuthorizationState,
+) -> RemoteMCPAuthorizationState:
+    return RemoteMCPAuthorizationState(
+        server_name=state.server_name,
+        provider_id=state.provider_id,
+        status=state.status,
+        summary=state.summary,
+        actions=[
+            RemoteMCPActionState(
+                action_id=action.action_id,
+                method=action.method,
+                title=action.title,
+                params=dict(action.params),
+            )
+            for action in state.actions
+        ],
+    )

@@ -16,7 +16,7 @@ from typing import Any
 from apps.runtime.local_agent_runtime.bootstrap import create_runtime_server
 from apps.runtime.local_agent_runtime.task_runner import AgentExecutionResult
 from apps.runtime.local_agent_runtime.task_runner import StubAgentHarness
-from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
+from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig, OAuthProviderConfig
 from packages.config.local_agent_config.loader import load_runtime_config
 from packages.identity.local_agent_identity.loader import load_identity_bundle
 from packages.protocol.local_agent_protocol.models import (
@@ -1523,6 +1523,43 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertEqual(payload["effective_config"]["subagents"]["planner"]["skills"], [])
             self.assertEqual(payload["redactions"][0]["path"], "policy.api_token")
             self.assertIn(CONFIG_PATH, payload["config_sources"])
+
+    def test_config_get_redacts_oauth_provider_client_secret(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config = load_runtime_config(CONFIG_PATH)
+            config.mcp.oauth_providers["slack"] = OAuthProviderConfig(
+                provider_id="slack",
+                authorization_url="https://slack.com/oauth/v2/authorize",
+                token_url="https://slack.com/api/oauth.v2.access",
+                client_id="client-id",
+                client_secret="client-secret",
+                redirect_uri="https://runtime.example.com/callback",
+                scopes=("chat:write",),
+            )
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=StubAgentHarness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+                config_path=CONFIG_PATH,
+            )
+
+            response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_CONFIG_GET,
+                        params={},
+                        id="oauth-config",
+                        correlation_id=new_correlation_id(),
+                    ).to_dict()
+                )
+            )
+            payload = response.to_dict()["result"]
+            self.assertEqual(
+                payload["effective_config"]["mcp"]["oauth_providers"]["slack"]["client_secret"],
+                "***REDACTED***",
+            )
 
     def test_diagnostics_remain_available_after_restart(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:

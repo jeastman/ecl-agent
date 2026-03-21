@@ -29,6 +29,10 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strateg
 from services.sandbox_service.local_agent_sandbox_service.sandbox import (
     LocalExecutionSandboxFactory,
 )
+from services.remote_mcp_auth_service import (
+    RemoteMCPAuthService,
+    RemoteMCPConnectionResolver,
+)
 from services.subagent_registry.local_agent_subagent_registry.filesystem_subagent_registry import (
     FileSystemSubagentRegistry,
 )
@@ -93,6 +97,11 @@ def create_runtime_server(
         compaction_store=durable_services.conversation_compaction_store,
         strategy=compaction_strategy,
     )
+    remote_mcp_auth_service = RemoteMCPAuthService(
+        mcp_config=config.mcp,
+        grant_store=durable_services.remote_mcp_grant_store,
+    )
+    remote_mcp_connection_resolver = RemoteMCPConnectionResolver(remote_mcp_auth_service)
     task_runner = TaskRunner(
         run_state_store=run_state_store,
         event_bus=event_bus,
@@ -113,6 +122,7 @@ def create_runtime_server(
             web_search_port=DuckDuckGoSearchAdapter(),
             compaction_policy=config.compaction,
             compaction_strategy=compaction_strategy,
+            remote_mcp_connection_resolver=remote_mcp_connection_resolver,
         ),
     )
     checkpoint_adapter = task_runner.checkpoint_adapter
@@ -136,6 +146,7 @@ def create_runtime_server(
         task_runner=task_runner,
         durable_services=durable_services,
         resume_service=resume_service,
+        remote_mcp_auth_service=remote_mcp_auth_service,
         config_sources=[
             source for source in (config_path, config.identity_path) if source is not None
         ],

@@ -3,15 +3,18 @@ from __future__ import annotations
 import asyncio
 import ast
 import os
+import subprocess
 import sys
 import threading
 import time
+import webbrowser
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable, cast
 
 from .actions.approve_request import build_approval_request_action
 from .actions.inspect_memory import build_inspect_memory_action
 from .actions.open_artifact import build_open_artifact_action
+from .operator_settings import OperatorSettings, OperatorSettingsStore
 from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
 from .screens.approvals import ApprovalsScreen
@@ -24,6 +27,9 @@ from .screens.dashboard import DashboardScreen
 from .screens.diagnostics import DiagnosticsScreen
 from .screens.markdown_viewer import MarkdownViewerScreen
 from .screens.memory import MemoryScreen
+from .screens.remote_mcp_authorize import RemoteMCPAuthorizeScreen
+from .screens.remote_mcp_complete import RemoteMCPCompleteScreen
+from .screens.runtime_user_prompt import RuntimeUserPromptScreen
 from .screens.task_timeline_prompt import TaskTimelinePromptScreen
 from .screens.task_detail import TaskDetailScreen
 from .store.app_state import AppStateStore, UiMessage
@@ -107,6 +113,9 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("d", "open_diagnostics", "Diagnostics", show=False, priority=True),
         Binding("m", "open_memory", "Memory", show=False, priority=True),
         Binding("r", "resume_task", "Resume", show=False, priority=True),
+        Binding("u", "start_remote_mcp_authorization", "Authorize", show=False, priority=True),
+        Binding("x", "complete_remote_mcp_authorization", "Complete Auth", show=False, priority=True),
+        Binding("v", "revoke_remote_mcp_authorization", "Revoke Auth", show=False, priority=True),
         Binding("o", "open_artifacts", "Artifacts", show=False, priority=True),
         Binding("e", "open_artifact_externally", "External Artifact", show=False, priority=True),
         Binding("t", "group_artifacts_task", "Task Group", show=False),
@@ -122,29 +131,51 @@ class AgentTUI(App):  # type: ignore[misc]
         self._bootstrap = BootstrapConfig(config_path=config_path, task_id=task_id, run_id=run_id)
         self._client = ProtocolClient(config_path)
         self._store = AppStateStore()
+        self._operator_settings_store = OperatorSettingsStore()
         self._stream_key: tuple[str, str] | None = None
         self._render_interval = 1 / 30
         self._render_scheduled = False
         self._last_render_at = 0.0
         self._task_feedback_generation = 0
-        self.install_screen(DashboardScreen(), name="dashboard")
-        self.install_screen(TaskDetailScreen(), name="task_detail")
-        self.install_screen(ApprovalsScreen(), name="approvals")
-        self.install_screen(ArtifactsScreen(), name="artifacts")
-        self.install_screen(MarkdownViewerScreen(), name="markdown_viewer")
-        self.install_screen(MemoryScreen(), name="memory")
-        self.install_screen(ConfigScreen(), name="config")
-        self.install_screen(DiagnosticsScreen(), name="diagnostics")
-        self.install_screen(CommandPaletteScreen(), name="command_palette")
-        self.install_screen(CreateTaskScreen(), name="create_task")
-        self.install_screen(TaskTimelinePromptScreen(mode="search"), name="timeline_search_prompt")
-        self.install_screen(TaskTimelinePromptScreen(mode="filter"), name="timeline_filter_prompt")
+        self._dashboard_screen = DashboardScreen()
+        self._task_detail_screen = TaskDetailScreen()
+        self._approvals_screen = ApprovalsScreen()
+        self._artifacts_screen = ArtifactsScreen()
+        self._markdown_viewer_screen = MarkdownViewerScreen()
+        self._memory_screen = MemoryScreen()
+        self._config_screen = ConfigScreen()
+        self._diagnostics_screen = DiagnosticsScreen()
+        self._command_palette_screen = CommandPaletteScreen()
+        self._create_task_screen = CreateTaskScreen()
+        self._runtime_user_prompt_screen = RuntimeUserPromptScreen()
+        self._remote_mcp_authorize_screen = RemoteMCPAuthorizeScreen()
+        self._remote_mcp_complete_screen = RemoteMCPCompleteScreen()
+        self._timeline_search_prompt_screen = TaskTimelinePromptScreen(mode="search")
+        self._timeline_filter_prompt_screen = TaskTimelinePromptScreen(mode="filter")
+
+        self.install_screen(self._dashboard_screen, name="dashboard")
+        self.install_screen(self._task_detail_screen, name="task_detail")
+        self.install_screen(self._approvals_screen, name="approvals")
+        self.install_screen(self._artifacts_screen, name="artifacts")
+        self.install_screen(self._markdown_viewer_screen, name="markdown_viewer")
+        self.install_screen(self._memory_screen, name="memory")
+        self.install_screen(self._config_screen, name="config")
+        self.install_screen(self._diagnostics_screen, name="diagnostics")
+        self.install_screen(self._command_palette_screen, name="command_palette")
+        self.install_screen(self._create_task_screen, name="create_task")
+        self.install_screen(self._runtime_user_prompt_screen, name="runtime_user_prompt")
+        self.install_screen(self._remote_mcp_authorize_screen, name="remote_mcp_authorize")
+        self.install_screen(self._remote_mcp_complete_screen, name="remote_mcp_complete")
+        self.install_screen(self._timeline_search_prompt_screen, name="timeline_search_prompt")
+        self.install_screen(self._timeline_filter_prompt_screen, name="timeline_filter_prompt")
 
     def compose(self) -> ComposeResult:
         if False:
             yield
 
     async def on_mount(self) -> None:
+        settings = self._operator_settings_store.load()
+        self._store.dispatch({"kind": "ui", "runtime_user_id": settings.runtime_user_id})
         self.push_screen("dashboard")
         self._store.dispatch({"kind": "connection", "status": "connecting"})
         self._set_runtime_snapshot_loading("loading")
@@ -765,6 +796,43 @@ class AgentTUI(App):  # type: ignore[misc]
             exclusive=True,
         )
 
+    def action_start_remote_mcp_authorization(self) -> None:
+        self._start_remote_mcp_authorization(reauthorize=False)
+
+    def action_complete_remote_mcp_authorization(self) -> None:
+        state = self._store.snapshot()
+        if not state.remote_mcp_authorization_id:
+            task = state.task_snapshots.get(state.selected_task_id or "")
+            if task is None:
+                return
+            action = self._remote_mcp_action(task, "remote_mcp.authorize.complete")
+            if action is None:
+                return
+        self.open_remote_mcp_complete()
+
+    def action_revoke_remote_mcp_authorization(self) -> None:
+        state = self._store.snapshot()
+        task = state.task_snapshots.get(state.selected_task_id or "")
+        if task is None or state.runtime_user_id is None:
+            return
+        auths = task.get("remote_mcp_authorizations")
+        provider_id = None
+        if isinstance(auths, list) and auths and isinstance(auths[0], dict):
+            provider_id = str(auths[0].get("provider_id", "")).strip() or None
+        if provider_id is None:
+            return
+        self._confirm(
+            title="Revoke remote MCP auth",
+            body=f"Revoke the current remote MCP authorization for provider {provider_id}?",
+            confirm_label="Revoke",
+            danger=True,
+            on_confirm=lambda: self.run_worker(
+                self._revoke_remote_mcp_authorization(provider_id=provider_id),
+                group="remote-mcp-revoke",
+                exclusive=True,
+            ),
+        )
+
     def action_open_artifact_externally(self) -> None:
         state = self._store.snapshot()
         if state.active_screen != "artifacts":
@@ -782,7 +850,7 @@ class AgentTUI(App):  # type: ignore[misc]
             clear_input()
         if not command:
             self._set_task_input_feedback(
-                "Supported commands: resume, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
+                "Supported commands: resume, authorize, reauthorize, complete-auth, revoke-auth, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
             )
             return
         if command == "cancel" or command.startswith("cancel "):
@@ -829,6 +897,10 @@ class AgentTUI(App):  # type: ignore[misc]
             return
         commands = {
             "resume": self.action_resume_task,
+            "authorize": self.action_start_remote_mcp_authorization,
+            "reauthorize": lambda: self._start_remote_mcp_authorization(reauthorize=True),
+            "complete-auth": self.action_complete_remote_mcp_authorization,
+            "revoke-auth": self.action_revoke_remote_mcp_authorization,
             "approvals": self.open_selected_approval_workflow,
             "artifacts": self.action_open_artifacts,
             "diagnostics": self.action_open_diagnostics,
@@ -839,7 +911,7 @@ class AgentTUI(App):  # type: ignore[misc]
         handler = commands.get(command)
         if handler is None and command != "help":
             self._set_task_input_feedback(
-                f"Unsupported command '{command}'. Use: resume, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
+                f"Unsupported command '{command}'. Use: resume, authorize, reauthorize, complete-auth, revoke-auth, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
             )
             return
         self._set_task_input_feedback(f"Ran '{command}'.")
@@ -1125,7 +1197,11 @@ class AgentTUI(App):  # type: ignore[misc]
         self.close_command_palette()
         commands = {
             "create_task": self.open_create_task,
+            "set_runtime_user": self.open_runtime_user_prompt,
             "resume_task": self.action_resume_task,
+            "authorize_remote_mcp": self.action_start_remote_mcp_authorization,
+            "complete_remote_mcp_auth": self.action_complete_remote_mcp_authorization,
+            "revoke_remote_mcp_auth": self.action_revoke_remote_mcp_authorization,
             "approve_request": self.open_selected_approval_workflow,
             "open_artifacts": self.action_open_artifacts,
             "open_memory": self.action_open_memory,
@@ -1141,6 +1217,23 @@ class AgentTUI(App):  # type: ignore[misc]
         handler = commands.get(selected.command_id)
         if handler is not None:
             handler()
+
+    def _remote_mcp_action(self, task: dict[str, Any], method: str) -> dict[str, Any] | None:
+        payload = task.get("remote_mcp_authorizations")
+        if not isinstance(payload, list):
+            return None
+        for authorization in payload:
+            if not isinstance(authorization, dict):
+                continue
+            actions = authorization.get("actions")
+            if not isinstance(actions, list):
+                continue
+            for action in actions:
+                if not isinstance(action, dict):
+                    continue
+                if str(action.get("method", "")).strip() == method:
+                    return dict(action)
+        return None
 
     def close_command_palette(self) -> None:
         if not self._store.snapshot().command_palette_visible:
@@ -1553,6 +1646,87 @@ class AgentTUI(App):  # type: ignore[misc]
         self.pop_screen()
         self._render_state()
 
+    def open_runtime_user_prompt(self) -> None:
+        if self._store.snapshot().command_palette_visible:
+            self.close_command_palette()
+        if self.screen.__class__.__name__ != "RuntimeUserPromptScreen":
+            self.push_screen("runtime_user_prompt")
+        runtime_user_id = self._store.snapshot().runtime_user_id
+
+        def _configure_screen() -> None:
+            self._runtime_user_prompt_screen.set_value(runtime_user_id)
+            self._runtime_user_prompt_screen.focus_input()
+
+        self.call_after_refresh(_configure_screen)
+
+    def close_runtime_user_prompt(self) -> None:
+        if self.screen.__class__.__name__ != "RuntimeUserPromptScreen":
+            return
+        self.pop_screen()
+        self._render_state()
+
+    def submit_runtime_user_id(self, value: str) -> None:
+        runtime_user_id = value.strip()
+        if not runtime_user_id:
+            if self.screen.__class__.__name__ == "RuntimeUserPromptScreen":
+                self.screen.set_status("Runtime user ID is required.")  # type: ignore[attr-defined]
+            return
+        self._store.dispatch({"kind": "ui", "runtime_user_id": runtime_user_id})
+        self._operator_settings_store.save(OperatorSettings(runtime_user_id=runtime_user_id))
+        pending_objective = self._store.snapshot().pending_task_objective
+        self.close_runtime_user_prompt()
+        self._toast(f"Runtime user set to {runtime_user_id}.", level="success")
+        if pending_objective:
+            self._store.dispatch({"kind": "ui", "pending_task_objective": None})
+            self.run_worker(self._create_task(objective=pending_objective), group="create-task", exclusive=True)
+
+    def open_remote_mcp_authorize(self) -> None:
+        state = self._store.snapshot()
+        if self.screen.__class__.__name__ != "RemoteMCPAuthorizeScreen":
+            self.push_screen("remote_mcp_authorize")
+        server_name = state.remote_mcp_server_name or "remote-mcp"
+        provider_id = state.remote_mcp_provider_id or "provider"
+        authorization_url = state.remote_mcp_authorization_url or ""
+
+        def _configure_screen() -> None:
+            self._remote_mcp_authorize_screen.update_content(
+                server_name=server_name,
+                provider_id=provider_id,
+                authorization_url=authorization_url,
+            )
+
+        self.call_after_refresh(_configure_screen)
+
+    def close_remote_mcp_authorize(self) -> None:
+        if self.screen.__class__.__name__ != "RemoteMCPAuthorizeScreen":
+            return
+        self.pop_screen()
+        self._render_state()
+
+    def open_remote_mcp_complete(self) -> None:
+        state = self._store.snapshot()
+        if self.screen.__class__.__name__ != "RemoteMCPCompleteScreen":
+            self.push_screen("remote_mcp_complete")
+        server_name = state.remote_mcp_server_name or "remote-mcp"
+        provider_id = state.remote_mcp_provider_id or "provider"
+        state_token = state.remote_mcp_last_state_token
+
+        def _configure_screen() -> None:
+            self._remote_mcp_complete_screen.update_context(
+                server_name=server_name,
+                provider_id=provider_id,
+            )
+            self._remote_mcp_complete_screen.set_state_token(state_token)
+            self._remote_mcp_complete_screen.focus_input()
+
+        self.call_after_refresh(_configure_screen)
+
+    def close_remote_mcp_complete(self) -> None:
+        if self.screen.__class__.__name__ != "RemoteMCPCompleteScreen":
+            return
+        self.pop_screen()
+        self._render_state()
+
     async def _reconnect_runtime(self) -> None:
         state = self._store.snapshot()
         selected_task_id = state.selected_task_id
@@ -1602,6 +1776,15 @@ class AgentTUI(App):  # type: ignore[misc]
         if not text:
             if self.screen.__class__.__name__ == "CreateTaskScreen":
                 self.screen.set_status("Objective is required.")  # type: ignore[attr-defined]
+            return
+        if not self._store.snapshot().runtime_user_id:
+            self._store.dispatch({"kind": "ui", "pending_task_objective": text})
+            self.open_runtime_user_prompt()
+            self.call_after_refresh(
+                lambda: self._runtime_user_prompt_screen.set_status(
+                    "Set a runtime user ID before creating a task."
+                )
+            )
             return
         if self.screen.__class__.__name__ == "CreateTaskScreen":
             self.screen.set_status("Creating task...")  # type: ignore[attr-defined]
@@ -1673,6 +1856,7 @@ class AgentTUI(App):  # type: ignore[misc]
             payload = await self._client.task_create(
                 objective=objective,
                 workspace_roots=[workspace_root],
+                runtime_user_id=state.runtime_user_id,
             )
             task_id = str(payload.get("result", {}).get("task_id", ""))
             run_id = str(payload.get("result", {}).get("run_id", "")) or None
@@ -1688,6 +1872,7 @@ class AgentTUI(App):  # type: ignore[misc]
                 "latest_summary": "Task accepted by runtime.",
                 "current_phase": "accepted",
                 "workspace_roots": [workspace_root],
+                "runtime_user_id": state.runtime_user_id,
                 "links": {
                     "artifacts": "task.artifacts.list",
                     "approve": "task.approve",
@@ -1738,6 +1923,182 @@ class AgentTUI(App):  # type: ignore[misc]
             self._ensure_config_selection()
         except ProtocolClientError:
             return
+
+    def submit_remote_mcp_complete(self) -> None:
+        if self.screen.__class__.__name__ != "RemoteMCPCompleteScreen":
+            return
+        code = self.screen.query_one("#remote-mcp-complete-code").value.strip()  # type: ignore[attr-defined]
+        state_token = self.screen.query_one("#remote-mcp-complete-state").value.strip()  # type: ignore[attr-defined]
+        if not code or not state_token:
+            self.screen.set_status("Both authorization code and state token are required.")  # type: ignore[attr-defined]
+            return
+        authorization_id = self._store.snapshot().remote_mcp_authorization_id
+        if not authorization_id:
+            self.screen.set_status("No active remote MCP authorization request.")  # type: ignore[attr-defined]
+            return
+        self.run_worker(
+            self._complete_remote_mcp_authorization(
+                authorization_id=authorization_id,
+                code=code,
+                state_token=state_token,
+            ),
+            group="remote-mcp-complete",
+            exclusive=True,
+        )
+
+    def _start_remote_mcp_authorization(self, *, reauthorize: bool) -> None:
+        state = self._store.snapshot()
+        task = state.task_snapshots.get(state.selected_task_id or "")
+        if task is None:
+            return
+        if not state.runtime_user_id:
+            self.open_runtime_user_prompt()
+            return
+        method = "remote_mcp.reauthorize" if reauthorize else "remote_mcp.authorize.start"
+        action = self._remote_mcp_action(task, method)
+        if action is None:
+            self._set_task_input_feedback("No remote MCP authorization action is available.", auto_clear=False)
+            return
+        task_id = str(task.get("task_id", "")).strip()
+        run_id = str(task.get("run_id", "")).strip()
+        server_name = str(action.get("params", {}).get("server_name", "")).strip()
+        if not task_id or not run_id or not server_name:
+            self._toast("Remote MCP authorization action is missing task or server context.", level="error")
+            return
+        self.run_worker(
+            self._request_remote_mcp_authorization(
+                task_id=task_id,
+                run_id=run_id,
+                server_name=server_name,
+                reauthorize=reauthorize,
+            ),
+            group="remote-mcp-authorize",
+            exclusive=True,
+        )
+
+    async def _request_remote_mcp_authorization(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        server_name: str,
+        reauthorize: bool,
+    ) -> None:
+        self._store.dispatch(
+            {
+                "kind": "ui",
+                "remote_mcp_request_status": "loading",
+                "remote_mcp_request_error": None,
+            }
+        )
+        try:
+            payload = await self._client.remote_mcp_authorize_start(
+                task_id=task_id,
+                run_id=run_id,
+                server_name=server_name,
+                reauthorize=reauthorize,
+            )
+            result = dict(payload.get("result", {}))
+            authorization_id = str(result.get("authorization_id", "")).strip()
+            authorization_url = str(result.get("authorization_url", "")).strip()
+            provider_id = str(result.get("provider_id", "")).strip()
+            if authorization_id and authorization_url:
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "remote_mcp_request_status": "loaded",
+                        "remote_mcp_request_error": None,
+                        "remote_mcp_authorization_id": authorization_id,
+                        "remote_mcp_authorization_url": authorization_url,
+                        "remote_mcp_server_name": server_name,
+                        "remote_mcp_provider_id": provider_id or None,
+                        "remote_mcp_last_state_token": None,
+                    }
+                )
+                task_payload = result.get("task")
+                if isinstance(task_payload, dict):
+                    self._store.dispatch({"kind": "rpc", "name": "task.get", "payload": {"result": {"task": task_payload}}})
+                self.open_remote_mcp_authorize()
+                self._toast("Remote MCP authorization started.", level="success")
+                return
+            self._toast("Remote MCP authorization did not return an authorization URL.", level="error")
+        except ProtocolClientError as exc:
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "remote_mcp_request_status": "error",
+                    "remote_mcp_request_error": str(exc),
+                }
+            )
+            self._toast(f"Remote MCP authorization failed: {exc}", level="error", timeout_seconds=5.0)
+
+    async def _complete_remote_mcp_authorization(
+        self,
+        *,
+        authorization_id: str,
+        code: str,
+        state_token: str,
+    ) -> None:
+        try:
+            await self._client.remote_mcp_authorize_complete(
+                authorization_id=authorization_id,
+                code=code,
+                state_token=state_token,
+            )
+            selected_task_id = self._store.snapshot().selected_task_id
+            task = self._store.snapshot().task_snapshots.get(selected_task_id or "")
+            run_id = str(task.get("run_id", "")) or None if task else None
+            if selected_task_id:
+                await self._sync_selected_task()
+                self._start_selected_task_stream(task_id=selected_task_id, run_id=run_id)
+            self._store.dispatch(
+                {
+                    "kind": "ui",
+                    "remote_mcp_last_state_token": state_token,
+                }
+            )
+            self.close_remote_mcp_complete()
+            self._toast("Remote MCP authorization completed. Resume the task when ready.", level="success", timeout_seconds=4.0)
+        except ProtocolClientError as exc:
+            if self.screen.__class__.__name__ == "RemoteMCPCompleteScreen":
+                self.screen.set_status(f"Remote MCP auth failed: {exc}")  # type: ignore[attr-defined]
+            self._toast(f"Remote MCP auth failed: {exc}", level="error", timeout_seconds=5.0)
+
+    async def _revoke_remote_mcp_authorization(self, *, provider_id: str) -> None:
+        runtime_user_id = self._store.snapshot().runtime_user_id
+        if runtime_user_id is None:
+            return
+        try:
+            await self._client.remote_mcp_revoke(
+                provider_id=provider_id,
+                runtime_user_id=runtime_user_id,
+            )
+            await self._sync_selected_task()
+            self._toast("Remote MCP authorization revoked.", level="success")
+        except ProtocolClientError as exc:
+            self._toast(f"Failed to revoke remote MCP auth: {exc}", level="error", timeout_seconds=5.0)
+
+    def action_open_remote_mcp_authorization_url(self) -> None:
+        url = self._store.snapshot().remote_mcp_authorization_url
+        if not url:
+            return
+        if webbrowser.open(url):
+            if self.screen.__class__.__name__ == "RemoteMCPAuthorizeScreen":
+                self.screen.set_status("Opened authorization URL in your browser. Continue here after consent.")  # type: ignore[attr-defined]
+            self._toast("Opened authorization URL.", level="success")
+            return
+        self._toast("Unable to open browser automatically.", level="warning")
+
+    def action_copy_remote_mcp_authorization_url(self) -> None:
+        url = self._store.snapshot().remote_mcp_authorization_url
+        if not url:
+            return
+        if _copy_text_to_clipboard(url):
+            if self.screen.__class__.__name__ == "RemoteMCPAuthorizeScreen":
+                self.screen.set_status("Authorization URL copied. Continue here after consent.")  # type: ignore[attr-defined]
+            self._toast("Authorization URL copied.", level="success")
+            return
+        self._toast("Unable to copy automatically. Copy the URL manually from the dialog.", level="warning", timeout_seconds=4.0)
 
     async def _refresh_memory_inspection(
         self,
@@ -1854,3 +2215,26 @@ def _external_open_command(path: str) -> list[str] | None:
     if os.name == "posix":
         return ["xdg-open", path]
     return None
+
+
+def _copy_text_to_clipboard(value: str) -> bool:
+    commands = [
+        ["pbcopy"],
+        ["xclip", "-selection", "clipboard"],
+        ["xsel", "--clipboard", "--input"],
+        ["clip"],
+    ]
+    for command in commands:
+        try:
+            completed = subprocess.run(
+                command,
+                input=value.encode("utf-8"),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                check=False,
+            )
+        except (FileNotFoundError, OSError):
+            continue
+        if completed.returncode == 0:
+            return True
+    return False

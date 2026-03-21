@@ -183,6 +183,10 @@ class ArtifactPanelItemViewModel:
 class TaskActionBarViewModel:
     command_enabled: bool
     resume_enabled: bool
+    auth_enabled: bool
+    auth_label: str | None
+    complete_auth_enabled: bool
+    revoke_auth_enabled: bool
     approvals_enabled: bool
     approval_count: int
     artifact_open_enabled: bool
@@ -209,6 +213,23 @@ class NotificationStripItemViewModel:
 @dataclass(frozen=True, slots=True)
 class NotificationStripViewModel:
     items: list[NotificationStripItemViewModel]
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteMCPAuthorizationActionViewModel:
+    action_id: str
+    method: str
+    title: str
+    params: dict[str, Any]
+
+
+@dataclass(frozen=True, slots=True)
+class RemoteMCPAuthorizationViewModel:
+    server_name: str
+    provider_id: str
+    status: str
+    summary: str
+    actions: list[RemoteMCPAuthorizationActionViewModel]
 
 
 @dataclass(frozen=True, slots=True)
@@ -810,6 +831,20 @@ def task_artifact_panel(state: AppState) -> list[ArtifactPanelItemViewModel]:
 
 
 def task_notifications(state: AppState) -> NotificationStripViewModel:
+    task = _selected_task(state)
+    auth_items: list[NotificationStripItemViewModel] = []
+    if task is not None:
+        for auth in _remote_mcp_authorizations(task):
+            auth_items.append(
+                NotificationStripItemViewModel(
+                    timestamp=str(task.get("updated_at") or task.get("created_at") or ""),
+                    timestamp_relative="now",
+                    summary=auth.summary,
+                    severity="attention",
+                    icon="🔐",
+                    tone="warning",
+                )
+            )
     priority_events = [
         event
         for event in _selected_task_events(state)
@@ -826,7 +861,8 @@ def task_notifications(state: AppState) -> NotificationStripViewModel:
     ]
     priority_events = priority_events[-3:]
     return NotificationStripViewModel(
-        items=[
+        items=auth_items
+        + [
             NotificationStripItemViewModel(
                 timestamp=event.timestamp,
                 timestamp_relative=_relative_time(event.timestamp),
@@ -846,6 +882,10 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
     approval_count = len(selected_task_pending_approvals(state))
     approvals_enabled = approval_count > 0
     resume_enabled = False
+    auth_enabled = False
+    auth_label: str | None = None
+    complete_auth_enabled = False
+    revoke_auth_enabled = False
     diagnostics_enabled = _selected_task_key(state) is not None
     artifact_external_open_enabled = selected_artifact_preview(state).external_open_supported
     status_message = state.task_input_feedback or _actionable_status_hint(task)
@@ -856,9 +896,22 @@ def task_action_bar(state: AppState) -> TaskActionBarViewModel:
         resume_enabled = bool(task.get("is_resumable")) or (
             isinstance(links, dict) and links.get("resume") == "task.resume"
         )
+        auth_actions = _remote_mcp_actions_by_method(task)
+        if "remote_mcp.authorize.start" in auth_actions:
+            auth_enabled = True
+            auth_label = "Authorize"
+        elif "remote_mcp.reauthorize" in auth_actions:
+            auth_enabled = True
+            auth_label = "Reauthorize"
+        complete_auth_enabled = "remote_mcp.authorize.complete" in auth_actions
+        revoke_auth_enabled = "remote_mcp.revoke" in auth_actions
     return TaskActionBarViewModel(
         command_enabled=_selected_task_key(state) is not None,
         resume_enabled=resume_enabled,
+        auth_enabled=auth_enabled,
+        auth_label=auth_label,
+        complete_auth_enabled=complete_auth_enabled,
+        revoke_auth_enabled=revoke_auth_enabled,
         approvals_enabled=approvals_enabled,
         approval_count=approval_count,
         artifact_open_enabled=bool(artifacts),
@@ -1080,8 +1133,18 @@ def selected_task_pending_approvals(state: AppState) -> list[ApprovalQueueItemVi
 
 
 def command_palette(state: AppState) -> CommandPaletteViewModel:
+    selected_task = _selected_task(state)
+    auth_actions = _remote_mcp_actions_by_method(selected_task) if selected_task is not None else {}
     commands = [
         ("create_task", "Create task", "New task from workspace", "Tasks", "□", True),
+        (
+            "set_runtime_user",
+            "Set runtime user",
+            "Set or change the per-user remote MCP identity",
+            "Runtime",
+            "👤",
+            True,
+        ),
         (
             "resume_task",
             "Resume task",
@@ -1097,6 +1160,31 @@ def command_palette(state: AppState) -> CommandPaletteViewModel:
             "Review",
             "⚠",
             bool(pending_approvals(state)),
+        ),
+        (
+            "authorize_remote_mcp",
+            "Authorize remote MCP",
+            "Start remote MCP authorization for the selected task",
+            "Tasks",
+            "🔐",
+            "remote_mcp.authorize.start" in auth_actions,
+        ),
+        (
+            "complete_remote_mcp_auth",
+            "Complete remote MCP auth",
+            "Submit code and state token for the active remote MCP authorization",
+            "Tasks",
+            "⇥",
+            "remote_mcp.authorize.complete" in auth_actions
+            and bool(state.remote_mcp_authorization_id),
+        ),
+        (
+            "revoke_remote_mcp_auth",
+            "Revoke remote MCP auth",
+            "Revoke the selected task's current remote MCP authorization",
+            "Tasks",
+            "⨯",
+            "remote_mcp.revoke" in auth_actions and bool(state.runtime_user_id),
         ),
         ("open_artifacts", "Inspect artifacts", "Browse runtime artifacts", "Inspect", "▤", True),
         ("open_memory", "Inspect memory", "Open memory inspector", "Inspect", "◫", True),
@@ -2473,6 +2561,8 @@ def _actionable_status_label(task: dict[str, Any] | None) -> str:
 def _actionable_status_hint(task: dict[str, Any] | None) -> str:
     if task is None:
         return "Select a task to inspect its timeline, approvals, and artifacts."
+    if _remote_mcp_authorizations(task):
+        return "Remote MCP authorization required. Use authorize, complete-auth, or revoke-auth."
     status = str(task.get("status", "unknown")).lower()
     if str(task.get("pause_reason", "")).lower() == "awaiting_user_input":
         return "Paused for your reply. Type: reply <message>"
@@ -2493,6 +2583,8 @@ def _actionable_status_hint(task: dict[str, Any] | None) -> str:
 def _task_command_placeholder(task: dict[str, Any] | None) -> str:
     if task is None:
         return "Enter a task command and press Enter"
+    if _remote_mcp_authorizations(task):
+        return "Type 'authorize', 'complete-auth', 'revoke-auth', or 'resume'"
     pause_reason = str(task.get("pause_reason", "")).lower()
     status = str(task.get("status", "unknown")).lower()
     if pause_reason == "awaiting_user_input":
@@ -2529,6 +2621,8 @@ def _task_action_status_tone(task: dict[str, Any] | None, *, feedback: str | Non
             return "success"
     if task is None:
         return "info"
+    if _remote_mcp_authorizations(task):
+        return "warning"
     pause_reason = str(task.get("pause_reason", "")).lower()
     status = str(task.get("status", "unknown")).lower()
     if pause_reason == "awaiting_user_input" or status in {"paused", "awaiting_approval"}:
@@ -2546,6 +2640,71 @@ def _highlighted_task_ids(state: AppState) -> set[str]:
         for event in _selected_task_events(state)[-10:]
         if _is_priority_event(event.event_type)
     }
+
+
+def selected_remote_mcp_authorizations(state: AppState) -> list[RemoteMCPAuthorizationViewModel]:
+    task = _selected_task(state)
+    if task is None:
+        return []
+    return _remote_mcp_authorizations(task)
+
+
+def _remote_mcp_authorizations(task: dict[str, Any]) -> list[RemoteMCPAuthorizationViewModel]:
+    payload = task.get("remote_mcp_authorizations")
+    if not isinstance(payload, list):
+        return []
+    items: list[RemoteMCPAuthorizationViewModel] = []
+    for item in payload:
+        if not isinstance(item, dict):
+            continue
+        actions_payload = item.get("actions")
+        actions: list[RemoteMCPAuthorizationActionViewModel] = []
+        if isinstance(actions_payload, list):
+            for action in actions_payload:
+                if not isinstance(action, dict):
+                    continue
+                action_id = _str_or_none(action.get("action_id"))
+                method = _str_or_none(action.get("method"))
+                title = _str_or_none(action.get("title"))
+                params = action.get("params")
+                if action_id is None or method is None or title is None or not isinstance(params, dict):
+                    continue
+                actions.append(
+                    RemoteMCPAuthorizationActionViewModel(
+                        action_id=action_id,
+                        method=method,
+                        title=title,
+                        params=dict(params),
+                    )
+                )
+        server_name = _str_or_none(item.get("server_name"))
+        provider_id = _str_or_none(item.get("provider_id"))
+        status = _str_or_none(item.get("status"))
+        summary = _str_or_none(item.get("summary"))
+        if server_name is None or provider_id is None or status is None or summary is None:
+            continue
+        items.append(
+            RemoteMCPAuthorizationViewModel(
+                server_name=server_name,
+                provider_id=provider_id,
+                status=status,
+                summary=summary,
+                actions=actions,
+            )
+        )
+    return items
+
+
+def _remote_mcp_actions_by_method(
+    task: dict[str, Any] | None,
+) -> dict[str, RemoteMCPAuthorizationActionViewModel]:
+    if task is None:
+        return {}
+    actions: dict[str, RemoteMCPAuthorizationActionViewModel] = {}
+    for auth in _remote_mcp_authorizations(task):
+        for action in auth.actions:
+            actions.setdefault(action.method, action)
+    return actions
 
 
 def _highlighted_approval_ids(state: AppState) -> set[str]:

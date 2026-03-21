@@ -21,6 +21,8 @@ from packages.protocol.local_agent_protocol.models import (
     EventEnvelope,
     EventSource,
     EventSourceKind,
+    RemoteMCPAction,
+    RemoteMCPAuthorizationEntry,
     RuntimeEvent,
     TaskSnapshot,
     utc_now_timestamp,
@@ -33,6 +35,8 @@ from packages.task_model.local_agent_task_model.models import (
     FailureInfo,
     RecoverableToolRejection,
     RecoverableToolRejectionThresholdExceeded,
+    RemoteMCPActionState,
+    RemoteMCPAuthorizationState,
     RunState,
     TaskStatus,
     TodoItem,
@@ -85,6 +89,7 @@ class AgentExecutionRequest:
     memory_store: MemoryStore | None
     allowed_capabilities: list[str]
     metadata: dict[str, Any]
+    runtime_user_id: str | None = None
     conversation_messages: tuple[dict[str, str], ...] = ()
     primary_skills: tuple[SkillDescriptor, ...] = ()
     constraints: list[str] = field(default_factory=list)
@@ -113,6 +118,7 @@ class AgentExecutionResult:
     assistant_response: str | None = None
     cancelled: bool = False
     checkpoint_id: str | None = None
+    remote_mcp_authorizations: list[RemoteMCPAuthorizationState] = field(default_factory=list)
 
 
 @dataclass(slots=True)
@@ -241,6 +247,7 @@ class TaskRunner:
         objective: str,
         workspace_roots: list[str],
         identity_bundle_text: str,
+        runtime_user_id: str | None = None,
         allowed_capabilities: list[str] | None = None,
         metadata: dict[str, Any] | None = None,
         constraints: list[str] | None = None,
@@ -264,6 +271,7 @@ class TaskRunner:
             workspace_roots=list(normalized_workspace_roots),
             allowed_capabilities=list(allowed_capabilities or []),
             metadata=dict(metadata or {}),
+            runtime_user_id=runtime_user_id,
             constraints=list(constraints or []),
             success_criteria=list(success_criteria or []),
             current_phase="accepted",
@@ -641,6 +649,12 @@ class TaskRunner:
             last_event_at=state.last_event_at,
             failure=state.failure,
             last_recoverable_rejection=state.last_recoverable_rejection,
+            runtime_user_id=state.runtime_user_id,
+            remote_mcp_authorizations=[
+                _protocol_remote_mcp_authorization(entry)
+                for entry in state.remote_mcp_authorizations
+            ]
+            or None,
             links=links or None,
         )
 
@@ -939,6 +953,7 @@ class TaskRunner:
                 else state.latest_checkpoint_id
             ),
             active_subagent=None,
+            remote_mcp_authorizations=[],
         )
         self._publish(
             task_id=task_id,
@@ -1010,6 +1025,7 @@ class TaskRunner:
                     ),
                     allowed_capabilities=list(state.allowed_capabilities),
                     metadata=dict(state.metadata),
+                    runtime_user_id=state.runtime_user_id,
                     conversation_messages=conversation_messages,
                     primary_skills=self.primary_skills,
                     constraints=list(state.constraints),
@@ -1175,6 +1191,7 @@ class TaskRunner:
                     is_resumable=True,
                     pause_reason=result.pause_reason or "awaiting approval",
                     active_subagent=None,
+                    remote_mcp_authorizations=list(result.remote_mcp_authorizations),
                 )
             else:
                 self._run_state_store.update(
@@ -1191,6 +1208,7 @@ class TaskRunner:
                     is_resumable=True,
                     pause_reason=result.pause_reason or "execution paused",
                     active_subagent=None,
+                    remote_mcp_authorizations=list(result.remote_mcp_authorizations),
                 )
                 self._publish(
                     task_id=task_id,
@@ -1234,6 +1252,7 @@ class TaskRunner:
                 is_resumable=False,
                 pause_reason=None,
                 active_subagent=None,
+                remote_mcp_authorizations=[],
             )
             self._publish(
                 task_id=task_id,
@@ -2359,6 +2378,26 @@ def _todos_from_event_payload(payload: dict[str, Any]) -> list[TodoItem] | None:
     if not isinstance(arguments, dict) or "todos" not in arguments:
         return []
     return normalize_todos(arguments.get("todos"))
+
+
+def _protocol_remote_mcp_authorization(
+    entry: RemoteMCPAuthorizationState,
+) -> RemoteMCPAuthorizationEntry:
+    return RemoteMCPAuthorizationEntry(
+        server_name=entry.server_name,
+        provider_id=entry.provider_id,
+        status=entry.status,
+        summary=entry.summary,
+        actions=[
+            RemoteMCPAction(
+                action_id=action.action_id,
+                method=action.method,
+                title=action.title,
+                params=dict(action.params),
+            )
+            for action in entry.actions
+        ],
+    )
 
 
 def _run_metrics_record(

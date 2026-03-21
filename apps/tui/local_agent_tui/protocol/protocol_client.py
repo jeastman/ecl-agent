@@ -6,6 +6,10 @@ import sys
 from typing import Any
 
 from packages.protocol.local_agent_protocol.models import (
+    METHOD_REMOTE_MCP_AUTHORIZE_COMPLETE,
+    METHOD_REMOTE_MCP_AUTHORIZE_START,
+    METHOD_REMOTE_MCP_REAUTHORIZE,
+    METHOD_REMOTE_MCP_REVOKE,
     METHOD_TASK_CREATE,
     METHOD_TASK_CANCEL,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -89,6 +93,7 @@ class ProtocolClient:
         *,
         objective: str,
         workspace_roots: list[str],
+        runtime_user_id: str | None = None,
     ) -> dict[str, Any]:
         return await self._request(
             METHOD_TASK_CREATE,
@@ -96,8 +101,49 @@ class ProtocolClient:
                 task=TaskCreateRequest(
                     objective=objective,
                     workspace_roots=workspace_roots,
+                    runtime_user_id=runtime_user_id,
                 )
             ).to_dict(),
+        )
+
+    async def remote_mcp_authorize_start(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        server_name: str,
+        reauthorize: bool = False,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_REMOTE_MCP_REAUTHORIZE if reauthorize else METHOD_REMOTE_MCP_AUTHORIZE_START,
+            {"task_id": task_id, "run_id": run_id, "server_name": server_name},
+        )
+
+    async def remote_mcp_authorize_complete(
+        self,
+        *,
+        authorization_id: str,
+        code: str,
+        state_token: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_REMOTE_MCP_AUTHORIZE_COMPLETE,
+            {
+                "authorization_id": authorization_id,
+                "code": code,
+                "state_token": state_token,
+            },
+        )
+
+    async def remote_mcp_revoke(
+        self,
+        *,
+        provider_id: str,
+        runtime_user_id: str,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_REMOTE_MCP_REVOKE,
+            {"provider_id": provider_id, "runtime_user_id": runtime_user_id},
         )
 
     async def memory_inspect(

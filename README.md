@@ -3,7 +3,7 @@
 Local Agent Harness is a local-first agent runtime built as a Python monorepo. The runtime is the system of record for execution, and the repository currently ships two clients over that runtime-owned protocol:
 
 - a thin CLI for submitting and inspecting work
-- a Textual TUI for operator workflows such as task browsing, event review, approvals, artifact preview, memory inspection, and config inspection
+- a Textual TUI for operator workflows such as task browsing, event review, approvals, artifact preview, memory inspection, config inspection, and guided remote MCP authorization
 
 The current implemented baseline is Milestone 3:
 
@@ -70,12 +70,11 @@ Included today:
 - durable checkpoints, recovery, approval persistence, diagnostics, and run metrics
 - runtime-owned model resolution for the primary agent and subagents
 - CLI commands for health, run, status, logs, artifacts, approvals, diagnostics, approve, resume, reply, memory, config, and skill installation
-- TUI screens for dashboard, task detail, approvals, artifacts, memory, diagnostics, config, markdown preview, and timeline filtering/search
+- TUI screens for dashboard, task detail, approvals, artifacts, memory, diagnostics, config, markdown preview, timeline filtering/search, and remote MCP auth prompts
 
 Still deferred:
 
 - web client
-- `task.cancel`
 - richer memory retrieval and governance semantics
 
 ## Prerequisites
@@ -144,6 +143,13 @@ Run the Textual TUI:
 python -m apps.tui.local_agent_tui.bootstrap --config docs/architecture/runtime.example.toml
 ```
 
+The TUI now includes a first-class remote MCP auth workflow for OAuth-backed MCP servers:
+
+- it prompts for a `runtime_user_id` when a run needs per-user remote MCP auth
+- it persists that operator identity in `~/.local-agent-harness/tui-settings.json`
+- it surfaces `remote_mcp_authorization_required` pauses in task detail
+- it can start authorization, display or copy the authorization URL, accept pasted `code` and `state_token`, and revoke an existing grant
+
 ## Configuration File
 
 The runtime configuration file passed with `--config` is TOML. The example file is [docs/architecture/runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml).
@@ -193,6 +199,14 @@ deny_command_classes = ["network", "destructive", "secrets"]
 [mcp]
 tool_name_prefix = true
 
+[mcp.oauth_providers.example]
+authorization_url = "https://example.com/oauth/authorize"
+token_url = "https://example.com/oauth/token"
+client_id = "${EXAMPLE_CLIENT_ID}"
+client_secret = "${EXAMPLE_CLIENT_SECRET}"
+redirect_uri = "http://localhost:4315/oauth/example/callback"
+scopes = ["read", "write"]
+
 [mcp.servers.fixture_stdio]
 enabled = false
 description = "Example local stdio MCP server."
@@ -204,6 +218,13 @@ enabled = false
 description = "Example remote MCP server."
 transport = "http"
 url = "https://example.com/mcp"
+
+[mcp.servers.fixture_remote_oauth]
+enabled = false
+description = "Example remote MCP server with per-user OAuth."
+transport = "streamable_http"
+url = "https://example.com/oauth-mcp"
+auth = { mode = "oauth_user_grant", provider = "example" }
 ```
 
 Settings:
@@ -223,10 +244,12 @@ Settings:
 - `cli.virtual_workspace_root`: virtual mount point exposed to the agent. Defaults to `/workspace`.
 - `policy`: open-ended runtime policy table preserved and exposed through `config.get` with redaction for secret-like values.
 - `mcp.tool_name_prefix`: when `true`, MCP tools are exposed as `<server>_<tool>` to avoid collisions. Defaults to `true`.
+- `mcp.oauth_providers.<provider>`: generic OAuth provider definitions for per-user remote MCP auth. Providers support `authorization_url` or `discovery_url`, `token_url` or `discovery_url`, `client_id`, `client_secret`, `redirect_uri`, optional `scopes`, and optional `audience` / `resource`.
 - `mcp.servers.<name>`: native MCP server definitions. Each server supports:
   - stdio servers: `command`, optional `args`, optional `env`, optional `env_from_host`
-  - remote servers: `transport` or `type` plus `url`, optional `headers`
+  - remote servers: `transport` or `type` plus `url`, optional `headers`, optional `auth`
   - shared fields: `enabled`, optional `description`
+- `mcp.servers.<name>.auth`: optional remote auth config. Supported modes are `static_headers` and `oauth_user_grant`.
 
 Notes:
 
@@ -254,6 +277,7 @@ The runtime can load MCP tools through LangChain MCP adapters and expose them to
 - exposes MCP tools to a subagent only when that role declares `mcp_tools` in its manifest
 - emits runtime `tool.called` events for MCP tool invocations with server metadata
 - governs MCP server startup and remote access through the same runtime approval boundary system
+- supports generic per-user OAuth for remote MCP servers through configured OAuth providers and runtime-managed grants
 
 ### Native runtime TOML format
 
@@ -285,6 +309,25 @@ url = "https://example.com/mcp"
 headers = { Authorization = "Bearer ${GITHUB_TOKEN}" }
 ```
 
+Example remote OAuth-backed server:
+
+```toml
+[mcp.oauth_providers.slack]
+authorization_url = "https://slack.com/oauth/v2/authorize"
+token_url = "https://slack.com/api/oauth.v2.access"
+client_id = "${SLACK_CLIENT_ID}"
+client_secret = "${SLACK_CLIENT_SECRET}"
+redirect_uri = "http://localhost:4315/oauth/slack/callback"
+scopes = ["channels:history", "channels:read", "chat:write", "users:read"]
+
+[mcp.servers.slack]
+enabled = true
+description = "Slack MCP"
+transport = "streamable_http"
+url = "https://mcp.slack.com/mcp"
+auth = { mode = "oauth_user_grant", provider = "slack" }
+```
+
 Rules:
 
 - A server must define either `command` or `url`, never both.
@@ -295,6 +338,8 @@ Rules:
 - `env` values support `${VAR}` interpolation from the runtime process environment.
 - `env_from_host` copies selected host environment variables into stdio MCP subprocesses.
 - `headers` values for remote MCP servers also support `${VAR}` interpolation.
+- remote `auth.mode = "oauth_user_grant"` is supported only for remote MCP servers and may not be combined with static `headers`.
+- if any configured remote MCP server uses `oauth_user_grant`, `task.create` must include a `runtime_user_id`.
 - Missing interpolated or passthrough variables fail config loading immediately.
 
 Example Atlassian MCP configuration:
@@ -378,8 +423,21 @@ MCP server connection is a governed runtime operation.
   - `web_access_mode = "require_approval"` pauses for approval
   - `web_access_mode = "deny"` rejects them
 - Missing host environment variables are treated as configuration errors, not approval events.
+- Remote OAuth authorization, completion, refresh, and revoke are runtime-governed operations separate from `mcp.server.connect`.
 
 Approval boundaries are run-scoped. Approving an MCP server for one run does not persist that approval to unrelated runs.
+
+### Per-user remote OAuth behavior
+
+When a remote MCP server uses `auth.mode = "oauth_user_grant"`:
+
+- the runtime resolves auth headers per run using the task's `runtime_user_id`
+- if no valid grant exists, the run pauses with `remote_mcp_authorization_required`
+- task snapshots expose server-driven actions such as `remote_mcp.authorize.start`, `remote_mcp.authorize.complete`, `remote_mcp.reauthorize`, and `remote_mcp.revoke`
+- the TUI consumes those actions directly and stays provider-agnostic
+- static bearer headers remain available for shared-token use cases
+
+The CLI does not yet provide a polished interactive flow for these methods. The TUI is the intended operator experience today.
 
 ### Primary agent MCP behavior
 
@@ -485,6 +543,8 @@ python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.exampl
 
 5. If the MCP server came from project `.mcp.json` and uses stdio, approve the startup request when the runtime pauses for approval.
 
+6. If the remote MCP server is OAuth-backed, use the TUI to set the `runtime_user_id`, start authorization, open or copy the returned authorization URL, paste the returned `code` and `state_token`, and then resume the task.
+
 ### Troubleshooting
 
 - MCP tools do not appear:
@@ -498,9 +558,14 @@ python -m apps.cli.local_agent_cli.cli --config docs/architecture/runtime.exampl
   - verify every `env_from_host` / `envFromHost` key exists in the runtime process environment
 - remote MCP server fails:
   - verify `transport` and `url`
-  - verify required headers
-  - verify every `${VAR}` used in `headers` is present in the runtime process environment
+  - for `static_headers`, verify required headers and every `${VAR}` used in `headers`
+  - for `oauth_user_grant`, verify the referenced OAuth provider exists and the task has a `runtime_user_id`
   - check whether runtime `web_access_mode` is requiring approval or denying the connection
+- TUI keeps prompting for runtime user ID:
+  - set it once in the prompt or command palette; it is persisted to `~/.local-agent-harness/tui-settings.json`
+- task pauses with remote MCP authorization required:
+  - expected for OAuth-backed remote MCP when the runtime has no valid user grant yet
+  - use `authorize`, `complete-auth`, or `revoke-auth` in task detail, or the matching command palette entries
 - tool name collisions:
   - keep `mcp.tool_name_prefix = true`
 - elicitation errors:
@@ -518,6 +583,7 @@ The current CLI commands are:
 - `agent approvals <task_id> [--run-id <run_id>]`
 - `agent diagnostics <task_id> [--run-id <run_id>]`
 - `agent approve <approval_id> --decision approve|reject [--task-id <task_id>] [--run-id <run_id>]`
+- `agent cancel <task_id> [--run-id <run_id>] [--reason "<reason>"]`
 - `agent resume <task_id> [--run-id <run_id>]`
 - `agent reply <task_id> [--run-id <run_id>] --message "<reply>"`
 - `agent memory [--task-id <task_id>] [--run-id <run_id>] [--scope <scope>] [--namespace <namespace>]`
@@ -539,12 +605,17 @@ The transport is JSON-RPC 2.0 over stdio. The runtime currently implements:
 - `task.diagnostics.list`
 - `task.reply`
 - `task.resume`
+- `task.cancel`
 - `task.logs.stream`
 - `task.artifacts.list`
 - `task.artifact.get`
 - `memory.inspect`
 - `skill.install`
 - `config.get`
+- `remote_mcp.authorize.start`
+- `remote_mcp.authorize.complete`
+- `remote_mcp.reauthorize`
+- `remote_mcp.revoke`
 
 Observed event types include:
 
@@ -569,9 +640,9 @@ Observed event types include:
 - `skill.install.completed`
 - `skill.install.failed`
 - `task.completed`
+- `task.failed`
 
 The primary agent also has a built-in `memory_write` tool for creating `run_state` and `project` memory records. `project` writes remain governed by the existing memory approval path, while subagents stay read-only for memory in the current baseline.
-- `task.failed`
 
 ## Documentation Map
 

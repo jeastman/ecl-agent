@@ -1,6 +1,30 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
+
+
+MCPAuthorizationMode = Literal["static_headers", "oauth_user_grant"]
+
+
+@dataclass(frozen=True, slots=True)
+class MCPAuthorizationConfig:
+    mode: MCPAuthorizationMode = "static_headers"
+    provider: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OAuthProviderConfig:
+    provider_id: str
+    authorization_url: str | None = None
+    token_url: str | None = None
+    discovery_url: str | None = None
+    client_id: str = ""
+    client_secret: str = ""
+    redirect_uri: str = ""
+    scopes: tuple[str, ...] = ()
+    audience: str | None = None
+    resource: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -15,6 +39,7 @@ class MCPServerConfig:
     env_from_host: tuple[str, ...] = ()
     url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
+    auth: MCPAuthorizationConfig = field(default_factory=MCPAuthorizationConfig)
     source: str = "runtime_toml"
     source_path: str | None = None
 
@@ -23,6 +48,7 @@ class MCPServerConfig:
 class MCPConfig:
     tool_name_prefix: bool = True
     servers: dict[str, MCPServerConfig] = field(default_factory=dict)
+    oauth_providers: dict[str, OAuthProviderConfig] = field(default_factory=dict)
 
 
 @dataclass(slots=True)

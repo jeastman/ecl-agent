@@ -7,6 +7,7 @@ from rich.markup import escape
 from ..store.app_state import AppState
 from ..store.selectors import (
     footer_hints,
+    selected_remote_mcp_authorizations,
     selected_task_header,
     task_logs,
     task_action_bar,
@@ -28,6 +29,7 @@ from ..widgets.toast import ToastRack
 from ..theme.colors import TEXT_SECONDARY
 from ..widgets.task_detail_panels import (
     NotificationStripWidget,
+    RemoteMCPAuthorizationWidget,
     SubagentActivityWidget,
     TaskHeaderWidget,
     TodoPanelWidget,
@@ -74,6 +76,7 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
                     TodoPanelWidget(id="task-detail-todos"),
                     SubagentActivityWidget(id="task-detail-subagents"),
                     ArtifactPanelWidget(id="task-detail-artifacts"),
+                    RemoteMCPAuthorizationWidget(id="task-detail-remote-mcp"),
                     NotificationStripWidget(id="task-detail-notifications"),
                     id="task-detail-side",
                 ),
@@ -101,6 +104,9 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         self.query_one(TodoPanelWidget).update_todos(task_todo_view(state))
         self.query_one(SubagentActivityWidget).update_subagents(task_subagent_activity(state))
         self.query_one(ArtifactPanelWidget).update_artifacts(task_artifact_panel(state))
+        self.query_one(RemoteMCPAuthorizationWidget).update_authorizations(
+            selected_remote_mcp_authorizations(state)
+        )
         self.query_one(NotificationStripWidget).update_notifications(task_notifications(state))
         self.query_one(InputBoxWidget).update_actions(task_action_bar(state))
         timeline_state = timeline_state_summary(state)

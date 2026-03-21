@@ -52,6 +52,7 @@ from services.policy_service.local_agent_policy_service.policy_engine import (
     PolicyEngine,
     RuntimePolicyEngine,
 )
+from services.remote_mcp_auth_service import SQLiteRemoteMCPGrantStore
 
 
 @dataclass(slots=True)
@@ -70,6 +71,7 @@ class DurableRuntimeServices:
     run_metrics_store: RunMetricsStore
     run_message_store: RunMessageStore
     conversation_compaction_store: ConversationCompactionStore
+    remote_mcp_grant_store: SQLiteRemoteMCPGrantStore
 
 
 def create_durable_runtime_services(
@@ -103,6 +105,7 @@ def create_durable_runtime_services(
         run_metrics_store=SQLiteRunMetricsStore(str(database_path)),
         run_message_store=SQLiteRunMessageStore(str(database_path)),
         conversation_compaction_store=SQLiteConversationCompactionStore(str(database_path)),
+        remote_mcp_grant_store=SQLiteRemoteMCPGrantStore(str(database_path)),
     )
 
 

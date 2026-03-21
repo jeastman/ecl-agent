@@ -51,6 +51,12 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             hints.append(key_hint("I", "Command"))
         if model.resume_enabled:
             hints.append(key_hint("R", "Resume"))
+        if model.auth_enabled:
+            hints.append(key_hint("U", model.auth_label or "Authorize"))
+        if model.complete_auth_enabled:
+            hints.append(key_hint("X", "Complete Auth"))
+        if model.revoke_auth_enabled:
+            hints.append(key_hint("V", "Revoke Auth"))
         if model.approvals_enabled:
             hints.append(key_hint("A", f"Approvals {model.approval_count}"))
         if model.artifact_open_enabled:

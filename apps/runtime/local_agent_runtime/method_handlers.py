@@ -22,6 +22,12 @@ from packages.protocol.local_agent_protocol.models import (
     MemoryInspectResult,
     PROTOCOL_VERSION,
     RuntimeHealthResult,
+    RemoteMCPAuthorizeCompleteParams,
+    RemoteMCPAuthorizeCompleteResult,
+    RemoteMCPAuthorizeStartParams,
+    RemoteMCPAuthorizeStartResult,
+    RemoteMCPRevokeParams,
+    RemoteMCPRevokeResult,
     SkillInstallParams,
     SkillInstallResult,
     SkillInstallValidation,
@@ -52,6 +58,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskResumeParams,
     TaskResumeResult,
 )
+from services.remote_mcp_auth_service import RemoteMCPAuthService
 from services.memory_service.local_agent_memory_service.memory_models import MemoryRecord
 from services.memory_service.local_agent_memory_service.memory_promotion import (
     MEMORY_SCOPE_IDENTITY,
@@ -71,6 +78,7 @@ class MethodHandlers:
     task_runner: TaskRunner
     durable_services: DurableRuntimeServices
     resume_service: ResumeService
+    remote_mcp_auth_service: RemoteMCPAuthService | None = None
     config_sources: list[str] | None = None
     TASK_LIST_LIMIT: int = 25
 
@@ -104,10 +112,13 @@ class MethodHandlers:
         background: bool = False,
     ) -> TaskCreateResult:
         request = TaskCreateParams.from_dict(params).task
+        if _requires_runtime_user_id(self.config) and request.runtime_user_id is None:
+            raise ValueError("task.create requires task.runtime_user_id when oauth-backed MCP is configured")
         task_id, run_id, accepted_at = self.task_runner.start_run(
             correlation_id=correlation_id,
             objective=request.objective,
             workspace_roots=request.workspace_roots,
+            runtime_user_id=request.runtime_user_id,
             identity_bundle_text=self.identity.content,
             allowed_capabilities=request.allowed_capabilities,
             metadata=request.metadata,
@@ -396,6 +407,41 @@ class MethodHandlers:
                         self.config.compaction.tool_token_limit_before_evict
                     ),
                 },
+                "mcp": {
+                    "tool_name_prefix": self.config.mcp.tool_name_prefix,
+                    "servers": {
+                        name: {
+                            "transport": server.transport,
+                            "enabled": server.enabled,
+                            "description": server.description,
+                            "command": server.command,
+                            "args": list(server.args),
+                            "url": server.url,
+                            "headers": dict(server.headers),
+                            "auth": {
+                                "mode": server.auth.mode,
+                                "provider": server.auth.provider,
+                            },
+                            "source": server.source,
+                            "source_path": server.source_path,
+                        }
+                        for name, server in self.config.mcp.servers.items()
+                    },
+                    "oauth_providers": {
+                        name: {
+                            "authorization_url": provider.authorization_url,
+                            "token_url": provider.token_url,
+                            "discovery_url": provider.discovery_url,
+                            "client_id": provider.client_id,
+                            "client_secret": provider.client_secret,
+                            "redirect_uri": provider.redirect_uri,
+                            "scopes": list(provider.scopes),
+                            "audience": provider.audience,
+                            "resource": provider.resource,
+                        }
+                        for name, provider in self.config.mcp.oauth_providers.items()
+                    },
+                },
             },
             redactions,
         )
@@ -404,6 +450,56 @@ class MethodHandlers:
             loaded_profiles=[],
             config_sources=list(self.config_sources or [self.config.identity_path]),
             redactions=redactions,
+        )
+
+    def remote_mcp_authorize_start(self, params: dict) -> RemoteMCPAuthorizeStartResult:
+        if self.remote_mcp_auth_service is None:
+            raise ValueError("remote MCP auth is not configured")
+        request = RemoteMCPAuthorizeStartParams.from_dict(params)
+        state = self.run_state_store.get(request.task_id, request.run_id)
+        if state.runtime_user_id is None:
+            raise ValueError("remote MCP authorization requires runtime_user_id on the task")
+        authorization = self.remote_mcp_auth_service.start_authorization(
+            task_id=state.task_id,
+            run_id=state.run_id,
+            server_name=request.server_name,
+            runtime_user_id=state.runtime_user_id,
+        )
+        return RemoteMCPAuthorizeStartResult(
+            authorization_id=authorization.authorization_id,
+            server_name=authorization.server_name,
+            provider_id=authorization.provider_id,
+            authorization_url=authorization.authorization_url,
+            task=self.task_runner.get_task_snapshot(state.task_id, state.run_id),
+        )
+
+    def remote_mcp_authorize_complete(self, params: dict) -> RemoteMCPAuthorizeCompleteResult:
+        if self.remote_mcp_auth_service is None:
+            raise ValueError("remote MCP auth is not configured")
+        request = RemoteMCPAuthorizeCompleteParams.from_dict(params)
+        grant = self.remote_mcp_auth_service.complete_authorization(
+            authorization_id=request.authorization_id,
+            state_token=request.state_token,
+            code=request.code,
+        )
+        return RemoteMCPAuthorizeCompleteResult(
+            provider_id=grant.provider_id,
+            runtime_user_id=grant.runtime_user_id,
+            status=grant.status,
+        )
+
+    def remote_mcp_revoke(self, params: dict) -> RemoteMCPRevokeResult:
+        if self.remote_mcp_auth_service is None:
+            raise ValueError("remote MCP auth is not configured")
+        request = RemoteMCPRevokeParams.from_dict(params)
+        self.remote_mcp_auth_service.revoke(
+            provider_id=request.provider_id,
+            runtime_user_id=request.runtime_user_id,
+        )
+        return RemoteMCPRevokeResult(
+            provider_id=request.provider_id,
+            runtime_user_id=request.runtime_user_id,
+            revoked=True,
         )
 
     def skill_install(self, params: dict, correlation_id: str | None) -> SkillInstallResult:
@@ -496,6 +592,13 @@ def _matches_memory_context(record: MemoryRecord, task_id: str, run_id: str | No
     if run_id is None:
         return True
     return record.source_run == run_id or provenance_run_id == run_id
+
+
+def _requires_runtime_user_id(config: RuntimeConfig) -> bool:
+    return any(
+        server.enabled and server.auth.mode == "oauth_user_grant"
+        for server in config.mcp.servers.values()
+    )
 
 
 def _scope_summary(scope: dict[str, Any]) -> str:

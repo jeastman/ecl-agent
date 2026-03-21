@@ -1,6 +1,6 @@
 # Current Status: Implementation vs. Master Spec
 
-This document compares the repository implementation to [local-agent-harness-master-spec-v1.md](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-master-spec-v1.md) based on direct verification of the current codebase on March 20, 2026.
+This document compares the repository implementation to [local-agent-harness-master-spec-v1.md](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-master-spec-v1.md) based on direct verification of the current codebase on March 21, 2026.
 
 It is intentionally implementation-first. Statements below are grounded in the current source tree, protocol models, runtime handlers, clients, and automated checks.
 
@@ -17,27 +17,23 @@ Verified against:
 - runtime example configuration at [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml)
 - automated tests under `tests/*`
 
-Verification commands executed in this workspace:
+Focused verification commands executed in this workspace for the current update:
 
 ```bash
-uv run pytest
-uv run ruff check .
+uv run pytest tests/unit/test_tui_protocol_client.py tests/unit/test_tui_store.py tests/unit/test_tui_app.py -q
 ```
 
 Observed results:
 
 ```text
-pytest: 461 passed, 3 failed in 37.75s
-ruff: 60 errors
+pytest: 106 passed in 40.16s
 ```
 
 Current verification notes:
 
-- the repository is not currently test-green
-- the failing tests are:
-  - missing persisted `subagent.started` events in two runtime integration tests
-  - a TUI footer-hint expectation mismatch (`Esc` now renders as `Back` instead of `Dashboard`)
-- the repository is also not lint-clean; the current Ruff output reports 60 issues rather than a single unused import
+- the focused TUI protocol/store/app slice is green after the remote MCP auth update
+- the current update also re-verified the new generic remote MCP auth workflow in the TUI
+- repository-wide `pytest` and `ruff` were not re-run as part of this documentation update, so full-repo quality-gate status is unchanged from the last broader verification
 
 ## Executive Summary
 
@@ -47,21 +43,21 @@ The repository is beyond the older Milestone 2 framing. The current implementati
 - the Milestone 1 single-runtime execution slice
 - the Milestone 2 durable runtime-governance baseline
 - the Milestone 3 subagent, routing, conversation-compaction, and governed skill-installation baseline
-- a local Textual TUI operator client over the same runtime protocol
+- a local Textual TUI operator client over the same runtime protocol, including guided remote MCP authorization for OAuth-backed remote MCP servers
 
 The practical status today is:
 
 - the master spec section 28 architecture baseline is implemented in code
 - Milestones 0 through 3 are substantially implemented
 - Milestone 4 remains partial because there is still no web client
-- the runtime surface is broader than older docs claimed: `task.cancel`, `task.reply`, `task.resume`, `task.compact`, `memory.inspect`, `skill.install`, and `config.get` are all implemented
-- some live regressions remain, so the repo should not be described as fully green
+- the runtime surface is broader than older docs claimed: `task.cancel`, `task.reply`, `task.resume`, `task.compact`, `memory.inspect`, `skill.install`, `config.get`, and the `remote_mcp.*` auth methods are all implemented
+- the TUI now exposes the runtime's remote MCP auth lifecycle instead of leaving OAuth-backed MCP runs in an opaque paused state
 
 The main remaining gaps are:
 
 - no web client
 - memory retrieval/governance is still narrower than the long-range spec intent
-- current regressions around subagent start-event persistence and TUI footer-hint expectations
+- repository-wide quality gates were not re-run as part of this focused verification update
 
 ## Status Legend
 
@@ -100,7 +96,7 @@ Current status:
 Conclusion:
 
 - the repository still satisfies the master spec's initial architecture baseline
-- that architectural conclusion is separate from the fact that the repo currently has failing tests and lint issues
+- that architectural conclusion is separate from full repository-wide quality-gate status, which was not re-verified in this focused update
 
 | Acceptance criterion | Status | Notes |
 | --- | --- | --- |
@@ -194,8 +190,7 @@ Concrete evidence includes:
 Important nuance:
 
 - the code defines and tests both `subagent.started` and `subagent.completed`
-- the current integration suite shows a regression where `subagent.started` is not present in persisted runtime history for some paths
-- that is best described as an implementation regression inside an otherwise implemented Milestone 3 slice
+- this update did not re-run the full integration suite, so milestone status here is based on implementation structure plus the latest focused verification rather than a fresh repo-wide test pass
 
 ### 3.5 Milestone 4
 
@@ -209,6 +204,8 @@ Implemented today:
 - event review and live stream consumption
 - operator screens for approvals, diagnostics, memory, and config
 - task-detail command input for replies and action dispatch
+- persisted operator identity via `runtime_user_id` for per-user remote MCP auth
+- guided remote MCP auth flows in task detail and the command palette, including start, complete, reauthorize, and revoke actions
 
 Not present today:
 
@@ -297,11 +294,13 @@ Implemented:
 - runtime-owned policy decisions: allow, require approval, deny
 - boundary-scoped approval grants
 - approval-oriented pause/resume flow
+- generic per-user remote MCP authorization capability with provider-managed OAuth grants and runtime-governed auth lifecycle operations
 
 Primary evidence:
 
 - [loader.py](/Users/jeastman/Projects/e/ecl-agent/packages/identity/local_agent_identity/loader.py)
 - [policy_engine.py](/Users/jeastman/Projects/e/ecl-agent/services/policy_service/local_agent_policy_service/policy_engine.py)
+- [service.py](/Users/jeastman/Projects/e/ecl-agent/services/remote_mcp_auth_service/local_agent_remote_mcp_auth_service/service.py)
 - [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py)
 
 ### 4.6 Subagents, Skills, Model Routing, and Compaction
@@ -323,7 +322,7 @@ Implemented:
 Still narrower than the broadest possible reading of the spec:
 
 - memory/governance semantics are still lighter than the long-range target
-- current subagent start-event persistence has a regression in integration coverage
+- full repo-wide quality gates were not re-run in this focused verification pass
 
 Primary evidence:
 
@@ -358,11 +357,15 @@ Implemented runtime methods:
 - `memory.inspect`
 - `skill.install`
 - `config.get`
+- `remote_mcp.authorize.start`
+- `remote_mcp.authorize.complete`
+- `remote_mcp.reauthorize`
+- `remote_mcp.revoke`
 
 Client coverage:
 
 - the CLI exposes command paths for the implemented inspection and control methods, including `cancel`, `reply`, `resume`, `memory`, `config`, and `skill-install`
-- the TUI consumes `task.list`, `task.get`, `task.cancel`, `task.reply`, `task.resume`, artifact inspection, live event streams, approvals, diagnostics, memory inspection, and config inspection
+- the TUI consumes `task.list`, `task.get`, `task.cancel`, `task.reply`, `task.resume`, artifact inspection, live event streams, approvals, diagnostics, memory inspection, config inspection, and the `remote_mcp.*` auth methods
 
 Primary evidence:
 
@@ -415,9 +418,9 @@ These are the main gaps or regressions visible in the repository today:
 
 1. There is still no web client.
 2. Memory retrieval precedence and richer governance semantics remain incomplete.
-3. The repository still has some live regressions and cleanup debt, so it should not be described as fully green without re-running the full quality gates.
+3. Full repository-wide quality gates were not re-run in this focused verification pass, so repo-wide green status should not be inferred from the targeted TUI checks alone.
 
-None of those gaps invalidate the section 28 architectural baseline. They do mean the repo should not be described as fully green or fully aligned with the long-range platform scope.
+None of those gaps invalidate the section 28 architectural baseline. They do mean the repo should not be described as fully aligned with the long-range platform scope, and full green status still requires broader verification.
 
 ## 6. Bottom Line
 
@@ -427,8 +430,9 @@ The honest status today is:
 - Milestones 0 through 3 are substantially implemented in code
 - the repository has both a CLI and a local TUI client
 - `task.compact` and `memory.updated` are implemented and should no longer be listed as missing
+- the TUI now supports generic remote MCP auth flows for OAuth-backed remote MCP servers
 - the main unfinished work remains web-client/platform territory plus broader memory-governance maturity
-- the current repository also has active test and lint regressions that should be tracked separately from architecture status
+- full repository-wide quality gates still need separate verification beyond the focused TUI checks captured above
 
 What is real today is a local-first agent runtime with:
 
@@ -442,4 +446,4 @@ What is real today is a local-first agent runtime with:
 - project-owned subagent roles with model routing and delegated execution
 - governed skill installation into managed skill roots
 
-What is not yet real today is the web client, cancellation, and the broader memory-governance maturity described in the long-range spec.
+What is not yet real today is the web client and the broader memory-governance maturity described in the long-range spec.

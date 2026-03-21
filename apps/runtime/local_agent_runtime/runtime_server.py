@@ -12,6 +12,10 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_CONFIG_GET,
     METHOD_MEMORY_INSPECT,
     METHOD_RUNTIME_HEALTH,
+    METHOD_REMOTE_MCP_AUTHORIZE_COMPLETE,
+    METHOD_REMOTE_MCP_AUTHORIZE_START,
+    METHOD_REMOTE_MCP_REAUTHORIZE,
+    METHOD_REMOTE_MCP_REVOKE,
     METHOD_SKILL_INSTALL,
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
@@ -243,6 +247,33 @@ class RuntimeServer:
                         id=request.id,
                         correlation_id=correlation_id,
                         result=self.handlers.config_get(),
+                    ),
+                    [],
+                )
+            if request.method in {METHOD_REMOTE_MCP_AUTHORIZE_START, METHOD_REMOTE_MCP_REAUTHORIZE}:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.remote_mcp_authorize_start(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_REMOTE_MCP_AUTHORIZE_COMPLETE:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.remote_mcp_authorize_complete(request.params),
+                    ),
+                    [],
+                )
+            if request.method == METHOD_REMOTE_MCP_REVOKE:
+                return (
+                    JsonRpcResponse(
+                        id=request.id,
+                        correlation_id=correlation_id,
+                        result=self.handlers.remote_mcp_revoke(request.params),
                     ),
                     [],
                 )

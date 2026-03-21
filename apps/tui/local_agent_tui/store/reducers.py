@@ -134,6 +134,34 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
             message.get("task_detail_show_logs", state.task_detail_show_logs)
         ),
         navigation_stack=list(message.get("navigation_stack", state.navigation_stack)),
+        runtime_user_id=_normalize_error(message.get("runtime_user_id", state.runtime_user_id)),
+        pending_task_objective=_normalize_error(
+            message.get("pending_task_objective", state.pending_task_objective)
+        ),
+        remote_mcp_request_status=str(
+            message.get("remote_mcp_request_status", state.remote_mcp_request_status)
+        ),
+        remote_mcp_request_error=_normalize_error(
+            message.get("remote_mcp_request_error", state.remote_mcp_request_error)
+        ),
+        remote_mcp_authorization_id=_normalize_error(
+            message.get("remote_mcp_authorization_id", state.remote_mcp_authorization_id)
+        ),
+        remote_mcp_authorization_url=_normalize_error(
+            message.get("remote_mcp_authorization_url", state.remote_mcp_authorization_url)
+        ),
+        remote_mcp_server_name=_normalize_error(
+            message.get("remote_mcp_server_name", state.remote_mcp_server_name)
+        ),
+        remote_mcp_provider_id=_normalize_error(
+            message.get("remote_mcp_provider_id", state.remote_mcp_provider_id)
+        ),
+        remote_mcp_last_state_token=_normalize_error(
+            message.get("remote_mcp_last_state_token", state.remote_mcp_last_state_token)
+        ),
+        remote_mcp_open_browser_supported=bool(
+            message.get("remote_mcp_open_browser_supported", state.remote_mcp_open_browser_supported)
+        ),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
@@ -303,6 +331,26 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             ],
             config_request_status="loaded",
             config_request_error=None,
+        )
+
+    if name == "remote_mcp.authorize.start":
+        result = dict(payload.get("result", {}))
+        task = result.get("task")
+        next_state = state
+        if isinstance(task, dict):
+            merged_task = _merge_task_snapshot(
+                state.task_snapshots.get(str(task.get("task_id", ""))),
+                dict(task),
+            )
+            next_state = _replace_task(next_state, merged_task, preserve_selection=True)
+        return replace(
+            next_state,
+            remote_mcp_authorization_id=_normalize_error(result.get("authorization_id")),
+            remote_mcp_authorization_url=_normalize_error(result.get("authorization_url")),
+            remote_mcp_server_name=_normalize_error(result.get("server_name")),
+            remote_mcp_provider_id=_normalize_error(result.get("provider_id")),
+            remote_mcp_request_status="loaded",
+            remote_mcp_request_error=None,
         )
 
     if name == "task.diagnostics.list":

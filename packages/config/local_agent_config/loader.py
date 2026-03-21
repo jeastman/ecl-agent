@@ -10,9 +10,11 @@ from packages.config.local_agent_config.models import (
     CliConfig,
     CompactionConfig,
     CompactionSize,
+    MCPAuthorizationConfig,
     MCPConfig,
     MCPServerConfig,
     ModelConfig,
+    OAuthProviderConfig,
     PersistenceConfig,
     RuntimeConfig,
     RuntimeSettings,
@@ -231,6 +233,106 @@ def _resolve_env_from_host(
     return names
 
 
+def _parse_mcp_auth_config(*, name: str, payload: object) -> MCPAuthorizationConfig:
+    if payload is None:
+        return MCPAuthorizationConfig()
+    if not isinstance(payload, dict):
+        raise ValueError(f"mcp.servers.{name}.auth must be a table/object")
+    mode = payload.get("mode", "static_headers")
+    if not isinstance(mode, str) or mode not in {"static_headers", "oauth_user_grant"}:
+        raise ValueError(
+            f"mcp.servers.{name}.auth.mode must be static_headers or oauth_user_grant"
+        )
+    provider = payload.get("provider")
+    if provider is not None and (not isinstance(provider, str) or not provider.strip()):
+        raise ValueError(f"mcp.servers.{name}.auth.provider must be a non-empty string")
+    if mode == "oauth_user_grant" and provider is None:
+        raise ValueError(f"mcp.servers.{name}.auth.provider is required for oauth_user_grant")
+    if mode == "static_headers" and provider is not None:
+        raise ValueError(f"mcp.servers.{name}.auth.provider is only valid for oauth_user_grant")
+    return MCPAuthorizationConfig(mode=mode, provider=provider.strip() if isinstance(provider, str) else None)
+
+
+def _parse_oauth_provider_config(*, name: str, payload: object) -> OAuthProviderConfig:
+    if not isinstance(payload, dict):
+        raise ValueError(f"mcp.oauth_providers.{name} must be a table/object")
+    authorization_url = payload.get("authorization_url")
+    token_url = payload.get("token_url")
+    discovery_url = payload.get("discovery_url")
+    for field_name, value in (
+        ("authorization_url", authorization_url),
+        ("token_url", token_url),
+        ("discovery_url", discovery_url),
+        ("audience", payload.get("audience")),
+        ("resource", payload.get("resource")),
+    ):
+        if value is not None and (not isinstance(value, str) or not value.strip()):
+            raise ValueError(f"mcp.oauth_providers.{name}.{field_name} must be a non-empty string")
+    if discovery_url is None and (authorization_url is None or token_url is None):
+        raise ValueError(
+            f"mcp.oauth_providers.{name} must define discovery_url or both authorization_url and token_url"
+        )
+    client_id = payload.get("client_id")
+    client_secret = payload.get("client_secret")
+    redirect_uri = payload.get("redirect_uri")
+    for field_name, value in (
+        ("client_id", client_id),
+        ("client_secret", client_secret),
+        ("redirect_uri", redirect_uri),
+    ):
+        if not isinstance(value, str) or not value.strip():
+            raise ValueError(f"mcp.oauth_providers.{name}.{field_name} must be a non-empty string")
+    return OAuthProviderConfig(
+        provider_id=name,
+        authorization_url=(
+            _resolve_host_env_string(authorization_url.strip(), key=f"mcp.oauth_providers.{name}.authorization_url")
+            if isinstance(authorization_url, str)
+            else None
+        ),
+        token_url=(
+            _resolve_host_env_string(token_url.strip(), key=f"mcp.oauth_providers.{name}.token_url")
+            if isinstance(token_url, str)
+            else None
+        ),
+        discovery_url=(
+            _resolve_host_env_string(discovery_url.strip(), key=f"mcp.oauth_providers.{name}.discovery_url")
+            if isinstance(discovery_url, str)
+            else None
+        ),
+        client_id=_resolve_host_env_string(client_id.strip(), key=f"mcp.oauth_providers.{name}.client_id"),
+        client_secret=_resolve_host_env_string(
+            client_secret.strip(), key=f"mcp.oauth_providers.{name}.client_secret"
+        ),
+        redirect_uri=_resolve_host_env_string(
+            redirect_uri.strip(), key=f"mcp.oauth_providers.{name}.redirect_uri"
+        ),
+        scopes=_optional_string_sequence(payload.get("scopes"), f"mcp.oauth_providers.{name}.scopes"),
+        audience=(
+            _resolve_host_env_string(str(payload.get("audience")).strip(), key=f"mcp.oauth_providers.{name}.audience")
+            if isinstance(payload.get("audience"), str)
+            else None
+        ),
+        resource=(
+            _resolve_host_env_string(str(payload.get("resource")).strip(), key=f"mcp.oauth_providers.{name}.resource")
+            if isinstance(payload.get("resource"), str)
+            else None
+        ),
+    )
+
+
+def _parse_oauth_providers_table(payload: object) -> dict[str, OAuthProviderConfig]:
+    if payload is None:
+        return {}
+    if not isinstance(payload, dict):
+        raise ValueError("mcp.oauth_providers must be a table/object")
+    providers: dict[str, OAuthProviderConfig] = {}
+    for name, provider_payload in payload.items():
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("mcp oauth provider names must be non-empty strings")
+        providers[name] = _parse_oauth_provider_config(name=name.strip(), payload=provider_payload)
+    return providers
+
+
 def _parse_mcp_server_config(
     *,
     name: str,
@@ -243,6 +345,7 @@ def _parse_mcp_server_config(
     if description_value is not None and not isinstance(description_value, str):
         raise ValueError(f"MCP server {name} description must be a string when present")
     description = None if description_value in (None, "") else str(description_value)
+    auth = _parse_mcp_auth_config(name=name, payload=payload.get("auth"))
 
     command = payload.get("command")
     url = payload.get("url")
@@ -287,6 +390,7 @@ def _parse_mcp_server_config(
                 args=_optional_string_list(payload.get("args"), f"mcp.servers.{name}.args"),
                 env=env_payload,
                 env_from_host=env_from_host_payload,
+                auth=auth,
                 source=source,
                 source_path=source_path,
             )
@@ -306,6 +410,7 @@ def _parse_mcp_server_config(
                 key=f"mcp.servers.{name}.env",
             ),
             env_from_host=env_from_host,
+            auth=auth,
             source=source,
             source_path=source_path,
         )
@@ -316,6 +421,10 @@ def _parse_mcp_server_config(
         raise ValueError(f"MCP server {name} url-based entries cannot use stdio transport")
     if payload.get("env_from_host", payload.get("envFromHost")) is not None:
         raise ValueError(f"MCP server {name} env_from_host is supported only for stdio servers")
+    if auth.mode == "oauth_user_grant" and payload.get("headers") is not None:
+        raise ValueError(
+            f"MCP server {name} cannot define headers when auth.mode is oauth_user_grant"
+        )
     headers_payload = _optional_string_map(payload.get("headers"), f"mcp.servers.{name}.headers")
     if not enabled:
         return MCPServerConfig(
@@ -325,6 +434,7 @@ def _parse_mcp_server_config(
             description=description,
             url=url_value,
             headers=headers_payload,
+            auth=auth,
             source=source,
             source_path=source_path,
         )
@@ -339,6 +449,7 @@ def _parse_mcp_server_config(
             headers_payload,
             key=f"mcp.servers.{name}.headers",
         ),
+        auth=auth,
         source=source,
         source_path=source_path,
     )
@@ -417,9 +528,16 @@ def _resolve_mcp_config(config_path: Path, mcp_payload: dict[str, object]) -> MC
             source_path=str(config_path.resolve()),
         )
     )
+    oauth_providers = _parse_oauth_providers_table(mcp_payload.get("oauth_providers"))
+    for server in servers.values():
+        if server.auth.mode == "oauth_user_grant" and server.auth.provider not in oauth_providers:
+            raise ValueError(
+                f"MCP server {server.name} references unknown oauth provider {server.auth.provider}"
+            )
     return MCPConfig(
         tool_name_prefix=_optional_bool(mcp_payload, "tool_name_prefix", default=True),
         servers=servers,
+        oauth_providers=oauth_providers,
     )
 
 

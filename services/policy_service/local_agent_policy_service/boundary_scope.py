@@ -168,6 +168,21 @@ def describe_boundary(context: OperationContext) -> BoundaryDescriptor | None:
             },
             description=f"Allow MCP {transport} access for host {hostname} during this run",
         )
+    if context.operation_type.startswith("remote_mcp.auth."):
+        metadata = context.metadata or {}
+        provider_id = str(metadata.get("provider_id") or "oauth")
+        server_name = str(metadata.get("server_name") or "mcp")
+        suffix = context.operation_type.rsplit(".", 1)[-1]
+        return BoundaryDescriptor(
+            boundary_key=f"remote_mcp.auth:{suffix}:{provider_id}:{server_name}",
+            scope={
+                "kind": "remote_mcp.auth",
+                "operation": context.operation_type,
+                "provider_id": provider_id,
+                "server_name": server_name,
+            },
+            description=f"Allow {context.operation_type} for provider {provider_id} and server {server_name}",
+        )
     if context.operation_type in {"web.fetch", "web.search"}:
         target = context.path_scope or ""
         hostname = urlparse(target).netloc or "unknown-host"

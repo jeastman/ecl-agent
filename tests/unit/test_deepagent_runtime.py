@@ -13,6 +13,7 @@ from langchain_core.messages import AIMessage
 from langgraph.types import Command
 from pydantic import BaseModel, Field, ValidationError
 from packages.config.local_agent_config.models import CompactionConfig, MCPConfig, MCPServerConfig
+from packages.config.local_agent_config.models import MCPAuthorizationConfig, OAuthProviderConfig
 from apps.runtime.local_agent_runtime.subagents import (
     ResolvedModelRoute,
     ResolvedSubagentConfiguration,
@@ -1641,6 +1642,37 @@ class LangChainDeepAgentHarnessTests(unittest.TestCase):
         self.assertTrue(result.awaiting_approval)
         self.assertEqual(result.pause_reason, "awaiting approval")
 
+    def test_harness_pauses_when_remote_mcp_authorization_is_required(self) -> None:
+        request = AgentExecutionRequest(
+            task_id="task_1",
+            run_id="run_1",
+            objective="Use MCP tools",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="Operate carefully.",
+            sandbox=self.sandbox,
+            resolved_subagents=[],
+            artifact_store=self.artifact_store,
+            memory_store=self.memory_store,
+            allowed_capabilities=[],
+            metadata={},
+        )
+
+        result = LangChainDeepAgentHarness(
+            model_name="gpt-5",
+            model_provider="openai",
+            mcp_config=_oauth_fixture_mcp_config(),
+            model_factory=lambda model_name, *, model_provider: {},
+            agent_factory=lambda **kwargs: MCPPrimaryAgent(kwargs, {}),
+        ).execute(request, on_event=lambda *_: None)
+
+        self.assertTrue(result.paused)
+        self.assertEqual(result.pause_reason, "remote_mcp_authorization_required")
+        self.assertEqual(result.remote_mcp_authorizations[0].server_name, "slack")
+        self.assertEqual(
+            result.remote_mcp_authorizations[0].actions[0].method,
+            "remote_mcp.authorize.start",
+        )
+
     def test_harness_emits_mcp_tool_called_event_metadata(self) -> None:
         events: list[tuple[str, dict[str, Any]]] = []
         request = AgentExecutionRequest(
@@ -2658,6 +2690,31 @@ def _fixture_mcp_config(source: str = "runtime_toml") -> MCPConfig:
                 args=(str(Path("tests/fixtures/mcp_echo_server.py").resolve()),),
                 source=source,
                 source_path=str(Path("tests/fixtures/mcp_echo_server.py").resolve()),
+            )
+        },
+    )
+
+
+def _oauth_fixture_mcp_config() -> MCPConfig:
+    return MCPConfig(
+        tool_name_prefix=True,
+        servers={
+            "slack": MCPServerConfig(
+                name="slack",
+                transport="streamable_http",
+                url="https://mcp.slack.com/mcp",
+                auth=MCPAuthorizationConfig(mode="oauth_user_grant", provider="slack"),
+            )
+        },
+        oauth_providers={
+            "slack": OAuthProviderConfig(
+                provider_id="slack",
+                authorization_url="https://slack.com/oauth/v2/authorize",
+                token_url="https://slack.com/api/oauth.v2.access",
+                client_id="client-id",
+                client_secret="client-secret",
+                redirect_uri="https://runtime.example.com/callback",
+                scopes=("chat:write",),
             )
         },
     )

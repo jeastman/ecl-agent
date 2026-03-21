@@ -210,13 +210,19 @@ Screen {
 #command-palette-panel,
 #create-task-panel,
 #task-timeline-prompt-panel,
-#confirm-dialog-panel {
+#confirm-dialog-panel,
+#runtime-user-panel,
+#remote-mcp-authorize-panel,
+#remote-mcp-complete-panel {
     border: round $la-border-subtle;
     background: $la-surface;
     padding: 1;
 }
 
-#confirm-dialog-panel {
+#confirm-dialog-panel,
+#runtime-user-panel,
+#remote-mcp-authorize-panel,
+#remote-mcp-complete-panel {
     width: 64;
     max-width: 80%;
     height: auto;
@@ -242,6 +248,14 @@ Screen {
 #confirm-dialog-actions {
     layout: horizontal;
     height: auto;
+}
+
+#remote-mcp-authorize-url {
+    border: round $la-border-subtle;
+    background: $la-bg-input;
+    color: $la-text;
+    padding: 1;
+    margin: 1 0;
 }
 
 .confirm-dialog-button {
@@ -291,6 +305,7 @@ Screen {
 #task-detail-todos,
 #task-detail-subagents,
 #task-detail-artifacts,
+#task-detail-remote-mcp,
 #task-detail-notifications {
     height: auto;
     min-height: 7;

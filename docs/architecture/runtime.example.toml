@@ -39,6 +39,14 @@ web_access_mode = "allow"
 [mcp]
 tool_name_prefix = true
 
+[mcp.oauth_providers.example]
+authorization_url = "https://example.com/oauth/authorize"
+token_url = "https://example.com/oauth/token"
+client_id = "${EXAMPLE_CLIENT_ID}"
+client_secret = "${EXAMPLE_CLIENT_SECRET}"
+redirect_uri = "http://localhost:4315/oauth/example/callback"
+scopes = ["read", "write"]
+
 [mcp.servers.fixture_stdio]
 enabled = false
 description = "Example local stdio MCP server."
@@ -53,6 +61,13 @@ description = "Example remote MCP server."
 transport = "http"
 url = "https://example.com/mcp"
 headers = { Authorization = "Bearer ${REMOTE_MCP_TOKEN}" }
+
+[mcp.servers.fixture_remote_oauth]
+enabled = false
+description = "Example remote MCP server using per-user OAuth."
+transport = "streamable_http"
+url = "https://example.com/oauth-mcp"
+auth = { mode = "oauth_user_grant", provider = "example" }
 
 [mcp.servers.mcp_atlassian]
 enabled = false

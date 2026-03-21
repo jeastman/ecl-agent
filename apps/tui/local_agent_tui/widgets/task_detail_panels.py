@@ -2,17 +2,19 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
 
 from ..renderables import badge, block, join, metadata_line, muted, text
 from ..store.selectors import (
     NotificationStripViewModel,
+    RemoteMCPAuthorizationViewModel,
     SubagentActivityItemViewModel,
     TaskDetailHeaderViewModel,
     TodoPanelViewModel,
 )
-from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
+from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_PRIMARY, TEXT_SECONDARY, WARNING
 from ..theme.empty_states import render_empty_state
 from ..theme.typography import label, muted, status_badge, title, value
 from ..utils.text import truncate, truncate_id
@@ -141,6 +143,31 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
                 ]
             )
         )
+
+
+class RemoteMCPAuthorizationWidget(Static):  # type: ignore[misc]
+    def update_authorizations(self, items: list[RemoteMCPAuthorizationViewModel]) -> None:
+        if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
+            raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        self.border_title = "Remote MCP Auth"
+        if not items:
+            self.update(render_empty_state("notifications"))
+            return
+        lines: list[Text] = []
+        for item in items:
+            line = Text()
+            line.append("🔐 ", style=WARNING)
+            line.append(f"{item.server_name}", style="bold")
+            line.append("  ")
+            line.append_text(status_badge(item.status.upper()))
+            lines.append(line)
+            lines.append(Text(item.summary, style=TEXT_SECONDARY))
+            if item.actions:
+                action_line = Text("Actions: ", style=TEXT_MUTED_DEEP)
+                action_line.append(", ".join(action.title for action in item.actions), style=TEXT_PRIMARY)
+                lines.append(action_line)
+            lines.append(Text(""))
+        self.update(Group(*lines[:-1] if lines and not lines[-1].plain.strip() else lines))
 
 
 def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> Group:

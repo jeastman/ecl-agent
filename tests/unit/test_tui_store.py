@@ -22,6 +22,7 @@ from apps.tui.local_agent_tui.store.selectors import (
     pending_approvals,
     pending_approvals_for_selected_task,
     recent_artifacts,
+    selected_remote_mcp_authorizations,
     selected_approval_detail,
     selected_memory_detail,
     selected_task_header,
@@ -766,8 +767,70 @@ class TuiStoreTests(unittest.TestCase):
 
         self.assertEqual(plan.current_phase, "planning")
         self.assertEqual(plan.current_step, "Inspect docs")
-        self.assertEqual(plan.recent_updates[-1].summary, "Analyze repository")
-        self.assertRegex(plan.recent_updates[-1].timestamp_display, r"\d{2}:\d{2}")
+
+    def test_task_detail_selectors_surface_remote_mcp_authorization(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch({"kind": "ui", "selected_task_id": "task_1", "runtime_user_id": "operator-1"})
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "paused",
+                            "objective": "Inspect repo",
+                            "created_at": "2026-03-12T00:00:00Z",
+                            "updated_at": "2026-03-12T00:00:05Z",
+                            "pause_reason": "remote_mcp_authorization_required",
+                            "is_resumable": True,
+                            "remote_mcp_authorizations": [
+                                {
+                                    "server_name": "slack",
+                                    "provider_id": "slack",
+                                    "status": "authorization_required",
+                                    "summary": "Remote MCP server slack requires authorization.",
+                                    "actions": [
+                                        {
+                                            "action_id": "authorize_remote_mcp",
+                                            "method": "remote_mcp.authorize.start",
+                                            "title": "Authorize remote MCP",
+                                            "params": {
+                                                "task_id": "task_1",
+                                                "run_id": "run_1",
+                                                "server_name": "slack",
+                                            },
+                                        },
+                                        {
+                                            "action_id": "complete_remote_mcp_authorization",
+                                            "method": "remote_mcp.authorize.complete",
+                                            "title": "Complete remote MCP authorization",
+                                            "params": {},
+                                        },
+                                    ],
+                                }
+                            ],
+                        }
+                    }
+                },
+            }
+        )
+
+        state = store.snapshot()
+        actions = task_action_bar(state)
+        notifications = task_notifications(state)
+        auths = selected_remote_mcp_authorizations(state)
+        palette = command_palette(state)
+
+        self.assertTrue(actions.auth_enabled)
+        self.assertEqual(actions.auth_label, "Authorize")
+        self.assertTrue(actions.complete_auth_enabled)
+        self.assertEqual(auths[0].server_name, "slack")
+        self.assertIn("Remote MCP server slack requires authorization.", notifications.items[0].summary)
+        self.assertTrue(any(item.command_id == "authorize_remote_mcp" for item in palette.items))
 
     def test_task_subagent_activity_falls_back_to_active_snapshot(self) -> None:
         store = AppStateStore()

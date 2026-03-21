@@ -469,6 +469,53 @@ class RuntimeConfigLoaderTests(unittest.TestCase):
                 {"Authorization": "Bearer top-secret"},
             )
 
+    def test_loader_parses_oauth_backed_remote_mcp_server(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            config_path = Path(temp_dir) / "runtime.toml"
+            config_path.write_text(
+                "\n".join(
+                    [
+                        "[runtime]",
+                        "name = 'local-agent-harness'",
+                        "",
+                        "[transport]",
+                        "mode = 'stdio-jsonrpc'",
+                        "",
+                        "[identity]",
+                        "path = '../agents/primary-agent/IDENTITY.md'",
+                        "",
+                        "[models.primary]",
+                        "provider = 'openai'",
+                        "model = 'gpt-5'",
+                        "",
+                        "[mcp.oauth_providers.slack]",
+                        "authorization_url = 'https://slack.com/oauth/v2/authorize'",
+                        "token_url = 'https://slack.com/api/oauth.v2.access'",
+                        "client_id = '${SLACK_CLIENT_ID}'",
+                        "client_secret = '${SLACK_CLIENT_SECRET}'",
+                        "redirect_uri = 'https://runtime.example.com/callback'",
+                        "scopes = ['chat:write']",
+                        "",
+                        "[mcp.servers.slack]",
+                        "transport = 'streamable_http'",
+                        "url = 'https://mcp.slack.com/mcp'",
+                        "auth = { mode = 'oauth_user_grant', provider = 'slack' }",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            with patch.dict(
+                "os.environ",
+                {"SLACK_CLIENT_ID": "client-id", "SLACK_CLIENT_SECRET": "client-secret"},
+                clear=False,
+            ):
+                config = load_runtime_config(str(config_path))
+
+            self.assertEqual(config.mcp.servers["slack"].auth.mode, "oauth_user_grant")
+            self.assertEqual(config.mcp.servers["slack"].auth.provider, "slack")
+            self.assertEqual(config.mcp.oauth_providers["slack"].client_secret, "client-secret")
+
     def test_loader_fails_when_interpolated_env_variable_is_missing(self) -> None:
         with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
             config_path = Path(temp_dir) / "runtime.toml"

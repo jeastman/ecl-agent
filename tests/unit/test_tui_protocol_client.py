@@ -53,6 +53,7 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
             payload = await client.task_create(
                 objective="Inspect repo",
                 workspace_roots=["/workspace"],
+                runtime_user_id="operator-1",
             )
         self.assertEqual(payload["result"]["task_id"], "task_1")
         request_mock.assert_awaited_once_with(
@@ -61,6 +62,7 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
                 "task": {
                     "objective": "Inspect repo",
                     "workspace_roots": ["/workspace"],
+                    "runtime_user_id": "operator-1",
                     "scope": [],
                     "success_criteria": [],
                     "constraints": [],
@@ -143,6 +145,36 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
         request_mock.assert_awaited_once_with(
             "task.artifact.get",
             {"task_id": "task_1", "artifact_id": "artifact_1", "run_id": "run_1"},
+        )
+
+    async def test_remote_mcp_authorize_start_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"authorization_id": "auth_1"}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.remote_mcp_authorize_start(
+                task_id="task_3",
+                run_id="run_3",
+                server_name="slack",
+            )
+        self.assertEqual(payload["result"]["authorization_id"], "auth_1")
+        request_mock.assert_awaited_once_with(
+            "remote_mcp.authorize.start",
+            {"task_id": "task_3", "run_id": "run_3", "server_name": "slack"},
+        )
+
+    async def test_remote_mcp_authorize_complete_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"status": "authorized"}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.remote_mcp_authorize_complete(
+                authorization_id="auth_1",
+                code="code-123",
+                state_token="state-123",
+            )
+        self.assertEqual(payload["result"]["status"], "authorized")
+        request_mock.assert_awaited_once_with(
+            "remote_mcp.authorize.complete",
+            {"authorization_id": "auth_1", "code": "code-123", "state_token": "state-123"},
         )
 
     async def test_consume_task_stream_filters_other_tasks_and_stops_on_selected_terminal_event(

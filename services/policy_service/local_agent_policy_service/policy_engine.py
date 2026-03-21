@@ -109,6 +109,8 @@ class RuntimePolicyEngine:
             if transport == "stdio":
                 return True
             return _web_access_mode(self.policy_config) == "require_approval"
+        if context.operation_type in {"remote_mcp.auth.complete", "remote_mcp.auth.refresh"}:
+            return _web_access_mode(self.policy_config) == "require_approval"
         if context.operation_type in {"web.fetch", "web.search"}:
             return _web_access_mode(self.policy_config) == "require_approval"
 
@@ -144,6 +146,8 @@ class RuntimePolicyEngine:
             if transport == "stdio":
                 return False
             return _web_access_mode(self.policy_config) == "deny"
+        if context.operation_type in {"remote_mcp.auth.complete", "remote_mcp.auth.refresh"}:
+            return _web_access_mode(self.policy_config) == "deny"
         if context.operation_type in {"web.fetch", "web.search"}:
             return _web_access_mode(self.policy_config) == "deny"
 
@@ -163,6 +167,8 @@ class RuntimePolicyEngine:
             return "Skill installation target is denied by the runtime policy."
         if context.operation_type == "mcp.server.connect":
             return "Outbound MCP server access is denied by the runtime policy."
+        if context.operation_type.startswith("remote_mcp.auth."):
+            return "Remote MCP authorization network access is denied by the runtime policy."
         if context.operation_type in {"web.fetch", "web.search"}:
             return "Outbound web access is denied by the runtime policy."
         return "Operation is denied by the runtime policy."

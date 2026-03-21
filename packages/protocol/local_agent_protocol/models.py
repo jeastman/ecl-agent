@@ -27,6 +27,10 @@ METHOD_TASK_ARTIFACT_GET = "task.artifact.get"
 METHOD_SKILL_INSTALL = "skill.install"
 METHOD_MEMORY_INSPECT = "memory.inspect"
 METHOD_CONFIG_GET = "config.get"
+METHOD_REMOTE_MCP_AUTHORIZE_START = "remote_mcp.authorize.start"
+METHOD_REMOTE_MCP_AUTHORIZE_COMPLETE = "remote_mcp.authorize.complete"
+METHOD_REMOTE_MCP_REAUTHORIZE = "remote_mcp.reauthorize"
+METHOD_REMOTE_MCP_REVOKE = "remote_mcp.revoke"
 
 
 def utc_now_timestamp() -> str:
@@ -164,6 +168,7 @@ class JsonRpcResponse:
 class TaskCreateRequest:
     objective: str
     workspace_roots: list[str] = field(default_factory=list)
+    runtime_user_id: str | None = None
     scope: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
     constraints: list[str] = field(default_factory=list)
@@ -184,6 +189,7 @@ class TaskCreateRequest:
         constraints = payload.get("constraints", [])
         allowed_capabilities = payload.get("allowed_capabilities", [])
         metadata = payload.get("metadata", {})
+        runtime_user_id = payload.get("runtime_user_id")
         if not isinstance(workspace_roots, list) or not all(
             isinstance(item, str) and item.strip() for item in workspace_roots
         ):
@@ -206,9 +212,14 @@ class TaskCreateRequest:
             raise ValueError("task.allowed_capabilities must be a list of strings")
         if not isinstance(metadata, dict):
             raise ValueError("task.metadata must be an object")
+        if runtime_user_id is not None and (
+            not isinstance(runtime_user_id, str) or not runtime_user_id.strip()
+        ):
+            raise ValueError("task.runtime_user_id must be a non-empty string when provided")
         return cls(
             objective=objective,
             workspace_roots=_validate_workspace_roots(workspace_roots),
+            runtime_user_id=runtime_user_id.strip() if isinstance(runtime_user_id, str) else None,
             scope=scope,
             success_criteria=success_criteria,
             constraints=constraints,
@@ -273,6 +284,8 @@ class TaskSnapshot:
     last_event_at: str | None = None
     failure: FailureInfo | None = None
     last_recoverable_rejection: FailureInfo | None = None
+    runtime_user_id: str | None = None
+    remote_mcp_authorizations: list["RemoteMCPAuthorizationEntry"] | None = None
     links: dict[str, str] | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -282,7 +295,40 @@ class TaskSnapshot:
             payload["failure"] = self.failure.to_dict()
         if self.last_recoverable_rejection is not None:
             payload["last_recoverable_rejection"] = self.last_recoverable_rejection.to_dict()
+        if self.remote_mcp_authorizations is not None:
+            payload["remote_mcp_authorizations"] = [
+                entry.to_dict() for entry in self.remote_mcp_authorizations
+            ]
         return _strip_none(payload)
+
+
+@dataclass(slots=True)
+class RemoteMCPAction:
+    action_id: str
+    method: str
+    title: str
+    params: dict[str, Any] = field(default_factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizationEntry:
+    server_name: str
+    provider_id: str
+    status: str
+    summary: str
+    actions: list[RemoteMCPAction] = field(default_factory=list)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "server_name": self.server_name,
+            "provider_id": self.provider_id,
+            "status": self.status,
+            "summary": self.summary,
+            "actions": [action.to_dict() for action in self.actions],
+        }
 
 
 @dataclass(slots=True)
@@ -337,6 +383,100 @@ class TaskGetResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizeStartParams:
+    task_id: str
+    run_id: str
+    server_name: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RemoteMCPAuthorizeStartParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        run_id = str(payload.get("run_id", "")).strip()
+        server_name = str(payload.get("server_name", "")).strip()
+        if not task_id:
+            raise ValueError("remote_mcp.authorize.start requires task_id")
+        if not run_id:
+            raise ValueError("remote_mcp.authorize.start requires run_id")
+        if not server_name:
+            raise ValueError("remote_mcp.authorize.start requires server_name")
+        return cls(task_id=task_id, run_id=run_id, server_name=server_name)
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizeStartResult:
+    authorization_id: str
+    server_name: str
+    provider_id: str
+    authorization_url: str
+    task: TaskSnapshot
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "authorization_id": self.authorization_id,
+            "server_name": self.server_name,
+            "provider_id": self.provider_id,
+            "authorization_url": self.authorization_url,
+            "task": self.task.to_dict(),
+        }
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizeCompleteParams:
+    authorization_id: str
+    state_token: str
+    code: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RemoteMCPAuthorizeCompleteParams":
+        authorization_id = str(payload.get("authorization_id", "")).strip()
+        state_token = str(payload.get("state_token", "")).strip()
+        code = str(payload.get("code", "")).strip()
+        if not authorization_id:
+            raise ValueError("remote_mcp.authorize.complete requires authorization_id")
+        if not state_token:
+            raise ValueError("remote_mcp.authorize.complete requires state_token")
+        if not code:
+            raise ValueError("remote_mcp.authorize.complete requires code")
+        return cls(authorization_id=authorization_id, state_token=state_token, code=code)
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizeCompleteResult:
+    provider_id: str
+    runtime_user_id: str
+    status: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass(slots=True)
+class RemoteMCPRevokeParams:
+    provider_id: str
+    runtime_user_id: str
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "RemoteMCPRevokeParams":
+        provider_id = str(payload.get("provider_id", "")).strip()
+        runtime_user_id = str(payload.get("runtime_user_id", "")).strip()
+        if not provider_id:
+            raise ValueError("remote_mcp.revoke requires provider_id")
+        if not runtime_user_id:
+            raise ValueError("remote_mcp.revoke requires runtime_user_id")
+        return cls(provider_id=provider_id, runtime_user_id=runtime_user_id)
+
+
+@dataclass(slots=True)
+class RemoteMCPRevokeResult:
+    provider_id: str
+    runtime_user_id: str
+    revoked: bool
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)

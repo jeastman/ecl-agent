@@ -110,7 +110,10 @@ class _FakeProtocolClient:
         self.approvals_list_calls: list[tuple[str, str | None]] = []
         self.artifact_get_calls: list[tuple[str, str | None, str]] = []
         self.memory_inspect_calls: list[tuple[str | None, str | None, str | None, str | None]] = []
-        self.task_create_calls: list[tuple[str, list[str]]] = []
+        self.task_create_calls: list[tuple[str, list[str], str | None]] = []
+        self.remote_mcp_authorize_start_calls: list[tuple[str, str, str, bool]] = []
+        self.remote_mcp_authorize_complete_calls: list[tuple[str, str, str]] = []
+        self.remote_mcp_revoke_calls: list[tuple[str, str]] = []
         self.diagnostics_list_calls: list[tuple[str, str | None]] = []
         self.get_config_calls = 0
         self._tasks: dict[str, dict[str, Any]] = {
@@ -138,6 +141,49 @@ class _FakeProtocolClient:
                 "latest_summary": "Waiting for review",
                 "is_resumable": True,
                 "links": {"resume": "task.resume"},
+            },
+            "task_3": {
+                "task_id": "task_3",
+                "run_id": "run_3",
+                "status": "paused",
+                "objective": "Authorize remote MCP",
+                "created_at": "2026-03-10T00:00:00Z",
+                "updated_at": "2026-03-10T00:00:00Z",
+                "latest_summary": "Remote MCP authorization required.",
+                "pause_reason": "remote_mcp_authorization_required",
+                "is_resumable": True,
+                "remote_mcp_authorizations": [
+                    {
+                        "server_name": "slack",
+                        "provider_id": "slack",
+                        "status": "authorization_required",
+                        "summary": "Remote MCP server slack requires authorization.",
+                        "actions": [
+                            {
+                                "action_id": "authorize_remote_mcp",
+                                "method": "remote_mcp.authorize.start",
+                                "title": "Authorize remote MCP",
+                                "params": {
+                                    "task_id": "task_3",
+                                    "run_id": "run_3",
+                                    "server_name": "slack",
+                                },
+                            },
+                            {
+                                "action_id": "complete_remote_mcp_authorization",
+                                "method": "remote_mcp.authorize.complete",
+                                "title": "Complete remote MCP authorization",
+                                "params": {},
+                            },
+                            {
+                                "action_id": "revoke_remote_mcp_authorization",
+                                "method": "remote_mcp.revoke",
+                                "title": "Revoke remote MCP authorization",
+                                "params": {"provider_id": "slack"},
+                            },
+                        ],
+                    }
+                ],
             },
         }
         self._approvals: dict[str, list[dict[str, Any]]] = {
@@ -296,8 +342,14 @@ class _FakeProtocolClient:
     async def task_get(self, task_id: str, run_id: str | None = None) -> dict:
         return {"result": {"task": self._tasks[task_id]}}
 
-    async def task_create(self, *, objective: str, workspace_roots: list[str]) -> dict:
-        self.task_create_calls.append((objective, workspace_roots))
+    async def task_create(
+        self,
+        *,
+        objective: str,
+        workspace_roots: list[str],
+        runtime_user_id: str | None = None,
+    ) -> dict:
+        self.task_create_calls.append((objective, workspace_roots, runtime_user_id))
         task_id = f"task_{len(self._tasks) + 1}"
         run_id = f"run_{len(self._tasks) + 1}"
         self._tasks[task_id] = {
@@ -308,10 +360,44 @@ class _FakeProtocolClient:
             "created_at": "2026-03-12T00:00:10Z",
             "updated_at": "2026-03-12T00:00:10Z",
             "latest_summary": "Task accepted",
+            "runtime_user_id": runtime_user_id,
         }
         self._approvals[task_id] = []
         self._diagnostics[task_id] = []
         return {"result": {"task_id": task_id, "run_id": run_id, "status": "accepted"}}
+
+    async def remote_mcp_authorize_start(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        server_name: str,
+        reauthorize: bool = False,
+    ) -> dict:
+        self.remote_mcp_authorize_start_calls.append((task_id, run_id, server_name, reauthorize))
+        return {
+            "result": {
+                "authorization_id": "auth_1",
+                "server_name": server_name,
+                "provider_id": "slack",
+                "authorization_url": "https://example.com/oauth/authorize",
+                "task": self._tasks[task_id],
+            }
+        }
+
+    async def remote_mcp_authorize_complete(
+        self,
+        *,
+        authorization_id: str,
+        code: str,
+        state_token: str,
+    ) -> dict:
+        self.remote_mcp_authorize_complete_calls.append((authorization_id, code, state_token))
+        return {"result": {"provider_id": "slack", "runtime_user_id": "operator-1", "status": "authorized"}}
+
+    async def remote_mcp_revoke(self, *, provider_id: str, runtime_user_id: str) -> dict:
+        self.remote_mcp_revoke_calls.append((provider_id, runtime_user_id))
+        return {"result": {"provider_id": provider_id, "runtime_user_id": runtime_user_id, "revoked": True}}
 
     async def task_approvals_list(self, task_id: str, run_id: str | None = None) -> dict:
         self.approvals_list_calls.append((task_id, run_id))
@@ -1190,6 +1276,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
             )
             async with app.run_test() as pilot:
                 await pilot.pause()
+                app._store.dispatch({"kind": "ui", "runtime_user_id": "operator-1"})  # type: ignore[attr-defined]
                 await pilot.press("n")
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "CreateTaskScreen")
@@ -1199,11 +1286,15 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
-                self.assertEqual(app._store.snapshot().selected_task_id, "task_3")  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_4")  # type: ignore[attr-defined]
                 client = cast(_FakeProtocolClient, app._client)  # type: ignore[attr-defined]
                 self.assertEqual(  # type: ignore[attr-defined]
                     client.task_create_calls[-1],
-                    ("Write a release note\nInclude customer-facing summary", ["/workspace"]),
+                    (
+                        "Write a release note\nInclude customer-facing summary",
+                        ["/workspace"],
+                        "operator-1",
+                    ),
                 )
 
     async def test_new_task_modal_enter_does_not_open_previous_selected_task(self) -> None:
@@ -1222,6 +1313,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
             async with app.run_test() as pilot:
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().selected_task_id, "task_1")  # type: ignore[attr-defined]
+                app._store.dispatch({"kind": "ui", "runtime_user_id": "operator-1"})  # type: ignore[attr-defined]
                 await pilot.press("n")
                 await pilot.pause()
                 create_input = app.screen.query_one(TextArea)
@@ -1237,7 +1329,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     }
                 )
                 await pilot.pause()
-                self.assertEqual(app._store.snapshot().selected_task_id, "task_3")  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_4")  # type: ignore[attr-defined]
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
 
     async def test_dashboard_selected_task_summary_scrolls_when_focused(self) -> None:
@@ -1305,6 +1397,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
             )
             async with app.run_test() as pilot:
                 await pilot.pause()
+                app._store.dispatch({"kind": "ui", "runtime_user_id": "operator-1"})  # type: ignore[attr-defined]
                 await pilot.press("n")
                 await pilot.pause()
                 create_input = app.screen.query_one(TextArea)
@@ -1320,7 +1413,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertEqual(create_input.text, "")
                 self.assertIn("Ctrl+Enter submits", str(status.visual))
 
-    async def test_new_task_stream_event_with_null_payload_does_not_crash(self) -> None:
+    async def test_create_task_prompts_for_runtime_user_when_missing(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import TextArea
 
@@ -1338,6 +1431,64 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.press("n")
                 await pilot.pause()
                 create_input = app.screen.query_one(TextArea)
+                create_input.load_text("Create with remote MCP support")
+                app.submit_create_task(create_input.text)  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "RuntimeUserPromptScreen")
+                self.assertEqual(app._store.snapshot().pending_task_objective, "Create with remote MCP support")  # type: ignore[attr-defined]
+
+    async def test_remote_mcp_authorize_flow_opens_modal_and_completes(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._store.dispatch({"kind": "ui", "selected_task_id": "task_3", "runtime_user_id": "operator-1"})  # type: ignore[attr-defined]
+                app._set_active_screen("task_detail")  # type: ignore[attr-defined]
+                await pilot.pause()
+                app.action_start_remote_mcp_authorization()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "RemoteMCPAuthorizeScreen")
+                client = cast(_FakeProtocolClient, app._client)  # type: ignore[attr-defined]
+                self.assertEqual(client.remote_mcp_authorize_start_calls[-1], ("task_3", "run_3", "slack", False))
+                app.open_remote_mcp_complete()  # type: ignore[attr-defined]
+                await pilot.pause()
+                code_input = app.screen.query_one("#remote-mcp-complete-code", Input)
+                state_input = app.screen.query_one("#remote-mcp-complete-state", Input)
+                code_input.value = "code-123"
+                state_input.value = "state-123"
+                app.submit_remote_mcp_complete()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(client.remote_mcp_authorize_complete_calls[-1], ("auth_1", "code-123", "state-123"))
+
+    async def test_new_task_stream_event_with_null_payload_does_not_crash(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import TextArea
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._store.dispatch({"kind": "ui", "runtime_user_id": "operator-1"})  # type: ignore[attr-defined]
+                await pilot.press("n")
+                await pilot.pause()
+                create_input = app.screen.query_one(TextArea)
                 create_input.load_text("Analyze a new dataset")
                 app.submit_create_task(create_input.text)  # type: ignore[attr-defined]
                 await pilot.pause()
@@ -1349,8 +1500,8 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                             "event": {
                                 "event_type": "task.started",
                                 "timestamp": "2026-03-12T00:00:11Z",
-                                "task_id": "task_3",
-                                "run_id": "run_3",
+                                "task_id": "task_4",
+                                "run_id": "run_4",
                                 "payload": None,
                             }
                         },
@@ -1358,7 +1509,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 )
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "TaskDetailScreen")
-                self.assertEqual(app._store.snapshot().selected_task_id, "task_3")  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().selected_task_id, "task_4")  # type: ignore[attr-defined]
 
     async def test_toast_falls_back_when_rack_lacks_show_toast(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -2170,6 +2321,20 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                         },
                     }
                 )
+                app._store.dispatch(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    **app._store.snapshot().task_snapshots["task_3"],  # type: ignore[attr-defined]
+                                    "status": "completed",
+                                }
+                            }
+                        },
+                    }
+                )
                 with patch.object(app, "exit") as exit_mock:
                     await app.action_quit()
                 exit_mock.assert_called_once()
@@ -2431,10 +2596,8 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                         "payload": {"result": {"tasks": list(app._client._tasks.values())}},  # type: ignore[attr-defined]
                     }
                 )
-                await pilot.pause()
-                await pilot.press("down")
-                await pilot.pause()
-                await pilot.press("down")
+                app._store.dispatch({"kind": "ui", "selected_task_id": "task_3"})  # type: ignore[attr-defined]
+                app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
                 await pilot.press("enter")
                 await pilot.pause()

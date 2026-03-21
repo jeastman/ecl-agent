@@ -81,6 +81,23 @@ class FailureInfo:
 
 
 @dataclass(slots=True)
+class RemoteMCPActionState:
+    action_id: str
+    method: str
+    title: str
+    params: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass(slots=True)
+class RemoteMCPAuthorizationState:
+    server_name: str
+    provider_id: str
+    status: str
+    summary: str
+    actions: list[RemoteMCPActionState] = field(default_factory=list)
+
+
+@dataclass(slots=True)
 class RecoverableToolRejection(Exception):
     code: str
     message: str
@@ -122,6 +139,7 @@ class RunState:
     workspace_roots: list[str] = field(default_factory=list)
     allowed_capabilities: list[str] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    runtime_user_id: str | None = None
     constraints: list[str] = field(default_factory=list)
     success_criteria: list[str] = field(default_factory=list)
     current_phase: str | None = None
@@ -132,6 +150,7 @@ class RunState:
     last_event_at: str | None = None
     failure: FailureInfo | None = None
     last_recoverable_rejection: FailureInfo | None = None
+    remote_mcp_authorizations: list[RemoteMCPAuthorizationState] = field(default_factory=list)
     awaiting_approval: bool = False
     pending_approval_id: str | None = None
     is_resumable: bool = False

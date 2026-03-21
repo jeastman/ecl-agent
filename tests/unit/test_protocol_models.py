@@ -44,6 +44,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskLogsStreamParams,
     TaskReplyParams,
     TaskResumeParams,
+    RemoteMCPAuthorizationEntry,
+    RemoteMCPAction,
     TaskSnapshot,
     TodoItem,
     utc_now_timestamp,
@@ -95,6 +97,23 @@ class ProtocolModelTests(unittest.TestCase):
             awaiting_approval=False,
             is_resumable=False,
             recoverable_rejection_count=1,
+            runtime_user_id="user_123",
+            remote_mcp_authorizations=[
+                RemoteMCPAuthorizationEntry(
+                    server_name="slack",
+                    provider_id="slack",
+                    status="authorization_required",
+                    summary="Slack authorization required.",
+                    actions=[
+                        RemoteMCPAction(
+                            action_id="authorize_remote_mcp",
+                            method="remote_mcp.authorize.start",
+                            title="Authorize remote MCP",
+                            params={"task_id": "task_1", "run_id": "run_1", "server_name": "slack"},
+                        )
+                    ],
+                )
+            ],
             last_recoverable_rejection=FailureInfo(
                 message="sandbox path must be under /workspace",
                 code="path_validation",
@@ -108,6 +127,11 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["todos"][0]["status"], "in_progress")
         self.assertFalse(payload["awaiting_approval"])
         self.assertFalse(payload["is_resumable"])
+        self.assertEqual(payload["runtime_user_id"], "user_123")
+        self.assertEqual(
+            payload["remote_mcp_authorizations"][0]["actions"][0]["method"],
+            "remote_mcp.authorize.start",
+        )
         self.assertEqual(payload["recoverable_rejection_count"], 1)
         self.assertEqual(payload["last_recoverable_rejection"]["code"], "path_validation")
 

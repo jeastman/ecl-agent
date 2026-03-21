@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from packages.config.local_agent_config.models import MCPConfig, MCPServerConfig
 from services.policy_service.local_agent_policy_service.policy_models import OperationContext
+from services.remote_mcp_auth_service import RemoteMCPConnectionResolver
 
 EventCallback = Callable[[str, dict[str, Any]], None]
 
@@ -23,9 +24,11 @@ class MCPToolProvider:
     config: MCPConfig
     task_id: str
     run_id: str
+    runtime_user_id: str | None = None
     allowed_capabilities: list[str] | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
     on_event: EventCallback | None = None
+    connection_resolver: RemoteMCPConnectionResolver | None = None
     _session_tools: dict[str, list[BaseTool]] = field(default_factory=dict)
     _role_cache: dict[str, list[BaseTool]] = field(default_factory=dict)
     _started: bool = False
@@ -76,7 +79,7 @@ class MCPToolProvider:
             self._govern_server_connect(server)
             self._session_tools[server_name] = await load_mcp_tools(
                 None,
-                connection=_connection_payload(server),
+                connection=self._connection_payload(server),
                 callbacks=callbacks,
                 server_name=server_name,
                 tool_name_prefix=self.config.tool_name_prefix,
@@ -328,6 +331,20 @@ class MCPToolProvider:
     def _emit(self, event_type: str, payload: dict[str, Any]) -> None:
         if self.on_event is not None:
             self.on_event(event_type, payload)
+
+    def _connection_payload(self, server: MCPServerConfig) -> dict[str, Any]:
+        if server.transport == "stdio":
+            return _connection_payload(server)
+        payload = _connection_payload(server)
+        if self.connection_resolver is not None:
+            payload["headers"] = self.connection_resolver.headers_for_server(
+                server=server,
+                runtime_user_id=self.runtime_user_id,
+                task_id=self.task_id,
+                run_id=self.run_id,
+            )
+        return payload
+
 
 
 def _connection_payload(server: MCPServerConfig) -> dict[str, Any]:

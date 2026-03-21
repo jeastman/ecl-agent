@@ -67,6 +67,16 @@ class UiMessage(TypedDict, total=False):
     task_detail_show_logs: bool
     navigation_stack: list[str]
     last_focused_pane_by_screen: dict[str, str]
+    runtime_user_id: str | None
+    pending_task_objective: str | None
+    remote_mcp_request_status: str
+    remote_mcp_request_error: str | None
+    remote_mcp_authorization_id: str | None
+    remote_mcp_authorization_url: str | None
+    remote_mcp_server_name: str | None
+    remote_mcp_provider_id: str | None
+    remote_mcp_last_state_token: str | None
+    remote_mcp_open_browser_supported: bool
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -144,6 +154,16 @@ class AppState:
     task_detail_show_logs: bool = False
     navigation_stack: list[str] = field(default_factory=lambda: ["dashboard"])
     last_focused_pane_by_screen: dict[str, str] = field(default_factory=dict)
+    runtime_user_id: str | None = None
+    pending_task_objective: str | None = None
+    remote_mcp_request_status: str = "idle"
+    remote_mcp_request_error: str | None = None
+    remote_mcp_authorization_id: str | None = None
+    remote_mcp_authorization_url: str | None = None
+    remote_mcp_server_name: str | None = None
+    remote_mcp_provider_id: str | None = None
+    remote_mcp_last_state_token: str | None = None
+    remote_mcp_open_browser_supported: bool = True
 
 
 class AppStateStore:
