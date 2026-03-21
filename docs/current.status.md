@@ -1,19 +1,19 @@
 # Current Status: Implementation vs. Master Spec
 
-This document compares the repository implementation to [local-agent-harness-master-spec-v1.md](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-master-spec-v1.md) based on direct verification of the current codebase on March 15, 2026.
+This document compares the repository implementation to [local-agent-harness-master-spec-v1.md](/Users/jeastman/Projects/e/ecl-agent/docs/specs/local-agent-harness-master-spec-v1.md) based on direct verification of the current codebase on March 20, 2026.
 
-It is intentionally implementation-first. Statements below are grounded in source files, repository structure, runtime configuration, and the current automated checks.
+It is intentionally implementation-first. Statements below are grounded in the current source tree, protocol models, runtime handlers, clients, and automated checks.
 
 ## Verification Basis
 
-The comparison below was verified against:
+Verified against:
 
 - runtime code under `apps/runtime/local_agent_runtime`
 - CLI code under `apps/cli/local_agent_cli`
 - TUI code under `apps/tui/local_agent_tui`
 - shared packages under `packages/*`
 - service implementations under `services/*`
-- agent assets under `agents/*`
+- agent and subagent assets under `agents/*`
 - runtime example configuration at [runtime.example.toml](/Users/jeastman/Projects/e/ecl-agent/docs/architecture/runtime.example.toml)
 - automated tests under `tests/*`
 
@@ -27,42 +27,47 @@ uv run ruff check .
 Observed results:
 
 ```text
-233 passed in 24.18s
-F401 [*] `.widgets.status_bar.StatusBar` imported but unused
-  --> apps/tui/local_agent_tui/app.py:48:33
+pytest: 461 passed, 3 failed in 37.75s
+ruff: 60 errors
 ```
 
-Current interpretation:
+Current verification notes:
 
-- the test suite passes
-- the repository is not fully lint-clean at the moment because of one unused import in the TUI app
+- the repository is not currently test-green
+- the failing tests are:
+  - missing persisted `subagent.started` events in two runtime integration tests
+  - a TUI footer-hint expectation mismatch (`Esc` now renders as `Back` instead of `Dashboard`)
+- the repository is also not lint-clean; the current Ruff output reports 60 issues rather than a single unused import
 
 ## Executive Summary
 
-The repository materially exceeds the earlier Milestone 2 framing that still appears in some older documentation. The codebase now implements:
+The repository is beyond the older Milestone 2 framing. The current implementation includes:
 
 - the Milestone 0 repository and contract foundation
 - the Milestone 1 single-runtime execution slice
 - the Milestone 2 durable runtime-governance baseline
-- the Milestone 3 subagent, routing, and governed skill-installation baseline
-- a local Textual TUI operator client on top of the same runtime protocol
+- the Milestone 3 subagent, routing, conversation-compaction, and governed skill-installation baseline
+- a local Textual TUI operator client over the same runtime protocol
 
-The practical result is:
+The practical status today is:
 
-- the master spec section 28 initial architecture baseline is satisfied
+- the master spec section 28 architecture baseline is implemented in code
 - Milestones 0 through 3 are substantially implemented
-- Milestone 4 is still incomplete, but not empty in the broad "operator experience" sense because the TUI already provides local task browsing, artifact preview, event review, approvals, diagnostics, memory inspection, and config inspection
+- Milestone 4 remains partial because there is still no web client
+- the runtime surface is broader than older docs claimed: `task.reply`, `task.resume`, `task.compact`, `memory.inspect`, `skill.install`, and `config.get` are all implemented
+- some live regressions remain, so the repo should not be described as fully green
 
 The main remaining gaps are:
 
-- no web client
 - no `task.cancel`
-- richer memory retrieval and governance semantics are still narrower than the long-term spec intent
+- no web client
+- memory retrieval/governance is still narrower than the long-range spec intent
+- current regressions around subagent start-event persistence and TUI footer-hint expectations
 
 ## Status Legend
 
 - `Implemented`: present in code and wired into runtime or client behavior
-- `Partial`: some structures exist, but behavior is incomplete or narrower than the broader spec intent
+- `Partial`: some structures exist, but behavior is incomplete, regressed, or narrower than the broader spec intent
 - `Not Implemented`: the spec calls for it, but the current repository does not implement it
 
 ## 1. Overall Standing Against the Master Spec
@@ -72,14 +77,16 @@ The master spec is best read in two layers:
 1. the initial architecture baseline in section 28
 2. the milestone roadmap in section 26
 
-Against section 28, the repository is in strong shape. Against section 26, the repository has completed the first four roadmap stages through Milestone 3. Milestone 4 remains incomplete because the web-facing client/platform work is not present.
+Against section 28, the repository still satisfies the architectural baseline. Against section 26, the implementation has moved through Milestone 3 and part of Milestone 4, but it is not yet at the later web-client/platform stage.
 
-That means the honest current position is:
+That means the current position is:
 
-- the foundational runtime/client architecture is in place
+- the foundational runtime/client split is in place
 - the durable runtime-governance features expected after Milestone 1 are in place
-- the subagent system expected in Milestone 3 is in place with real execution paths
-- the repository now has two clients, but still lacks the web client implied by later roadmap stages
+- the subagent system expected in Milestone 3 is in place
+- conversation compaction is implemented in config, runtime handlers, task state, and persistence
+- the repository has two clients today: CLI and local TUI
+- the later web-facing client work is still absent
 
 ## 2. Acceptance Criteria Check (Master Spec Section 28)
 
@@ -93,17 +100,18 @@ Current status:
 
 Conclusion:
 
-- the repository satisfies the master spec's initial architecture baseline
+- the repository still satisfies the master spec's initial architecture baseline
+- that architectural conclusion is separate from the fact that the repo currently has failing tests and lint issues
 
 | Acceptance criterion | Status | Notes |
 | --- | --- | --- |
-| Distinct runtime and client applications exist | Implemented | `apps/runtime`, `apps/cli`, and `apps/tui` are separate and have separate responsibilities |
-| Runtime exposes a transport-neutral protocol contract implemented over stdio | Implemented | JSON-RPC 2.0 over stdio is implemented in the runtime server and used by both clients |
+| Distinct runtime and client applications exist | Implemented | `apps/runtime`, `apps/cli`, and `apps/tui` are separate |
+| Runtime exposes a transport-neutral protocol contract implemented over stdio | Implemented | JSON-RPC 2.0 over stdio is implemented and used by both clients |
 | Task execution responsibility resides in the runtime | Implemented | `TaskRunner`, runtime handlers, and the runtime server own lifecycle and execution |
-| LangChain DeepAgent is isolated behind project-owned ports/adapters | Implemented | DeepAgent usage is contained in `services/deepagent_runtime` behind project-owned boundaries |
-| Memory taxonomy exists as explicit concepts in the codebase | Implemented | `run_state`, `project`, `identity`, and `scratch` exist as explicit runtime memory scopes |
+| LangChain DeepAgent is isolated behind project-owned ports/adapters | Implemented | DeepAgent usage remains contained in `services/deepagent_runtime` |
+| Memory taxonomy exists as explicit concepts in the codebase | Implemented | `run_state`, `project`, `identity`, and `scratch` exist as explicit scopes |
 | Sandbox/filesystem access is mediated by a dedicated abstraction | Implemented | sandbox, path policy, workspace manager, and command executor mediate access |
-| Model routing supports separate profiles for primary and subagents | Implemented | runtime-owned model resolution exists for the primary harness and subagent roles |
+| Model routing supports separate profiles for primary and subagents | Implemented | runtime-owned model resolution exists for both |
 | `IDENTITY.md` ingestion exists as a runtime concern | Implemented | identity loading, hashing, versioning, prompt construction, and memory seeding happen in runtime bootstrap |
 | Event streaming exists for task lifecycle visibility | Implemented | runtime events are emitted, stored durably, replayed, and consumed by both clients |
 | Codebase structure clearly supports future clients | Implemented | shared protocol/config/task packages plus thin clients preserve that separation |
@@ -149,12 +157,13 @@ Verified deliverables:
 - runtime-owned approval contract and policy engine
 - richer observability than the Milestone 1 slice
 - memory inspection support
+- redacted config inspection support
 
-Concrete implemented evidence includes:
+Concrete evidence includes:
 
 - durable runtime services composed in [durable_services.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/durable_services.py)
 - checkpoint store and thread registry under `services/checkpoint_service`
-- SQLite-backed memory, approval, event, diagnostics, and metrics stores
+- SQLite-backed memory, approval, event, diagnostics, metrics, and conversation-compaction stores
 - runtime recovery in [recovery_service.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/recovery_service.py)
 - resume flow in [resume_service.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/resume_service.py)
 - protocol support for `task.resume`, `task.reply`, `task.approve`, `task.approvals.list`, `task.diagnostics.list`, `memory.inspect`, and `config.get`
@@ -168,26 +177,26 @@ Verified deliverables:
 - subagent registry
 - role-based tool scopes
 - runtime model routing
-- planner/researcher/coder/verifier role assets
+- planner/researcher/coder/verifier/librarian role assets
 - delegated subagent execution through the primary harness
 - governed skill installation into managed skill roots
+- conversation compaction support across runtime, protocol, state, and persistence
 
-Concrete implemented evidence includes:
+Concrete evidence includes:
 
 - filesystem-backed registry in [filesystem_subagent_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_registry/local_agent_subagent_registry/filesystem_subagent_registry.py)
 - role tool-scope resolution in [tool_scope.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/tool_scope.py)
 - runtime-owned model routing in [model_routing.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/model_routing.py)
+- delegated subagent event middleware in [subagent_compiler.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/subagent_compiler.py)
 - adapter-side subagent compilation and execution in [deepagent_harness.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/deepagent_harness.py)
 - runtime-owned skill installation in [skill_installer.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/skill_installer.py)
-- role assets under `agents/subagents/planner`, `researcher`, `coder`, `verifier`, and `librarian`
-- runtime-visible `subagent.started` and `subagent.completed` events
+- conversation compaction integration in [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py) and [conversation_compaction_service.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/conversation_compaction_service.py)
 
 Important nuance:
 
-- the repository implements runtime-owned role definitions, routing, scopes, and a real delegated execution path
-- it does not implement a bespoke hard-coded orchestration graph outside DeepAgent
-
-That still satisfies the architectural intent of Milestone 3 because the required project-owned role system and live execution path are present.
+- the code defines and tests both `subagent.started` and `subagent.completed`
+- the current integration suite shows a regression where `subagent.started` is not present in persisted runtime history for some paths
+- that is best described as an implementation regression inside an otherwise implemented Milestone 3 slice
 
 ### 3.5 Milestone 4
 
@@ -200,14 +209,12 @@ Implemented today:
 - artifact browsing and preview via `task.artifacts.list` and `task.artifact.get`
 - event review and live stream consumption
 - operator screens for approvals, diagnostics, memory, and config
+- task-detail command input for replies and action dispatch
 
 Not present today:
 
 - web client
-- remote/live artifact browser outside the local TUI
-- broader multi-client platform packaging or SDK layers suggested by later roadmap language
-
-This is why Milestone 4 is best described as partial rather than absent.
+- broader remote/multi-client platform packaging suggested by later roadmap language
 
 ## 4. Architecture Areas
 
@@ -215,7 +222,7 @@ This is why Milestone 4 is best described as partial rather than absent.
 
 **Observed implementation:** `Implemented`
 
-The runtime owns execution, lifecycle, artifacts, approvals, checkpoints, memory inspection, and event emission. The CLI and TUI remain protocol clients and renderers.
+The runtime owns execution, lifecycle, artifacts, approvals, checkpoints, memory inspection, config inspection, and event emission. The CLI and TUI remain protocol clients and renderers.
 
 Primary evidence:
 
@@ -224,13 +231,12 @@ Primary evidence:
 - [runtime_server.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/runtime_server.py)
 - [cli.py](/Users/jeastman/Projects/e/ecl-agent/apps/cli/local_agent_cli/cli.py)
 - [protocol_client.py](/Users/jeastman/Projects/e/ecl-agent/apps/tui/local_agent_tui/protocol/protocol_client.py)
-- [app.py](/Users/jeastman/Projects/e/ecl-agent/apps/tui/local_agent_tui/app.py)
 
 ### 4.2 DeepAgent Containment
 
 **Observed implementation:** `Implemented`
 
-Direct DeepAgent and LangChain construction remains contained to the adapter layer. The rest of the runtime deals in project-owned request/result models, runtime events, and governed tool bindings.
+Direct DeepAgent and LangChain construction remains contained to the adapter layer. The rest of the runtime deals in project-owned request/result models, runtime events, task state, and governed tool bindings.
 
 Primary evidence:
 
@@ -245,9 +251,10 @@ What is implemented:
 
 - explicit memory scopes: `run_state`, `project`, `identity`, `scratch`
 - durable SQLite-backed memory storage
-- memory promotion from agent-writable scopes into project memory
+- memory promotion into project memory
 - identity seeding into memory
 - runtime inspection via `memory.inspect`
+- `memory.updated` event emission on memory writes
 
 What remains incomplete relative to the broader spec language:
 
@@ -259,17 +266,17 @@ Primary evidence:
 - [memory_promotion.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_promotion.py)
 - [memory_store.py](/Users/jeastman/Projects/e/ecl-agent/services/memory_service/local_agent_memory_service/memory_store.py)
 - [memory_seed.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/memory_seed.py)
-- [method_handlers.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/method_handlers.py)
+- [tool_bindings.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/tool_bindings.py)
 
 ### 4.4 Sandbox and Filesystem Policy
 
 **Observed implementation:** `Implemented`
 
-The repo satisfies the spec's sandbox boundary requirements for the local-first runtime:
+The repo satisfies the sandbox boundary requirements for the local-first runtime:
 
 - governed workspace, scratch, and memory zones
 - path normalization and traversal rejection
-- command execution only through the sandbox abstraction
+- command execution through the sandbox abstraction
 - runtime-owned policy checks on governed operations
 
 Primary evidence:
@@ -282,8 +289,6 @@ Primary evidence:
 ### 4.5 Identity and Policy
 
 **Observed implementation:** `Implemented`
-
-Identity is a real runtime concern, not a client concern. Policy and approvals are runtime-owned and durable.
 
 Implemented:
 
@@ -300,7 +305,7 @@ Primary evidence:
 - [policy_engine.py](/Users/jeastman/Projects/e/ecl-agent/services/policy_service/local_agent_policy_service/policy_engine.py)
 - [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py)
 
-### 4.6 Subagents, Skills, and Model Routing
+### 4.6 Subagents, Skills, Model Routing, and Compaction
 
 **Observed implementation:** `Implemented`
 
@@ -312,12 +317,14 @@ Implemented:
 - role-local skill discovery
 - runtime-owned primary and subagent model resolution
 - adapter-side compilation of runtime-owned roles into live DeepAgent-native subagents
-- runtime-governed skill installation into managed primary-agent and subagent skill roots
+- governed skill installation into managed primary-agent and subagent skill roots
+- explicit `task.compact` protocol and runtime support
+- persisted conversation compaction projections and task snapshot links
 
 Still narrower than the broadest possible reading of the spec:
 
-- primary-agent skills are still lighter than the subagent role setup
-- delegated-execution telemetry is useful, but not yet especially deep
+- memory/governance semantics are still lighter than the long-range target
+- current subagent start-event persistence has a regression in integration coverage
 
 Primary evidence:
 
@@ -327,13 +334,11 @@ Primary evidence:
 - [skill_installer.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/skill_installer.py)
 - [skill_registry.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/skill_registry.py)
 - [model_routing.py](/Users/jeastman/Projects/e/ecl-agent/services/subagent_runtime/local_agent_subagent_runtime/model_routing.py)
-- [deepagent_harness.py](/Users/jeastman/Projects/e/ecl-agent/services/deepagent_runtime/local_agent_deepagent_runtime/deepagent_harness.py)
+- [task_runner.py](/Users/jeastman/Projects/e/ecl-agent/apps/runtime/local_agent_runtime/task_runner.py)
 
 ### 4.7 Protocol Surface and Clients
 
 **Observed implementation:** `Implemented`
-
-The runtime method surface is broader than the older repo-level README claimed.
 
 Implemented runtime methods:
 
@@ -346,6 +351,7 @@ Implemented runtime methods:
 - `task.diagnostics.list`
 - `task.reply`
 - `task.resume`
+- `task.compact`
 - `task.logs.stream`
 - `task.artifacts.list`
 - `task.artifact.get`
@@ -353,10 +359,14 @@ Implemented runtime methods:
 - `skill.install`
 - `config.get`
 
+Not implemented:
+
+- `task.cancel`
+
 Client coverage:
 
-- the CLI exposes the operator command path for most runtime methods, including `reply` and `skill-install`
-- the TUI consumes `task.list`, `task.artifact.get`, live event streams, approvals, diagnostics, memory inspection, and config inspection
+- the CLI exposes command paths for the implemented inspection and control methods, including `reply`, `resume`, `memory`, `config`, and `skill-install`
+- the TUI consumes `task.list`, `task.get`, `task.reply`, `task.resume`, artifact inspection, live event streams, approvals, diagnostics, memory inspection, and config inspection
 
 Primary evidence:
 
@@ -367,7 +377,7 @@ Primary evidence:
 
 ### 4.8 Observability and Artifacting
 
-**Observed implementation:** `Implemented` for the runtime baseline, `Partial` for broader future operator UX
+**Observed implementation:** `Implemented` for the runtime baseline, `Partial` for broader operator UX
 
 Implemented:
 
@@ -375,15 +385,20 @@ Implemented:
 - persisted event store
 - persisted diagnostics store
 - persisted run metrics store
+- persisted conversation-compaction store
 - runtime-owned artifact registration
 - artifact metadata listing plus preview retrieval
 - CLI log/event rendering
 - TUI timeline, artifact browser, markdown preview, approval queue, diagnostics, memory, and config views
+- `memory.updated` and skill-install lifecycle events in the runtime event vocabulary
 
 The skill-installation flow specifically adds:
 
-- `skill.install.requested`, `skill.install.validated`, `skill.install.approval_requested`, `skill.install.completed`, and `skill.install.failed` runtime events
-- validation report, install summary, file manifest, and conflict report artifacts for skill installation runs
+- `skill.install.requested`
+- `skill.install.validated`
+- `skill.install.approval_requested`
+- `skill.install.completed`
+- `skill.install.failed`
 
 Not yet implemented:
 
@@ -395,31 +410,33 @@ Primary evidence:
 - [event_store.py](/Users/jeastman/Projects/e/ecl-agent/services/observability_service/local_agent_observability_service/event_store.py)
 - [diagnostic_store.py](/Users/jeastman/Projects/e/ecl-agent/services/observability_service/local_agent_observability_service/diagnostic_store.py)
 - [run_metrics_store.py](/Users/jeastman/Projects/e/ecl-agent/services/observability_service/local_agent_observability_service/run_metrics_store.py)
+- [conversation_compaction_store.py](/Users/jeastman/Projects/e/ecl-agent/services/observability_service/local_agent_observability_service/conversation_compaction_store.py)
 - [store.py](/Users/jeastman/Projects/e/ecl-agent/services/artifact_service/local_agent_artifact_service/store.py)
-- [app.py](/Users/jeastman/Projects/e/ecl-agent/apps/tui/local_agent_tui/app.py)
 
-## 5. Verified Gaps Relative to the Broader Spec and Follow-on Direction
+## 5. Verified Gaps and Live Regressions
 
-These are the main remaining gaps after the current Milestone 3 baseline:
+These are the main gaps or regressions visible in the repository today:
 
 1. `task.cancel` is still not implemented.
-2. `memory.updated` is still not part of the current event vocabulary.
+2. There is still no web client.
 3. Memory retrieval precedence and richer governance semantics remain incomplete.
-4. There is no web client.
-5. The codebase structurally supports future clients, but broader SDK/platform packaging suggested by later roadmap language does not exist yet.
-6. The repository currently has a small lint regression in the TUI app.
+4. The current `pytest` run has 3 failures:
+   - 2 runtime integration failures expecting persisted `subagent.started`
+   - 1 TUI footer-hint expectation mismatch
+5. The current `ruff` run reports 60 issues.
 
-None of those gaps invalidate the section 28 baseline. They do matter for the next stage of platform maturity.
+None of those gaps invalidate the section 28 architectural baseline. They do mean the repo should not be described as fully green or fully aligned with the long-range platform scope.
 
 ## 6. Bottom Line
 
-The honest status is:
+The honest status today is:
 
 - the repository satisfies the master spec's initial architecture baseline
 - Milestones 0 through 3 are substantially implemented in code
-- the repository now has both a CLI and a local TUI client
-- the repo is stronger than the older Milestone 2-oriented documentation claimed
-- the main unfinished work sits in web-client/platform territory plus some broader memory and lifecycle semantics
+- the repository has both a CLI and a local TUI client
+- `task.compact` and `memory.updated` are implemented and should no longer be listed as missing
+- the main unfinished work remains web-client/platform territory plus broader memory-governance maturity
+- the current repository also has active test and lint regressions that should be tracked separately from architecture status
 
 What is real today is a local-first agent runtime with:
 
@@ -427,9 +444,9 @@ What is real today is a local-first agent runtime with:
 - runtime-owned execution lifecycle
 - a contained DeepAgent adapter
 - governed filesystem and command execution
-- durable checkpoints, approvals, diagnostics, metrics, and event history
+- durable checkpoints, approvals, diagnostics, metrics, event history, and compaction records
 - explicit memory scopes with durable project memory
-- restart recovery, resume, and user-reply support
+- restart recovery, resume, user-reply, and manual compaction support
 - project-owned subagent roles with model routing and delegated execution
 - governed skill installation into managed skill roots
 
