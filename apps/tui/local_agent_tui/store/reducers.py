@@ -396,6 +396,14 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
         snapshot["awaiting_approval"] = False
         snapshot["pending_approval_id"] = None
         snapshot["active_subagent"] = None
+    elif event_type == "task.cancelled":
+        snapshot["status"] = "cancelled"
+        snapshot["awaiting_approval"] = False
+        snapshot["pending_approval_id"] = None
+        snapshot["active_subagent"] = None
+        snapshot["is_resumable"] = True
+        snapshot["pause_reason"] = event_payload.get("pause_reason", "cancel_requested")
+        snapshot["failure"] = None
     elif event_type == "task.failed":
         snapshot["status"] = "failed"
         snapshot["awaiting_approval"] = False
@@ -613,6 +621,8 @@ def _event_summary(event_type: str, payload: dict[str, Any]) -> str:
         return "Approval requested"
     if event_type == "task.user_input_received":
         return str(payload.get("summary") or "User input received")
+    if event_type == "task.cancelled":
+        return str(payload.get("summary") or "cancelled")
     if event_type == "task.failed":
         return str(payload.get("error") or "failed")
     return event_type
@@ -646,7 +656,7 @@ def _event_severity(event_type: str) -> str:
         return "attention"
     if event_type in {"approval.requested", "task.paused"}:
         return "attention"
-    if event_type in {"artifact.created", "task.completed", "task.resumed", "task.user_input_received"}:
+    if event_type in {"artifact.created", "task.completed", "task.cancelled", "task.resumed", "task.user_input_received"}:
         return "success"
     return "info"
 

@@ -818,6 +818,7 @@ def task_notifications(state: AppState) -> NotificationStripViewModel:
             "approval.requested",
             "task.failed",
             "artifact.created",
+            "task.cancelled",
             "task.completed",
             "task.resumed",
             "task.user_input_received",
@@ -1939,7 +1940,7 @@ def _notification_tone(event: TaskEventRecord) -> str:
         return "warning"
     if event.severity == "error" or event.event_type == "task.failed":
         return "danger"
-    if event.severity == "success" or event.event_type == "task.completed":
+    if event.severity == "success" or event.event_type in {"task.completed", "task.cancelled"}:
         return "success"
     return "info"
 
@@ -2577,6 +2578,7 @@ def _is_priority_event(event_type: str) -> bool:
     return event_type in {
         "approval.requested",
         "artifact.created",
+        "task.cancelled",
         "task.failed",
         "task.completed",
         "task.started",
@@ -2588,6 +2590,7 @@ def _priority_event_label(event_type: str) -> str | None:
     labels = {
         "approval.requested": "APPROVAL",
         "artifact.created": "ARTIFACT",
+        "task.cancelled": "CANCELLED",
         "task.failed": "FAILED",
         "task.completed": "DONE",
         "task.started": "STARTED",

@@ -54,12 +54,11 @@ The practical status today is:
 - the master spec section 28 architecture baseline is implemented in code
 - Milestones 0 through 3 are substantially implemented
 - Milestone 4 remains partial because there is still no web client
-- the runtime surface is broader than older docs claimed: `task.reply`, `task.resume`, `task.compact`, `memory.inspect`, `skill.install`, and `config.get` are all implemented
+- the runtime surface is broader than older docs claimed: `task.cancel`, `task.reply`, `task.resume`, `task.compact`, `memory.inspect`, `skill.install`, and `config.get` are all implemented
 - some live regressions remain, so the repo should not be described as fully green
 
 The main remaining gaps are:
 
-- no `task.cancel`
 - no web client
 - memory retrieval/governance is still narrower than the long-range spec intent
 - current regressions around subagent start-event persistence and TUI footer-hint expectations
@@ -351,6 +350,7 @@ Implemented runtime methods:
 - `task.diagnostics.list`
 - `task.reply`
 - `task.resume`
+- `task.cancel`
 - `task.compact`
 - `task.logs.stream`
 - `task.artifacts.list`
@@ -359,14 +359,10 @@ Implemented runtime methods:
 - `skill.install`
 - `config.get`
 
-Not implemented:
-
-- `task.cancel`
-
 Client coverage:
 
-- the CLI exposes command paths for the implemented inspection and control methods, including `reply`, `resume`, `memory`, `config`, and `skill-install`
-- the TUI consumes `task.list`, `task.get`, `task.reply`, `task.resume`, artifact inspection, live event streams, approvals, diagnostics, memory inspection, and config inspection
+- the CLI exposes command paths for the implemented inspection and control methods, including `cancel`, `reply`, `resume`, `memory`, `config`, and `skill-install`
+- the TUI consumes `task.list`, `task.get`, `task.cancel`, `task.reply`, `task.resume`, artifact inspection, live event streams, approvals, diagnostics, memory inspection, and config inspection
 
 Primary evidence:
 
@@ -417,13 +413,9 @@ Primary evidence:
 
 These are the main gaps or regressions visible in the repository today:
 
-1. `task.cancel` is still not implemented.
-2. There is still no web client.
-3. Memory retrieval precedence and richer governance semantics remain incomplete.
-4. The current `pytest` run has 3 failures:
-   - 2 runtime integration failures expecting persisted `subagent.started`
-   - 1 TUI footer-hint expectation mismatch
-5. The current `ruff` run reports 60 issues.
+1. There is still no web client.
+2. Memory retrieval precedence and richer governance semantics remain incomplete.
+3. The repository still has some live regressions and cleanup debt, so it should not be described as fully green without re-running the full quality gates.
 
 None of those gaps invalidate the section 28 architectural baseline. They do mean the repo should not be described as fully green or fully aligned with the long-range platform scope.
 

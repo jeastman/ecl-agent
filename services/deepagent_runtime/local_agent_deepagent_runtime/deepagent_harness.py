@@ -19,6 +19,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.compaction_strateg
 from services.deepagent_runtime.local_agent_deepagent_runtime.prompt_builder import PromptBuilder
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
+    CancellationRequestedInterrupt,
     ClarificationRequiredInterrupt,
     InterruptBridge,
     PolicyDeniedInterrupt,
@@ -139,6 +140,7 @@ class LangChainDeepAgentHarness:
             governed_operation=request.governed_operation,
             checkpoint_controller=request.checkpoint_controller,
             on_event=callback,
+            cancellation_probe=request.cancellation_probe,
         )
         tools = SandboxToolBindings(
             sandbox=request.sandbox,
@@ -153,14 +155,17 @@ class LangChainDeepAgentHarness:
             user_input_handler=interrupt_bridge.request_user_input,
             web_fetch_port=self._web_fetch_port,
             web_search_port=self._web_search_port,
+            interrupt_handler=lambda: interrupt_bridge.raise_if_cancelled("cancel_requested"),
         )
         try:
+            interrupt_bridge.raise_if_cancelled("cancel_requested")
             if request.checkpoint_controller is not None:
                 metadata = request.checkpoint_controller.record_checkpoint(
                     "resumed_before_invoke" if request.resume_from_checkpoint_id else "run_started"
                 )
                 callback("checkpoint.saved", metadata.to_dict())
             outcome = self._run_agent_task(request, tools, prompt, callback, interrupt_bridge)
+            interrupt_bridge.raise_if_cancelled("cancel_requested")
             if outcome.success and request.checkpoint_controller is not None:
                 metadata = request.checkpoint_controller.record_checkpoint("run_completed")
                 callback("checkpoint.saved", metadata.to_dict())
@@ -189,6 +194,16 @@ class LangChainDeepAgentHarness:
                 paused=True,
                 pause_reason="awaiting_user_input",
                 requested_user_input=exc.question,
+            )
+        except CancellationRequestedInterrupt as exc:
+            return AgentExecutionResult(
+                success=False,
+                summary="Run interrupted by cancel request.",
+                output_artifacts=[],
+                paused=True,
+                pause_reason="cancel_requested",
+                cancelled=True,
+                checkpoint_id=exc.checkpoint_id,
             )
         except PolicyDeniedInterrupt as exc:
             return AgentExecutionResult(
@@ -250,6 +265,7 @@ class LangChainDeepAgentHarness:
             self._model_name,
             model_provider=self._model_provider,
         )
+        interrupt_bridge.raise_if_cancelled("cancel_requested")
         mcp_provider = MCPToolProvider(
             config=self._mcp_config,
             task_id=request.task_id,
@@ -279,6 +295,7 @@ class LangChainDeepAgentHarness:
         )
         primary_tools.extend(mcp_provider.tools_for_role("primary"))
         try:
+            interrupt_bridge.raise_if_cancelled("cancel_requested")
             middleware = [TodoStateObserverMiddleware(callback)]
             if self._compaction_strategy is not None and self._compaction_policy.enabled:
                 middleware.extend(
@@ -312,6 +329,7 @@ class LangChainDeepAgentHarness:
                     "summary": "Executing the primary Deep Agent with compiled project-owned subagents.",
                 },
             )
+            interrupt_bridge.raise_if_cancelled("cancel_requested")
             result = _invoke_agent(
                 agent,
                 {"messages": _conversation_payload(request)},
@@ -321,6 +339,7 @@ class LangChainDeepAgentHarness:
                     else None
                 ),
             )
+            interrupt_bridge.raise_if_cancelled("cancel_requested")
             summary = _extract_summary(result)
             artifact_paths = list(tools.written_paths)
             final_response = _extract_final_assistant_response(result)

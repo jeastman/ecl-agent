@@ -143,19 +143,7 @@ class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
         self._started_at: float | None = None
 
     def before_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
-        if self._emitted:
-            return None
-        self._started_at = monotonic()
-        self.on_event(
-            "subagent.started",
-            {
-                "runId": self.run_id,
-                "subagentId": self.role,
-                "taskDescription": self.delegation_description,
-                "timestamp": utc_now_timestamp(),
-            },
-        )
-        self._emitted = True
+        self._emit_started()
         return None
 
     def after_agent(self, state: Any, runtime: Any) -> dict[str, Any] | None:
@@ -167,12 +155,29 @@ class _SubagentEventMiddleware(AgentMiddleware[Any, Any, Any]):
         request: ModelRequest[Any],
         handler: Callable[[ModelRequest[Any]], ModelResponse[Any]],
     ) -> ModelResponse[Any]:
+        self._emit_started()
         try:
             response = handler(request)
         except Exception:
             self._emit_completed(status="failed")
             raise
+        self._emit_completed(status="success")
         return response
+
+    def _emit_started(self) -> None:
+        if self._emitted:
+            return
+        self._started_at = monotonic()
+        self.on_event(
+            "subagent.started",
+            {
+                "runId": self.run_id,
+                "subagentId": self.role,
+                "taskDescription": self.delegation_description,
+                "timestamp": utc_now_timestamp(),
+            },
+        )
+        self._emitted = True
 
     def _emit_completed(self, *, status: str) -> None:
         if self._completed:

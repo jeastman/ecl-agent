@@ -158,6 +158,7 @@ def _status_style(status: str) -> str:
         "executing": ACCENT,
         "planning": ACCENT,
         "completed": SUCCESS,
+        "cancelled": WARNING,
         "failed": DANGER,
         "paused": WARNING,
         "awaiting_approval": WARNING,

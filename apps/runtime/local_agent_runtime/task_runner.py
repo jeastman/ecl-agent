@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from threading import Event as ThreadEvent
 from threading import RLock, Thread
 from typing import Any, Callable, Protocol
 from uuid import uuid4
@@ -43,6 +44,7 @@ from services.deepagent_runtime.local_agent_deepagent_runtime.checkpoint_adapter
 )
 from services.deepagent_runtime.local_agent_deepagent_runtime.interrupt_bridge import (
     ApprovalRequiredInterrupt,
+    CancellationRequestedInterrupt,
     ClarificationRequiredInterrupt,
     PolicyDeniedInterrupt,
 )
@@ -91,6 +93,9 @@ class AgentExecutionRequest:
     resume_from_checkpoint_id: str | None = None
     governed_operation: Callable[[OperationContext], None] | None = None
     skill_install_handler: Callable[..., dict[str, Any]] | None = None
+    cancel_requested: Callable[[], bool] | None = None
+    cancellation_probe: Callable[[], str | None] | None = None
+    interrupt_if_cancelled: Callable[[str | None], None] | None = None
 
 
 @dataclass(slots=True)
@@ -106,6 +111,24 @@ class AgentExecutionResult:
     failure_code: str | None = None
     requested_user_input: str | None = None
     assistant_response: str | None = None
+    cancelled: bool = False
+    checkpoint_id: str | None = None
+
+
+@dataclass(slots=True)
+class RunCancellation:
+    event: ThreadEvent = field(default_factory=ThreadEvent)
+    reason: str | None = None
+
+    def request(self, reason: str | None) -> None:
+        if self.reason is None and reason is not None:
+            stripped = reason.strip()
+            if stripped:
+                self.reason = stripped
+        self.event.set()
+
+    def requested(self) -> bool:
+        return self.event.is_set()
 
 
 _RECOVERABLE_TOOL_REJECTION_THRESHOLD = 3
@@ -195,6 +218,7 @@ class TaskRunner:
             else None
         )
         self._run_threads: dict[tuple[str, str], Thread] = {}
+        self._run_cancellations: dict[tuple[str, str], RunCancellation] = {}
         self._thread_lock = RLock()
         self._rehydrated_artifact_runs: set[tuple[str, str]] = set()
         self._conversation_compaction_service = conversation_compaction_service
@@ -255,6 +279,8 @@ class TaskRunner:
                 "events": "task.logs.stream",
             },
         )
+        with self._thread_lock:
+            self._run_cancellations[(task_id, run_id)] = RunCancellation()
         self._run_state_store.create(state)
         self._write_metrics(task_id, run_id, started_at=accepted_at)
         self._seed_run_message_history(
@@ -309,6 +335,7 @@ class TaskRunner:
             raise ValueError("task.resume cannot resume while approval is still pending")
         if not state.is_resumable:
             raise ValueError("task.resume requires a paused or resumable run")
+        self._clear_cancellation(state.task_id, state.run_id)
         self._launch_run(
             task_id=state.task_id,
             run_id=state.run_id,
@@ -333,6 +360,8 @@ class TaskRunner:
             raise ValueError("task.reply cannot reply to a completed run")
         if state.status == TaskStatus.FAILED:
             raise ValueError("task.reply cannot reply to a failed run")
+        if state.status == TaskStatus.CANCELLED:
+            raise ValueError("task.reply cannot reply to a cancelled run")
         if state.awaiting_approval:
             raise ValueError("task.reply cannot reply while approval is still pending")
         if not state.is_resumable:
@@ -370,6 +399,38 @@ class TaskRunner:
         )
         return self.get_task_snapshot(state.task_id, state.run_id)
 
+    def cancel_run(
+        self,
+        task_id: str,
+        run_id: str | None = None,
+        *,
+        reason: str | None = None,
+    ) -> tuple[str, str, str]:
+        state = self._run_state_store.get(task_id, run_id)
+        if state.status == TaskStatus.COMPLETED:
+            raise ValueError("task.cancel cannot cancel a completed run")
+        if state.status == TaskStatus.FAILED:
+            raise ValueError("task.cancel cannot cancel a failed run")
+        if state.status == TaskStatus.CANCELLED:
+            raise ValueError("task.cancel cannot cancel an already cancelled run")
+
+        cancellation = self._cancellation_for(state.task_id, state.run_id)
+        cancellation.request(reason)
+
+        if state.status in {TaskStatus.PAUSED, TaskStatus.AWAITING_APPROVAL, TaskStatus.ACCEPTED}:
+            self._transition_to_cancelled(
+                task_id=state.task_id,
+                run_id=state.run_id,
+                summary=_cancellation_summary(reason),
+                pause_reason="cancel_requested",
+                correlation_id=None,
+                checkpoint_controller=self._checkpoint_controller_for_cancellation(
+                    state.task_id, state.run_id
+                ),
+            )
+            return state.task_id, state.run_id, TaskStatus.CANCELLED.value
+        return state.task_id, state.run_id, "cancel_requested"
+
     def approve(
         self,
         task_id: str | None,
@@ -390,6 +451,8 @@ class TaskRunner:
             raise ValueError("approval does not belong to the requested run")
 
         state = self._run_state_store.get(request.task_id, request.run_id)
+        if state.status == TaskStatus.CANCELLED:
+            raise ValueError("task.approve cannot approve a cancelled run")
         is_direct_skill_install = request.scope.get("kind") == "skill.install"
         if not is_direct_skill_install and state.pending_approval_id != approval_id:
             raise ValueError("approval is not the active pending approval for this run")
@@ -650,6 +713,128 @@ class TaskRunner:
             for thread in threads:
                 thread.join()
 
+    def _cancellation_for(self, task_id: str, run_id: str) -> RunCancellation:
+        key = (task_id, run_id)
+        with self._thread_lock:
+            cancellation = self._run_cancellations.get(key)
+            if cancellation is None:
+                cancellation = RunCancellation()
+                self._run_cancellations[key] = cancellation
+            return cancellation
+
+    def _clear_cancellation(self, task_id: str, run_id: str) -> None:
+        key = (task_id, run_id)
+        with self._thread_lock:
+            self._run_cancellations[key] = RunCancellation()
+
+    def _interrupt_if_cancelled(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        reason: str | None,
+        checkpoint_controller: CheckpointController | None,
+    ) -> None:
+        cancellation = self._cancellation_for(task_id, run_id)
+        if not cancellation.requested():
+            return
+        checkpoint_id: str | None = None
+        if checkpoint_controller is not None:
+            metadata = checkpoint_controller.record_checkpoint(reason or "cancel_requested")
+            checkpoint_id = metadata.checkpoint_id
+            self._handle_harness_event(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=None,
+                event_type=EventType.CHECKPOINT_SAVED.value,
+                payload=metadata.to_dict(),
+            )
+        raise CancellationRequestedInterrupt(
+            reason=cancellation.reason,
+            checkpoint_id=checkpoint_id,
+        )
+
+    def _checkpoint_controller_for_cancellation(
+        self,
+        task_id: str,
+        run_id: str,
+    ) -> CheckpointController | None:
+        state = self._run_state_store.get(task_id, run_id)
+        if self._checkpoint_adapter is None:
+            return None
+        if state.latest_checkpoint_id is not None and state.checkpoint_thread_id is not None:
+            return self._checkpoint_adapter.attach_thread(task_id, run_id, state.checkpoint_thread_id)
+        return self._checkpoint_controller_for_run(task_id, run_id, resume=False)
+
+    def _transition_to_cancelled(
+        self,
+        *,
+        task_id: str,
+        run_id: str,
+        summary: str,
+        pause_reason: str,
+        correlation_id: str | None,
+        checkpoint_controller: CheckpointController | None,
+        artifact_count: int | None = None,
+        checkpoint_id: str | None = None,
+    ) -> None:
+        state = self._run_state_store.get(task_id, run_id)
+        if state.status == TaskStatus.CANCELLED:
+            return
+        cancellation = self._cancellation_for(task_id, run_id)
+        if checkpoint_controller is not None and checkpoint_id is None:
+            metadata = checkpoint_controller.record_checkpoint(pause_reason)
+            checkpoint_id = metadata.checkpoint_id
+            self._handle_harness_event(
+                task_id=task_id,
+                run_id=run_id,
+                correlation_id=correlation_id,
+                event_type=EventType.CHECKPOINT_SAVED.value,
+                payload=metadata.to_dict(),
+            )
+            state = self._run_state_store.get(task_id, run_id)
+        cancelled_at = utc_now_timestamp()
+        resolved_artifact_count = artifact_count if artifact_count is not None else state.artifact_count
+        self._run_state_store.update(
+            task_id,
+            run_id,
+            status=TaskStatus.CANCELLED,
+            updated_at=cancelled_at,
+            current_phase="cancelled",
+            latest_summary=summary,
+            artifact_count=resolved_artifact_count,
+            last_event_at=cancelled_at,
+            failure=None,
+            awaiting_approval=False,
+            pending_approval_id=None,
+            is_resumable=True,
+            pause_reason=pause_reason,
+            active_subagent=None,
+            latest_checkpoint_id=checkpoint_id or state.latest_checkpoint_id,
+            checkpoint_thread_id=(
+                checkpoint_controller.thread_id
+                if checkpoint_controller is not None
+                else state.checkpoint_thread_id
+            ),
+        )
+        self._publish(
+            task_id=task_id,
+            run_id=run_id,
+            correlation_id=correlation_id,
+            event_type=EventType.TASK_CANCELLED.value,
+            timestamp=cancelled_at,
+            source=self._source,
+            payload={
+                "status": TaskStatus.CANCELLED.value,
+                "cancelled_at": cancelled_at,
+                "summary": summary,
+                "reason": cancellation.reason,
+                "pause_reason": pause_reason,
+                "checkpoint_id": checkpoint_id or state.latest_checkpoint_id,
+            },
+        )
+        self._write_metrics(task_id, run_id, artifact_count=resolved_artifact_count)
+
     def _launch_run(
         self,
         *,
@@ -717,8 +902,19 @@ class TaskRunner:
         resume: bool,
     ) -> None:
         state = self._run_state_store.get(task_id, run_id)
-        started_at = utc_now_timestamp()
+        cancellation = self._cancellation_for(task_id, run_id)
         checkpoint_controller = self._checkpoint_controller_for_run(task_id, run_id, resume)
+        if cancellation.requested():
+            self._transition_to_cancelled(
+                task_id=task_id,
+                run_id=run_id,
+                summary=_cancellation_summary(cancellation.reason),
+                pause_reason="cancel_requested",
+                correlation_id=correlation_id,
+                checkpoint_controller=checkpoint_controller,
+            )
+            return
+        started_at = utc_now_timestamp()
         self._run_state_store.update(
             task_id,
             run_id,
@@ -835,6 +1031,16 @@ class TaskRunner:
                         sandbox=sandbox,
                         **kwargs,
                     ).to_dict(),
+                    cancel_requested=cancellation.requested,
+                    cancellation_probe=lambda: cancellation.reason
+                    if cancellation.requested()
+                    else None,
+                    interrupt_if_cancelled=lambda reason=None: self._interrupt_if_cancelled(
+                        task_id=task_id,
+                        run_id=run_id,
+                        reason=reason,
+                        checkpoint_controller=checkpoint_controller,
+                    ),
                 ),
                 on_event=_on_harness_event,
             )
@@ -856,6 +1062,16 @@ class TaskRunner:
                 paused=True,
                 pause_reason="awaiting_user_input",
                 requested_user_input=exc.question,
+            )
+        except CancellationRequestedInterrupt as exc:
+            result = AgentExecutionResult(
+                success=False,
+                summary=_cancellation_summary(exc.reason or cancellation.reason),
+                output_artifacts=[],
+                paused=True,
+                pause_reason="cancel_requested",
+                cancelled=True,
+                checkpoint_id=exc.checkpoint_id,
             )
         except PolicyDeniedInterrupt as exc:
             result = AgentExecutionResult(
@@ -929,6 +1145,19 @@ class TaskRunner:
             )
             self._write_metrics(task_id, run_id, artifact_count=artifact_count)
 
+        if result.cancelled or cancellation.requested():
+            self._transition_to_cancelled(
+                task_id=task_id,
+                run_id=run_id,
+                summary=result.summary or _cancellation_summary(cancellation.reason),
+                pause_reason=result.pause_reason or "cancel_requested",
+                correlation_id=correlation_id,
+                checkpoint_controller=checkpoint_controller,
+                artifact_count=artifact_count,
+                checkpoint_id=result.checkpoint_id,
+            )
+            return
+
         if result.paused:
             paused_at = utc_now_timestamp()
             if result.awaiting_approval:
@@ -957,6 +1186,8 @@ class TaskRunner:
                     latest_summary=result.summary,
                     artifact_count=artifact_count,
                     last_event_at=paused_at,
+                    awaiting_approval=False,
+                    pending_approval_id=None,
                     is_resumable=True,
                     pause_reason=result.pause_reason or "execution paused",
                     active_subagent=None,
@@ -979,6 +1210,17 @@ class TaskRunner:
             return
 
         if result.success:
+            if cancellation.requested():
+                self._transition_to_cancelled(
+                    task_id=task_id,
+                    run_id=run_id,
+                    summary=_cancellation_summary(cancellation.reason),
+                    pause_reason="cancel_requested",
+                    correlation_id=correlation_id,
+                    checkpoint_controller=checkpoint_controller,
+                    artifact_count=artifact_count,
+                )
+                return
             completed_at = utc_now_timestamp()
             self._run_state_store.update(
                 task_id,
@@ -1017,6 +1259,17 @@ class TaskRunner:
             return
 
         failed_at = utc_now_timestamp()
+        if cancellation.requested():
+            self._transition_to_cancelled(
+                task_id=task_id,
+                run_id=run_id,
+                summary=_cancellation_summary(cancellation.reason),
+                pause_reason="cancel_requested",
+                correlation_id=correlation_id,
+                checkpoint_controller=checkpoint_controller,
+                artifact_count=artifact_count,
+            )
+            return
         if result.failure_code == "scope_denied":
             self._append_diagnostic(
                 task_id=task_id,
@@ -2091,6 +2344,12 @@ def _source_for_harness_event(event_type: str, payload: dict[str, Any]) -> Event
             component="sandbox-tool-bindings",
         )
     return EventSource(kind=EventSourceKind.RUNTIME, component="langchain-deepagent-harness")
+
+
+def _cancellation_summary(reason: str | None) -> str:
+    if reason is not None and reason.strip():
+        return f"Run interrupted by cancel request: {reason.strip()}"
+    return "Run interrupted by cancel request."
 
 
 def _todos_from_event_payload(payload: dict[str, Any]) -> list[TodoItem] | None:

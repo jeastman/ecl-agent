@@ -7,6 +7,7 @@ from typing import Any
 
 from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_CREATE,
+    METHOD_TASK_CANCEL,
     METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_CONFIG_GET,
     JsonRpcRequest,
@@ -26,6 +27,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskArtifactGetParams,
     TaskApproveParams,
     TaskArtifactsListParams,
+    TaskCancelParams,
     TaskGetParams,
     TaskListParams,
     TaskLogsStreamParams,
@@ -123,6 +125,18 @@ class ProtocolClient:
         return await self._request(
             METHOD_TASK_GET,
             TaskGetParams(task_id=task_id, run_id=run_id).to_dict(),
+        )
+
+    async def task_cancel(
+        self,
+        task_id: str,
+        run_id: str | None = None,
+        *,
+        reason: str | None = None,
+    ) -> dict[str, Any]:
+        return await self._request(
+            METHOD_TASK_CANCEL,
+            TaskCancelParams(task_id=task_id, run_id=run_id, reason=reason).to_dict(),
         )
 
     async def task_list(self, *, limit: int | None = None) -> dict[str, Any]:

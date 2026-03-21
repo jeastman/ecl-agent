@@ -10,6 +10,7 @@ class EventType(StrEnum):
     TASK_STARTED = "task.started"
     CHECKPOINT_SAVED = "checkpoint.saved"
     TASK_PAUSED = "task.paused"
+    TASK_CANCELLED = "task.cancelled"
     TASK_RESUMED = "task.resumed"
     TASK_USER_INPUT_RECEIVED = "task.user_input_received"
     APPROVAL_REQUESTED = "approval.requested"
@@ -47,6 +48,7 @@ class TaskStatus(StrEnum):
     EXECUTING = "executing"
     PAUSED = "paused"
     AWAITING_APPROVAL = "awaiting_approval"
+    CANCELLED = "cancelled"
     COMPLETED = "completed"
     FAILED = "failed"
 

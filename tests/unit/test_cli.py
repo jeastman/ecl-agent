@@ -128,6 +128,31 @@ class CliTests(unittest.TestCase):
         self.assertIn("Artifacts", stdout.getvalue())
         self.assertIn("1", stdout.getvalue())
 
+    def test_handle_cancel_renders_runtime_cancel_result(self) -> None:
+        fake_client = _FakeClient()
+        fake_client.response = {
+            "correlation_id": "corr_1",
+            "result": {
+                "task_id": "task_1",
+                "run_id": "run_1",
+                "status": "cancel_requested",
+            },
+        }
+
+        with patch.object(cli, "make_client", return_value=fake_client):
+            with patch("sys.stdout", new=io.StringIO()) as stdout:
+                exit_code = cli.handle_cancel(
+                    config_path="docs/architecture/runtime.example.toml",
+                    task_id="task_1",
+                    run_id="run_1",
+                    reason="pause work",
+                )
+        self.assertEqual(exit_code, 0)
+        request = fake_client.requests[0]
+        self.assertEqual(request.method, "task.cancel")  # type: ignore[attr-defined]
+        self.assertEqual(request.params["reason"], "pause work")  # type: ignore[attr-defined]
+        self.assertIn("cancel_requested", stdout.getvalue())
+
     def test_handle_logs_renders_stream_ack_and_events(self) -> None:
         fake_client = _FakeClient()
         fake_client.stream_response = StreamResponse(

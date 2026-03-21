@@ -37,6 +37,8 @@ from packages.protocol.local_agent_protocol.models import (
     TaskCompactResult,
     TaskCreateParams,
     TaskCreateResult,
+    TaskCancelParams,
+    TaskCancelResult,
     TaskDiagnosticsListParams,
     TaskDiagnosticsListResult,
     TaskGetParams,
@@ -87,6 +89,7 @@ class MethodHandlers:
             },
             capabilities={
                 "task_create": True,
+                "task_cancel": True,
                 "event_stream": True,
                 "artifacts": True,
                 "approvals": True,
@@ -124,6 +127,15 @@ class MethodHandlers:
         return TaskGetResult(
             task=self.task_runner.get_task_snapshot(request.task_id, request.run_id)
         )
+
+    def task_cancel(self, params: dict) -> TaskCancelResult:
+        request = TaskCancelParams.from_dict(params)
+        task_id, run_id, status = self.task_runner.cancel_run(
+            request.task_id,
+            request.run_id,
+            reason=request.reason,
+        )
+        return TaskCancelResult(task_id=task_id, run_id=run_id, status=status)
 
     def task_list(self, params: dict) -> TaskListResult:
         request = TaskListParams.from_dict(params)

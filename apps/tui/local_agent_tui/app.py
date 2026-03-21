@@ -782,7 +782,24 @@ class AgentTUI(App):  # type: ignore[misc]
             clear_input()
         if not command:
             self._set_task_input_feedback(
-                "Supported commands: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
+                "Supported commands: resume, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
+            )
+            return
+        if command == "cancel" or command.startswith("cancel "):
+            state = self._store.snapshot()
+            task = state.task_snapshots.get(state.selected_task_id or "")
+            if task is None:
+                return
+            reason = stripped[7:].strip() if command.startswith("cancel ") else None
+            self._set_task_input_feedback("Submitting cancel request...")
+            self.run_worker(
+                self._cancel_selected_task(
+                    task_id=str(task["task_id"]),
+                    run_id=str(task.get("run_id", "")) or None,
+                    reason=reason or None,
+                ),
+                group="task-cancel",
+                exclusive=True,
             )
             return
         if command.startswith("reply "):
@@ -822,7 +839,7 @@ class AgentTUI(App):  # type: ignore[misc]
         handler = commands.get(command)
         if handler is None and command != "help":
             self._set_task_input_feedback(
-                f"Unsupported command '{command}'. Use: resume, reply <message>, approvals, artifacts, diagnostics, memory, config, help."
+                f"Unsupported command '{command}'. Use: resume, cancel [reason], reply <message>, approvals, artifacts, diagnostics, memory, config, help."
             )
             return
         self._set_task_input_feedback(f"Ran '{command}'.")
@@ -887,6 +904,28 @@ class AgentTUI(App):  # type: ignore[misc]
             await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
             self._set_task_input_feedback(
                 f"Reply failed: {_protocol_error_message(exc)}"
+            )
+
+    async def _cancel_selected_task(
+        self,
+        *,
+        task_id: str,
+        run_id: str | None,
+        reason: str | None,
+    ) -> None:
+        try:
+            response = await self._client.task_cancel(task_id, run_id, reason=reason)
+            self._store.dispatch({"kind": "rpc", "name": "task.cancel", "payload": response})
+            status = str(response.get("result", {}).get("status", "cancel_requested"))
+            self._set_task_input_feedback(
+                "Task cancelled and checkpointed." if status == "cancelled" else "Cancel requested."
+            )
+            self._start_selected_task_stream(task_id=task_id, run_id=run_id)
+            await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
+        except ProtocolClientError as exc:
+            await self._refresh_task_snapshot(task_id=task_id, run_id=run_id)
+            self._set_task_input_feedback(
+                f"Cancel failed: {_protocol_error_message(exc)}"
             )
 
     def action_open_artifacts(self) -> None:
@@ -1797,7 +1836,7 @@ def _default_workspace_root(config_snapshot: dict[str, Any]) -> str | None:
 
 
 def _has_non_terminal_tasks(state: Any) -> bool:
-    terminal_statuses = {"completed", "failed", "cancelled"}
+    terminal_statuses = {"completed", "failed"}
     for task in state.task_snapshots.values():
         status = str(task.get("status", "")).lower()
         if status not in terminal_statuses:

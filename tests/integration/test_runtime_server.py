@@ -29,6 +29,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_ARTIFACT_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
+    METHOD_TASK_CANCEL,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LIST,
@@ -1674,7 +1675,96 @@ class RuntimeIntegrationTests(unittest.TestCase):
             self.assertIn("task.resumed", event_types)
             self.assertIn("task.completed", event_types)
 
-            artifacts_response, _ = recovered_server.handle_line(
+    def test_runtime_cancel_interrupts_paused_run_and_allows_resume(self) -> None:
+        with tempfile.TemporaryDirectory(dir=Path.cwd()) as temp_dir:
+            workspace_root = Path(temp_dir) / "workspace"
+            workspace_root.mkdir()
+            config = load_runtime_config(CONFIG_PATH)
+            config.cli.default_workspace_root = str(workspace_root)
+            identity = load_identity_bundle(config.identity_path)
+            server = create_runtime_server(
+                config=config,
+                identity=identity,
+                agent_harness=_pause_then_resume_harness(),
+                runtime_root=str(Path(temp_dir) / "runtime"),
+            )
+            correlation_id = new_correlation_id()
+            create_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_CREATE,
+                        params=TaskCreateParams(
+                            task=TaskCreateRequest(
+                                objective="Pause and then cancel the repo task",
+                                workspace_roots=["/workspace"],
+                            )
+                        ).to_dict(),
+                        id="cancel-create",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            created = create_response.to_dict()["result"]
+            task_id = created["task_id"]
+            run_id = created["run_id"]
+
+            cancel_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_CANCEL,
+                        params={"task_id": task_id, "run_id": run_id, "reason": "pause work"},
+                        id="cancel-run",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertEqual(cancel_response.to_dict()["result"]["status"], "cancelled")
+
+            status_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_GET,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="cancel-status",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            cancelled_task = status_response.to_dict()["result"]["task"]
+            self.assertEqual(cancelled_task["status"], "cancelled")
+            self.assertTrue(cancelled_task["is_resumable"])
+            self.assertEqual(cancelled_task["pause_reason"], "cancel_requested")
+            self.assertIsNotNone(cancelled_task["latest_checkpoint_id"])
+
+            resumed_response, _ = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_RESUME,
+                        params={"task_id": task_id, "run_id": run_id},
+                        id="cancel-resume",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            resumed_task = resumed_response.to_dict()["result"]["task"]
+            self.assertEqual(resumed_task["status"], "completed")
+
+            logs_response, stream_events = server.handle_line(
+                json.dumps(
+                    JsonRpcRequest(
+                        method=METHOD_TASK_LOGS_STREAM,
+                        params={"task_id": task_id, "run_id": run_id, "include_history": True},
+                        id="cancel-logs",
+                        correlation_id=correlation_id,
+                    ).to_dict()
+                )
+            )
+            self.assertTrue(logs_response.to_dict()["result"]["stream_open"])
+            event_types = [event.event.event_type for event in stream_events]
+            self.assertIn("task.cancelled", event_types)
+            self.assertIn("task.resumed", event_types)
+
+            artifacts_response, _ = server.handle_line(
                 json.dumps(
                     JsonRpcRequest(
                         method=METHOD_TASK_ARTIFACTS_LIST,
@@ -1687,7 +1777,7 @@ class RuntimeIntegrationTests(unittest.TestCase):
             artifacts = artifacts_response.to_dict()["result"]["artifacts"]
             self.assertEqual(len(artifacts), 1)
 
-            artifact_get_response, _ = recovered_server.handle_line(
+            artifact_get_response, _ = server.handle_line(
                 json.dumps(
                     JsonRpcRequest(
                         method=METHOD_TASK_ARTIFACT_GET,

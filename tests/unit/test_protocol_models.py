@@ -6,6 +6,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_APPROVE,
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_ARTIFACT_GET,
+    METHOD_TASK_CANCEL,
     METHOD_TASK_COMPACT,
     METHOD_CONFIG_GET,
     METHOD_TASK_DIAGNOSTICS_LIST,
@@ -28,6 +29,8 @@ from packages.protocol.local_agent_protocol.models import (
     RuntimeEvent,
     TaskArtifactGetParams,
     TaskArtifactsListParams,
+    TaskCancelParams,
+    TaskCancelResult,
     TaskApproveParams,
     TaskApprovalsListParams,
     TaskCompactParams,
@@ -112,6 +115,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertIsNone(TaskListParams.from_dict({}).limit)
         self.assertEqual(TaskListParams.from_dict({"limit": 5}).limit, 5)
         self.assertEqual(TaskGetParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
+        self.assertEqual(TaskCancelParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(TaskResumeParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(TaskCompactParams.from_dict({"task_id": "task_1"}).task_id, "task_1")
         self.assertEqual(
@@ -142,6 +146,12 @@ class ProtocolModelTests(unittest.TestCase):
                 {"task_id": "task_1", "include_history": True}
             ).include_history
         )
+        self.assertEqual(
+            TaskCancelParams.from_dict({"task_id": "task_1", "reason": "please stop"}).reason,
+            "please stop",
+        )
+        with self.assertRaisesRegex(ValueError, "task.cancel requires task_id"):
+            TaskCancelParams.from_dict({})
         with self.assertRaisesRegex(ValueError, "task.resume requires task_id"):
             TaskResumeParams.from_dict({})
         with self.assertRaisesRegex(ValueError, "task.compact requires task_id"):
@@ -178,6 +188,14 @@ class ProtocolModelTests(unittest.TestCase):
             MemoryInspectParams.from_dict({"run_id": "run_1"})
         self.assertEqual(METHOD_TASK_APPROVE, "task.approve")
         self.assertEqual(METHOD_TASK_APPROVALS_LIST, "task.approvals.list")
+        self.assertEqual(METHOD_TASK_CANCEL, "task.cancel")
+
+    def test_task_cancel_result_serialization(self) -> None:
+        result = TaskCancelResult(task_id="task_1", run_id="run_1", status="cancel_requested")
+        self.assertEqual(
+            result.to_dict(),
+            {"task_id": "task_1", "run_id": "run_1", "status": "cancel_requested"},
+        )
 
     def test_approval_payload_validation(self) -> None:
         payload = ApprovalDecisionPayload.from_dict(
@@ -295,6 +313,7 @@ class ProtocolModelTests(unittest.TestCase):
         self.assertEqual(payload["protocol_version"], PROTOCOL_VERSION)
         self.assertEqual(payload["event"]["source"]["component"], "tests")
         self.assertEqual(EventType.SUBAGENT_COMPLETED.value, "subagent.completed")
+        self.assertEqual(EventType.TASK_CANCELLED.value, "task.cancelled")
 
     def test_runtime_health_result_serialization_omits_missing_capabilities(self) -> None:
         result = RuntimeHealthResult(

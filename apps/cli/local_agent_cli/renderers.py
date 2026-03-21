@@ -46,6 +46,19 @@ def render_task_created(result: dict[str, Any], correlation_id: str | None) -> R
     )
 
 
+def render_task_cancelled(result: dict[str, Any], correlation_id: str | None) -> RenderableType:
+    summary = Table.grid(padding=(0, 2))
+    summary.add_column(style="bold cyan")
+    summary.add_column()
+    summary.add_row("Task ID", result["task_id"])
+    summary.add_row("Run ID", result["run_id"])
+    summary.add_row("Status", _status_text(result["status"]))
+    if correlation_id:
+        summary.add_row("Correlation", correlation_id)
+    title = "Cancel Requested" if result["status"] == "cancel_requested" else "Task Cancelled"
+    return Panel.fit(summary, title=title, border_style=_border_for_status(result["status"]))
+
+
 def render_task_snapshot(task: dict[str, Any], *, title: str = "Task Status") -> RenderableType:
     summary = Table.grid(padding=(0, 2))
     summary.add_column(style="bold cyan")
@@ -127,6 +140,8 @@ def _format_event_message(event_type: str, payload: dict[str, Any]) -> str:
         return f" {payload.get('checkpoint_id') or 'checkpoint recorded'}"
     if event_type == "task.paused":
         return f" {payload.get('reason') or payload.get('summary') or 'paused'}"
+    if event_type == "task.cancelled":
+        return f" {payload.get('summary') or 'cancelled'}"
     if event_type == "task.user_input_received":
         return f" {payload.get('summary') or 'user input received'}"
     if event_type == "task.resumed":
@@ -325,6 +340,8 @@ def render_config(result: dict[str, Any]) -> RenderableType:
 def _status_text(status: str) -> Text:
     styles = {
         "accepted": "bold green",
+        "cancel_requested": "bold yellow",
+        "cancelled": "bold yellow",
         "completed": "bold green",
         "healthy": "bold green",
         "pending": "bold yellow",
@@ -339,7 +356,7 @@ def _status_text(status: str) -> Text:
 def _border_for_status(status: str) -> str:
     if status in {"completed", "accepted"}:
         return "green"
-    if status in {"paused", "pending"}:
+    if status in {"paused", "pending", "cancel_requested", "cancelled"}:
         return "yellow"
     if status in {"failed", "rejected"}:
         return "red"

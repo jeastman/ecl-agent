@@ -18,6 +18,7 @@ from apps.cli.local_agent_cli.renderers import (
     render_logs_stream_open,
     render_memory,
     render_skill_install,
+    render_task_cancelled,
     render_task_created,
     render_task_snapshot,
 )
@@ -33,6 +34,7 @@ from packages.protocol.local_agent_protocol.models import (
     METHOD_TASK_APPROVALS_LIST,
     METHOD_TASK_DIAGNOSTICS_LIST,
     METHOD_TASK_ARTIFACTS_LIST,
+    METHOD_TASK_CANCEL,
     METHOD_TASK_CREATE,
     METHOD_TASK_GET,
     METHOD_TASK_LOGS_STREAM,
@@ -44,6 +46,7 @@ from packages.protocol.local_agent_protocol.models import (
     TaskApproveParams,
     TaskDiagnosticsListParams,
     TaskArtifactsListParams,
+    TaskCancelParams,
     TaskCreateParams,
     TaskCreateRequest,
     TaskGetParams,
@@ -101,6 +104,11 @@ def build_parser() -> argparse.ArgumentParser:
     status = subparsers.add_parser("status", help="Inspect task state through the runtime.")
     status.add_argument("task_id", help="Task identifier.")
     status.add_argument("--run-id", help="Optional run identifier.")
+
+    cancel = subparsers.add_parser("cancel", help="Interrupt a task and checkpoint it for resume.")
+    cancel.add_argument("task_id", help="Task identifier.")
+    cancel.add_argument("--run-id", help="Optional run identifier.")
+    cancel.add_argument("--reason", help="Optional cancellation reason.")
 
     logs = subparsers.add_parser("logs", help="Render runtime events for a task.")
     logs.add_argument("task_id", help="Task identifier.")
@@ -244,6 +252,25 @@ def handle_status(config_path: str, task_id: str, run_id: str | None) -> int:
     )
     payload = client.send(request)
     console.print(render_task_snapshot(payload["result"]["task"]))
+    return 0
+
+
+def handle_cancel(
+    config_path: str,
+    task_id: str,
+    run_id: str | None,
+    reason: str | None,
+) -> int:
+    client = make_client(config_path)
+    console = make_console()
+    request = JsonRpcRequest(
+        method=METHOD_TASK_CANCEL,
+        params=TaskCancelParams(task_id=task_id, run_id=run_id, reason=reason).to_dict(),
+        id="1",
+        correlation_id=new_correlation_id(),
+    )
+    payload = client.send(request)
+    console.print(render_task_cancelled(payload["result"], payload.get("correlation_id")))
     return 0
 
 
@@ -464,6 +491,13 @@ def main(argv: list[str] | None = None) -> int:
             )
         if args.command == "status":
             return handle_status(config_path=config_path, task_id=args.task_id, run_id=args.run_id)
+        if args.command == "cancel":
+            return handle_cancel(
+                config_path=config_path,
+                task_id=args.task_id,
+                run_id=args.run_id,
+                reason=args.reason,
+            )
         if args.command == "logs":
             return handle_logs(config_path=config_path, task_id=args.task_id, run_id=args.run_id)
         if args.command == "artifacts":

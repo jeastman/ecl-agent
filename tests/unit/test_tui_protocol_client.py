@@ -99,6 +99,17 @@ class TuiProtocolClientTests(unittest.IsolatedAsyncioTestCase):
             "task.resume", {"task_id": "task_1", "run_id": "run_1"}
         )
 
+    async def test_task_cancel_uses_protocol_method(self) -> None:
+        client = ProtocolClient("docs/architecture/runtime.example.toml")
+        request_mock = AsyncMock(return_value={"result": {"status": "cancel_requested"}})
+        with patch.object(client, "_request", request_mock):
+            payload = await client.task_cancel("task_1", "run_1", reason="pause work")
+        self.assertEqual(payload["result"]["status"], "cancel_requested")
+        request_mock.assert_awaited_once_with(
+            "task.cancel",
+            {"task_id": "task_1", "run_id": "run_1", "reason": "pause work"},
+        )
+
     async def test_task_reply_uses_protocol_method(self) -> None:
         client = ProtocolClient("docs/architecture/runtime.example.toml")
         request_mock = AsyncMock(return_value={"result": {"task": {"task_id": "task_1"}}})

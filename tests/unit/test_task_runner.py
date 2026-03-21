@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -412,6 +414,97 @@ class TaskRunnerTests(unittest.TestCase):
                 ("assistant", "Completed after user clarification."),
             ],
         )
+
+    def test_task_runner_cancels_paused_run_and_keeps_it_resumable(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=PauseThenResumeHarness(),
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+        )
+
+        cancelled_task_id, cancelled_run_id, status = runner.cancel_run(
+            task_id,
+            run_id,
+            reason="stop for now",
+        )
+
+        self.assertEqual((cancelled_task_id, cancelled_run_id), (task_id, run_id))
+        self.assertEqual(status, "cancelled")
+        snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(snapshot.status, TaskStatus.CANCELLED)
+        self.assertTrue(snapshot.is_resumable)
+        self.assertEqual(snapshot.pause_reason, "cancel_requested")
+        self.assertIsNotNone(snapshot.latest_checkpoint_id)
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertIn("task.cancelled", event_types)
+        self.assertNotIn("task.failed", event_types)
+
+    def test_task_runner_cancels_executing_run_and_resumes_from_checkpoint(self) -> None:
+        store = InMemoryRunStateStore()
+        bus = InMemoryEventBus()
+        durable_services = create_durable_runtime_services(
+            load_runtime_config("docs/architecture/runtime.example.toml"),
+            runtime_root_override=str(self.runtime_root),
+        )
+        harness = CancelAwareHarness()
+        runner = TaskRunner(
+            run_state_store=store,
+            event_bus=bus,
+            artifact_store=InMemoryArtifactStore(path_mapper=self.sandbox_factory),
+            sandbox_factory=self.sandbox_factory,
+            agent_harness=harness,
+            durable_services=durable_services,
+        )
+        task_id, run_id, _ = runner.start_run(
+            correlation_id="corr_1",
+            objective="Inspect the repo",
+            workspace_roots=["/workspace"],
+            identity_bundle_text="identity",
+            background=True,
+        )
+
+        self.assertTrue(harness.started.wait(timeout=2))
+        cancelled_task_id, cancelled_run_id, status = runner.cancel_run(
+            task_id,
+            run_id,
+            reason="interrupt execution",
+        )
+
+        self.assertEqual((cancelled_task_id, cancelled_run_id), (task_id, run_id))
+        self.assertEqual(status, "cancel_requested")
+        runner.wait_for_all_runs()
+
+        cancelled_snapshot = runner.get_task_snapshot(task_id, run_id)
+        self.assertEqual(cancelled_snapshot.status, TaskStatus.CANCELLED)
+        self.assertTrue(cancelled_snapshot.is_resumable)
+        self.assertEqual(cancelled_snapshot.pause_reason, "cancel_requested")
+        self.assertIsNotNone(cancelled_snapshot.latest_checkpoint_id)
+        event_types = [event.event.event_type for event in bus.list_events(task_id, run_id)]
+        self.assertIn("task.cancelled", event_types)
+        self.assertNotIn("task.failed", event_types)
+
+        resumed_snapshot = runner.resume_run(
+            task_id,
+            run_id,
+            identity_bundle_text="identity",
+        )
+        self.assertEqual(resumed_snapshot.status, TaskStatus.COMPLETED)
+        self.assertFalse(resumed_snapshot.is_resumable)
 
     def test_task_runner_requests_approval_and_resumes_after_approval(self) -> None:
         store = InMemoryRunStateStore()
@@ -1068,6 +1161,31 @@ class CompactionEventHarness:
             output_artifacts=[],
             assistant_response="Completed after compaction.",
         )
+
+
+class CancelAwareHarness:
+    def __init__(self) -> None:
+        self.started = threading.Event()
+
+    def execute(self, request, on_event=None) -> AgentExecutionResult:
+        controller = request.checkpoint_controller
+        if controller is None:
+            raise AssertionError("checkpoint controller is required for cancellation tests")
+        if request.resume_from_checkpoint_id is not None:
+            controller.record_checkpoint("resumed")
+            request.sandbox.write_text("/workspace/artifacts/resumed.md", "# Resumed\n")
+            return AgentExecutionResult(
+                success=True,
+                summary="Completed after resume.",
+                output_artifacts=["/workspace/artifacts/resumed.md"],
+            )
+        self.started.set()
+        deadline = time.time() + 2.0
+        while time.time() < deadline:
+            if request.interrupt_if_cancelled is not None:
+                request.interrupt_if_cancelled("cancel_requested")
+            time.sleep(0.02)
+        raise AssertionError("expected cancellation before deadline")
 
 
 class FakeCompactionStrategy:

@@ -50,9 +50,11 @@ class SandboxToolBindings:
     user_input_handler: Callable[..., None] | None = None
     web_fetch_port: WebFetchPort | None = None
     web_search_port: WebSearchPort | None = None
+    interrupt_handler: Callable[[], None] | None = None
     _written_paths: list[str] | None = None
 
     def read_file(self, path: str) -> str:
+        self._check_interrupt()
         self._ensure_allowed("read_file", _READ_CAPABILITIES)
         try:
             normalized_path = self.sandbox.normalize_path(path)
@@ -81,6 +83,7 @@ class SandboxToolBindings:
             )
 
     def write_file(self, path: str, content: str) -> str:
+        self._check_interrupt()
         self._ensure_allowed("write_file", _WRITE_CAPABILITIES)
         try:
             normalized_path = self.sandbox.normalize_path(path)
@@ -115,6 +118,7 @@ class SandboxToolBindings:
             )
 
     def list_files(self, root: str) -> list[str]:
+        self._check_interrupt()
         self._ensure_allowed("list_files", _LIST_CAPABILITIES)
         try:
             normalized_root = self.sandbox.normalize_path(root)
@@ -139,6 +143,7 @@ class SandboxToolBindings:
             return [self._handle_recoverable_rejection("list_files", {"root": root}, exc)]
 
     def execute_command(self, command: list[str], cwd: str | None = None) -> dict[str, Any] | str:
+        self._check_interrupt()
         self._ensure_allowed("execute_command", _EXECUTE_CAPABILITIES)
         arguments = {"command": list(command), "cwd": cwd or self.sandbox.get_workspace_root()}
         try:
@@ -194,6 +199,7 @@ class SandboxToolBindings:
     def memory_lookup(
         self, namespace: str | None = None, scope: str | None = None
     ) -> list[dict[str, Any]]:
+        self._check_interrupt()
         self._ensure_allowed("memory_lookup", _MEMORY_CAPABILITIES)
         if self.memory_store is None:
             return []
@@ -216,6 +222,7 @@ class SandboxToolBindings:
         scope: str = "run_state",
         confidence: float | None = None,
     ) -> dict[str, Any] | str:
+        self._check_interrupt()
         self._ensure_allowed("memory_write", _MEMORY_WRITE_CAPABILITIES)
         if self.memory_store is None:
             raise ValueError("memory_write is not configured for this runtime")
@@ -314,6 +321,7 @@ class SandboxToolBindings:
             return self._handle_recoverable_rejection("memory_write", arguments, exc)
 
     def plan_update(self, summary: str, phase: str | None = None) -> dict[str, Any]:
+        self._check_interrupt()
         self._ensure_allowed("plan_update", _PLAN_CAPABILITIES)
         payload = {"summary": summary.strip()}
         if phase is not None and phase.strip():
@@ -329,6 +337,7 @@ class SandboxToolBindings:
         return payload
 
     def artifact_inspect(self) -> list[dict[str, Any]]:
+        self._check_interrupt()
         self._ensure_allowed("artifact_inspect", _ARTIFACT_CAPABILITIES)
         artifacts = self.artifact_store.list_artifacts(self.task_id, self.run_id)
         self._emit(
@@ -349,6 +358,7 @@ class SandboxToolBindings:
         install_mode: str,
         reason: str,
     ) -> dict[str, Any]:
+        self._check_interrupt()
         self._ensure_allowed("skill_installer", _SKILL_INSTALL_CAPABILITIES)
         if self.skill_install_handler is None:
             raise ValueError("skill_installer is not configured for this runtime")
@@ -374,6 +384,7 @@ class SandboxToolBindings:
         )
 
     def request_user_input(self, question: str, reason_code: str | None = None) -> None:
+        self._check_interrupt()
         self._ensure_allowed("request_user_input", _USER_INPUT_CAPABILITIES)
         if self.user_input_handler is None:
             raise ValueError("request_user_input is not configured for this runtime")
@@ -397,6 +408,7 @@ class SandboxToolBindings:
         timeout: float | None = None,
         user_agent: str | None = None,
     ) -> dict[str, Any]:
+        self._check_interrupt()
         self._ensure_allowed("web_fetch", _WEB_FETCH_CAPABILITIES)
         if self.web_fetch_port is None:
             raise ValueError("web_fetch is not configured for this runtime")
@@ -440,6 +452,7 @@ class SandboxToolBindings:
         limit: int = 5,
         locale: str | None = None,
     ) -> list[dict[str, Any]]:
+        self._check_interrupt()
         self._ensure_allowed("web_search", _WEB_SEARCH_CAPABILITIES)
         if self.web_search_port is None:
             raise ValueError("web_search is not configured for this runtime")
@@ -663,6 +676,10 @@ class SandboxToolBindings:
             tools.append(self._with_validation_handler(web_search, "web_search"))
 
         return tools
+
+    def _check_interrupt(self) -> None:
+        if self.interrupt_handler is not None:
+            self.interrupt_handler()
 
     @property
     def written_paths(self) -> list[str]:

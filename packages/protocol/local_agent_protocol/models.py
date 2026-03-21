@@ -14,6 +14,7 @@ METHOD_RUNTIME_HEALTH = "runtime.health"
 METHOD_TASK_CREATE = "task.create"
 METHOD_TASK_LIST = "task.list"
 METHOD_TASK_GET = "task.get"
+METHOD_TASK_CANCEL = "task.cancel"
 METHOD_TASK_APPROVE = "task.approve"
 METHOD_TASK_APPROVALS_LIST = "task.approvals.list"
 METHOD_TASK_DIAGNOSTICS_LIST = "task.diagnostics.list"
@@ -336,6 +337,40 @@ class TaskGetResult:
 
     def to_dict(self) -> dict[str, Any]:
         return {"task": self.task.to_dict()}
+
+
+@dataclass(slots=True)
+class TaskCancelParams:
+    task_id: str
+    run_id: str | None = None
+    reason: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return _strip_none(asdict(self))
+
+    @classmethod
+    def from_dict(cls, payload: dict[str, Any]) -> "TaskCancelParams":
+        task_id = str(payload.get("task_id", "")).strip()
+        if not task_id:
+            raise ValueError("task.cancel requires task_id")
+        run_id = payload.get("run_id")
+        if run_id is not None and not isinstance(run_id, str):
+            raise ValueError("task.cancel run_id must be a string when provided")
+        reason_value = payload.get("reason")
+        if reason_value is not None and not isinstance(reason_value, str):
+            raise ValueError("task.cancel reason must be a string when provided")
+        reason = reason_value.strip() if isinstance(reason_value, str) else None
+        return cls(task_id=task_id, run_id=run_id, reason=reason or None)
+
+
+@dataclass(slots=True)
+class TaskCancelResult:
+    task_id: str
+    run_id: str
+    status: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
 
 
 @dataclass(slots=True)

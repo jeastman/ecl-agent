@@ -12,6 +12,7 @@ STATUS_COLORS: dict[str, str] = {
     "planning": STATUS_RUNNING,
     "running": STATUS_RUNNING,
     "completed": STATUS_SUCCESS,
+    "cancelled": STATUS_WARNING,
     "failed": STATUS_DANGER,
     "paused": STATUS_WARNING,
     "awaiting_approval": STATUS_WARNING,

@@ -254,6 +254,8 @@ Initial task status values:
 - `failed`
 - `cancelled`
 
+`cancelled` is a resumable interrupted state in the current runtime, not a terminal failure state.
+
 ### 9.3 Artifact persistence class
 
 Initial values:
@@ -601,7 +603,7 @@ Optional:
 ## 14.5 `task.cancel`
 
 ### Purpose
-Requests cancellation of a running task.
+Requests a cooperative interruption of a task/run and asks the runtime to checkpoint at the earliest convenient boundary.
 
 ### Params
 - `correlation_id`
@@ -616,15 +618,24 @@ Optional:
 - `run_id`
 - `status`
 
+Initial result status values:
+
+- `cancel_requested`
+- `cancelled`
+
 ### Notes
-Cancellation is best-effort. Final confirmation arrives through events and subsequent `task.get`.
+Cancellation is cooperative rather than forceful.
+When the runtime can only queue the interrupt, it returns `cancel_requested`.
+When the runtime has already checkpointed and moved the run into interrupted state, it returns `cancelled`.
+The durable run state after a successful interrupt is `cancelled`, which remains resumable through `task.resume`.
+Confirmation and checkpoint metadata are available through events and subsequent `task.get`.
 
 ---
 
 ## 14.6 `task.resume`
 
 ### Purpose
-Resumes a paused or otherwise resumable task/run using the runtime-owned checkpoint path.
+Resumes a paused, cancelled, or otherwise resumable task/run using the runtime-owned checkpoint path.
 
 ### Params
 - `correlation_id`
