@@ -65,11 +65,18 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
     def update_from_state(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        root = self.query_one("#task-detail-root", Container)
+        narrow = state.terminal_width < 100
+        wide = state.terminal_width >= 140
+        root.set_class(narrow, "-narrow")
+        root.set_class(wide, "-wide")
         self.query_one(StatusBar).update_from_state(state)
         self.query_one(TaskHeaderWidget).update_header(selected_task_header(state))
         timeline_focused = state.focused_pane == "timeline"
         side_focused = state.focused_pane == "side"
         main = self.query_one("#task-detail-main", Horizontal)
+        main.set_class(narrow, "-narrow")
+        main.set_class(wide, "-wide")
         for split_class in ("-split-50-50", "-split-60-40", "-split-70-30"):
             main.remove_class(split_class)
         main.add_class(f"-split-{state.task_detail_split.replace('_', '-')}")

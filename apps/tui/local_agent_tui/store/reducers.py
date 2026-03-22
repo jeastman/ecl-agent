@@ -176,10 +176,28 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         side_column_collapsed=bool(
             message.get("side_column_collapsed", state.side_column_collapsed)
         ),
-        task_detail_split=str(
-            message.get("task_detail_split", state.task_detail_split)
+        task_detail_split=str(message.get("task_detail_split", state.task_detail_split)),
+        terminal_width=int(message.get("terminal_width", state.terminal_width)),
+        unread_event_counts=dict(
+            message.get("unread_event_counts", state.unread_event_counts)
+        ),
+        approvals_request_progress_label=_normalize_error(
+            message.get(
+                "approvals_request_progress_label",
+                state.approvals_request_progress_label,
+            )
+        ),
+        artifacts_request_progress_label=_normalize_error(
+            message.get(
+                "artifacts_request_progress_label",
+                state.artifacts_request_progress_label,
+            )
+        ),
+        connection_heartbeat_tick=int(
+            message.get("connection_heartbeat_tick", state.connection_heartbeat_tick)
         ),
     )
+    state_next = _clear_selected_unread_count(state_next)
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
         task_key = _selected_task_key(state_next)
@@ -274,6 +292,7 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             approvals_by_task=approvals_by_task,
             approvals_request_status="loaded",
             approvals_request_error=None,
+            approvals_request_progress_label=None,
             selected_approval_id=selected_approval_id,
         )
 
@@ -295,6 +314,7 @@ def _reduce_rpc_result(state: AppState, name: str, payload: dict[str, Any]) -> A
             artifacts_by_task=artifacts_by_task,
             artifacts_request_status="loaded",
             artifacts_request_error=None,
+            artifacts_request_progress_label=None,
             selected_artifact_id_by_task=selected_artifact_id_by_task,
         )
 
@@ -539,6 +559,7 @@ def _reduce_runtime_event(state: AppState, payload: dict[str, Any]) -> AppState:
             source=dict(envelope.get("source", {})),
         ),
     )
+    next_state = _increment_unread_event_count(next_state, task_id=task_id)
     return _replace_task(next_state, snapshot, preserve_selection=True)
 
 
@@ -601,6 +622,28 @@ def _append_event_record(state: AppState, record: TaskEventRecord) -> AppState:
             events = events[-EVENT_BUFFER_LIMIT:]
     run_event_buffers[task_key] = events
     return replace(state, run_event_buffers=run_event_buffers)
+
+
+def _increment_unread_event_count(state: AppState, *, task_id: str) -> AppState:
+    if state.selected_task_id == task_id:
+        return _clear_unread_count(state, task_id=task_id)
+    unread_event_counts = dict(state.unread_event_counts)
+    unread_event_counts[task_id] = unread_event_counts.get(task_id, 0) + 1
+    return replace(state, unread_event_counts=unread_event_counts)
+
+
+def _clear_selected_unread_count(state: AppState) -> AppState:
+    if state.selected_task_id is None:
+        return state
+    return _clear_unread_count(state, task_id=state.selected_task_id)
+
+
+def _clear_unread_count(state: AppState, *, task_id: str) -> AppState:
+    if task_id not in state.unread_event_counts:
+        return state
+    unread_event_counts = dict(state.unread_event_counts)
+    unread_event_counts.pop(task_id, None)
+    return replace(state, unread_event_counts=unread_event_counts)
 
 
 def _event_record_exists(events: list[TaskEventRecord], record: TaskEventRecord) -> bool:

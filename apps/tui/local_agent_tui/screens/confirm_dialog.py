@@ -9,6 +9,11 @@ class ConfirmDialogScreen(ModalScreen[bool]):  # type: ignore[misc]
     BINDINGS = [
         Binding("escape", "cancel", "Cancel", show=False, priority=True),
         Binding("enter", "confirm", "Confirm", show=False, priority=True),
+        Binding("y", "confirm", "Confirm", show=False, priority=True),
+        Binding("left", "focus_prev_button", "Previous Button", show=False, priority=True),
+        Binding("right", "focus_next_button", "Next Button", show=False, priority=True),
+        Binding("tab", "focus_next_button", "Next Button", show=False, priority=True),
+        Binding("shift+tab", "focus_prev_button", "Previous Button", show=False, priority=True),
     ]
 
     def __init__(
@@ -48,7 +53,17 @@ class ConfirmDialogScreen(ModalScreen[bool]):  # type: ignore[misc]
         self.dismiss(False)
 
     def action_confirm(self) -> None:
+        focused = self.focused
+        if isinstance(focused, Button) and focused.id == "confirm-dialog-cancel":
+            self.dismiss(False)
+            return
         self.dismiss(True)
+
+    def action_focus_next_button(self) -> None:
+        self._cycle_button_focus(1)
+
+    def action_focus_prev_button(self) -> None:
+        self._cycle_button_focus(-1)
 
     def on_button_pressed(self, event: Any) -> None:
         if event.button.id == "confirm-dialog-confirm":
@@ -56,3 +71,15 @@ class ConfirmDialogScreen(ModalScreen[bool]):  # type: ignore[misc]
             return
         if event.button.id == "confirm-dialog-cancel":
             self.dismiss(False)
+
+    def _cycle_button_focus(self, delta: int) -> None:
+        buttons = [
+            self.query_one("#confirm-dialog-cancel", Button),
+            self.query_one("#confirm-dialog-confirm", Button),
+        ]
+        focused = self.focused
+        try:
+            index = buttons.index(focused) if focused in buttons else 1
+        except ValueError:
+            index = 1
+        buttons[(index + delta) % len(buttons)].focus()

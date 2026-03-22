@@ -175,10 +175,12 @@ class AgentTUI(App):  # type: ignore[misc]
     async def on_mount(self) -> None:
         settings = self._operator_settings_store.load()
         self._store.dispatch({"kind": "ui", "runtime_user_id": settings.runtime_user_id})
+        self._store.dispatch({"kind": "ui", "terminal_width": self.size.width})
         self.push_screen("dashboard")
         self._store.dispatch({"kind": "connection", "status": "connecting"})
         self._set_runtime_snapshot_loading("loading")
         self._render_state()
+        self.set_interval(30.0, self._schedule_runtime_health_refresh)
         self.run_worker(self._connect_and_refresh(), group="runtime-bootstrap", exclusive=True)
 
     async def on_unmount(self) -> None:
@@ -203,8 +205,7 @@ class AgentTUI(App):  # type: ignore[misc]
         try:
             await self._client.connect()
             self._store.dispatch({"kind": "connection", "status": "connected"})
-            health = await self._client.runtime_health()
-            self._store.dispatch({"kind": "rpc", "name": "runtime.health", "payload": health})
+            await self._refresh_runtime_health()
             task_list = await self._client.task_list(limit=10)
             self._store.dispatch({"kind": "rpc", "name": "task.list", "payload": task_list})
             selected_task_id = preferred_task_id
@@ -247,6 +248,7 @@ class AgentTUI(App):  # type: ignore[misc]
                 "kind": "ui",
                 "artifacts_request_status": "loading",
                 "artifacts_request_error": None,
+                "artifacts_request_progress_label": None,
             }
         )
         self._render_state()
@@ -257,16 +259,26 @@ class AgentTUI(App):  # type: ignore[misc]
                     "kind": "ui",
                     "artifacts_request_status": "loaded",
                     "artifacts_request_error": None,
+                    "artifacts_request_progress_label": None,
                 }
             )
             self._render_state()
             return
         try:
-            for task_id in recent_task_ids(state):
+            task_ids = recent_task_ids(state)
+            total = len(task_ids)
+            for index, task_id in enumerate(task_ids, start=1):
                 task = state.task_snapshots.get(task_id)
                 if task is None:
                     continue
                 run_id = str(task.get("run_id", "")) or None
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "artifacts_request_progress_label": f"Loading artifacts ({index}/{total} tasks)...",
+                    }
+                )
+                self._render_state()
                 artifacts = await self._client.task_artifacts_list(task_id, run_id)
                 self._store.dispatch(
                     {"kind": "rpc", "name": "task.artifacts.list", "payload": artifacts}
@@ -277,6 +289,7 @@ class AgentTUI(App):  # type: ignore[misc]
                     "kind": "ui",
                     "artifacts_request_status": "error",
                     "artifacts_request_error": str(exc),
+                    "artifacts_request_progress_label": None,
                 }
             )
             self._render_state()
@@ -291,6 +304,7 @@ class AgentTUI(App):  # type: ignore[misc]
                 "kind": "ui",
                 "approvals_request_status": "loading",
                 "approvals_request_error": None,
+                "approvals_request_progress_label": None,
             }
         )
         self._render_state()
@@ -301,16 +315,26 @@ class AgentTUI(App):  # type: ignore[misc]
                     "kind": "ui",
                     "approvals_request_status": "loaded",
                     "approvals_request_error": None,
+                    "approvals_request_progress_label": None,
                 }
             )
             self._render_state()
             return
         try:
-            for task_id in recent_task_ids(state):
+            task_ids = recent_task_ids(state)
+            total = len(task_ids)
+            for index, task_id in enumerate(task_ids, start=1):
                 task = state.task_snapshots.get(task_id)
                 if task is None:
                     continue
                 run_id = str(task.get("run_id", "")) or None
+                self._store.dispatch(
+                    {
+                        "kind": "ui",
+                        "approvals_request_progress_label": f"Loading approvals ({index}/{total} tasks)...",
+                    }
+                )
+                self._render_state()
                 approvals = await self._client.task_approvals_list(task_id, run_id)
                 self._store.dispatch(
                     {"kind": "rpc", "name": "task.approvals.list", "payload": approvals}
@@ -321,11 +345,17 @@ class AgentTUI(App):  # type: ignore[misc]
                     "kind": "ui",
                     "approvals_request_status": "error",
                     "approvals_request_error": str(exc),
+                    "approvals_request_progress_label": None,
                 }
             )
             self._render_state()
             return
         self._render_state()
+
+    def on_resize(self, event: Any) -> None:
+        width = int(getattr(getattr(event, "size", None), "width", self.size.width))
+        self._store.dispatch({"kind": "ui", "terminal_width": width})
+        self._request_render()
 
     async def _load_task_related(self, *, task_id: str, run_id: str | None) -> None:
         approvals = await self._client.task_approvals_list(task_id, run_id)
@@ -384,6 +414,12 @@ class AgentTUI(App):  # type: ignore[misc]
         self.call_from_thread(self._request_render)
 
     def _request_render(self) -> None:
+        if not getattr(self, "_screen_stack", None):
+            try:
+                self._render_state()
+            except Exception:
+                return
+            return
         now = time.monotonic()
         if now - self._last_render_at >= self._render_interval and not self._render_scheduled:
             self._render_state()
@@ -454,6 +490,35 @@ class AgentTUI(App):  # type: ignore[misc]
                 "runtime_snapshot_error": error,
             }
         )
+
+    def _pulse_connection_heartbeat(self) -> None:
+        current = self._store.snapshot().connection_heartbeat_tick
+        self._store.dispatch({"kind": "ui", "connection_heartbeat_tick": current + 1})
+
+        def clear_heartbeat() -> None:
+            latest = self._store.snapshot().connection_heartbeat_tick
+            if latest == current + 1:
+                self._store.dispatch({"kind": "ui", "connection_heartbeat_tick": latest + 1})
+                self._request_render()
+
+        self.set_timer(0.5, clear_heartbeat)
+
+    def _schedule_runtime_health_refresh(self) -> None:
+        state = self._store.snapshot()
+        if state.connection_status != "connected":
+            return
+        self.run_worker(self._refresh_runtime_health(), group="runtime-health", exclusive=True)
+
+    async def _refresh_runtime_health(self) -> None:
+        try:
+            health = await self._client.runtime_health()
+        except ProtocolClientError as exc:
+            self._store.dispatch({"kind": "connection", "status": "error", "error": str(exc)})
+            self._render_state()
+            return
+        self._store.dispatch({"kind": "rpc", "name": "runtime.health", "payload": health})
+        self._pulse_connection_heartbeat()
+        self._render_state()
 
     def _confirm(
         self,

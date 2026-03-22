@@ -47,6 +47,9 @@ class TaskHeaderWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc]
             heading.append("  ")
             heading.append_text(label("Active: "))
             heading.append_text(value(truncate(model.active_subagent, 16)))
+        if model.event_rate_label:
+            heading.append("  ")
+            heading.append_text(muted(model.event_rate_label))
         if model.run_id:
             heading.append("  ")
             heading.append_text(muted(f"\N{BLACK RIGHT-POINTING SMALL TRIANGLE} {truncate_id(model.run_id, width=20)}"))

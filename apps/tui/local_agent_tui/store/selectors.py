@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 import json
 from typing import Any, cast
 
@@ -29,6 +30,8 @@ class TaskListItemViewModel:
     updated_at: str
     awaiting_approval: bool
     artifact_count: int
+    unread_event_count: int
+    is_live: bool
     is_selected: bool
     is_highlighted: bool
 
@@ -111,6 +114,7 @@ class TaskDetailHeaderViewModel:
     current_phase: str
     active_subagent: str | None
     actionable_label: str
+    event_rate_label: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -517,6 +521,8 @@ def recent_tasks(state: AppState, *, limit: int = 10) -> list[TaskListItemViewMo
                 updated_at=str(task.get("last_event_at") or task.get("updated_at") or ""),
                 awaiting_approval=bool(task.get("awaiting_approval", False)),
                 artifact_count=_int_value(task.get("artifact_count", 0)),
+                unread_event_count=state.unread_event_counts.get(str(task["task_id"]), 0),
+                is_live=str(task.get("status", "unknown")).lower() in {"executing", "planning"},
                 is_selected=state.selected_task_id == task["task_id"],
                 is_highlighted=str(task["task_id"]) in highlighted_task_ids,
             )
@@ -573,6 +579,7 @@ def selected_task_header(state: AppState) -> TaskDetailHeaderViewModel | None:
         current_phase=str(task.get("current_phase") or "unknown"),
         active_subagent=_str_or_none(task.get("active_subagent")),
         actionable_label=_actionable_status_label(task),
+        event_rate_label=_selected_task_event_rate(state),
     )
 
 
@@ -1818,7 +1825,13 @@ def footer_hints(state: AppState, *, contextual: bool = False) -> _RichText:
             result.append_text(_key_hint(key, action))
         return result
 
-    return _hints_to_text(_footer_hint_labels(state, contextual=contextual))
+    return _hints_to_text(
+        _footer_hint_labels(
+            state,
+            contextual=contextual,
+            compact=state.terminal_width < 100,
+        )
+    )
 
 
 def dashboard_empty_state(state: AppState) -> str | None:
@@ -1882,25 +1895,25 @@ def _task_command_history_hint(state: AppState) -> str | None:
     return f"History {state.task_command_history_index + 1}/{count}"
 
 
-def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
+def _footer_hint_labels(state: AppState, *, contextual: bool, compact: bool = False) -> list[str]:
     if state.command_palette_visible:
         hints = ["Up/Down Move", "Enter Run", "Esc Close", "Q Quit"]
         if contextual:
             hints.insert(2, "/task-id Jump")
-        return hints
+        return _maybe_compact_hints(hints, compact=compact)
     if state.active_screen == "diagnostics":
         hints = ["Up/Down Move", "Enter Select", "Home Top", "End Bottom", "G Palette", "Esc Back", "Q Quit"]
         if contextual:
             hints.insert(2, "Tab Focus")
-        return hints
+        return _maybe_compact_hints(hints, compact=compact)
     if state.active_screen == "config":
-        return ["Up/Down Move", "Home Top", "End Bottom", "C Refresh", "G Palette", "Esc Back", "Q Quit"]
+        return _maybe_compact_hints(
+            ["Up/Down Move", "Home Top", "End Bottom", "C Refresh", "G Palette", "Esc Back", "Q Quit"],
+            compact=compact,
+        )
     if state.active_screen == "approvals":
         hints = ["J/K Navigate", "Home Top", "End Bottom", "Y Approve", "N Reject", "Enter Details", "Q Quit"]
-        if contextual:
-            hints.insert(5, "1 Queue")
-            hints.insert(6, "2 Details")
-        return hints
+        return _maybe_compact_hints(hints, compact=compact)
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
         hints = [
@@ -1908,8 +1921,6 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             "F Filter Events",
             "/ Search Events",
             "L Toggle Logs",
-            "1 Timeline",
-            "2 Side",
             "A Approvals",
             "O Artifacts",
             "D Diagnostics",
@@ -1926,9 +1937,9 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             hints.insert(0, "R Resume")
         if contextual:
             hints.insert(1, "Tab Cycle Pane")
-        return hints
+        return _maybe_compact_hints(hints, compact=compact)
     if state.active_screen == "artifacts":
-        return [
+        return _maybe_compact_hints([
             "Up/Down Move",
             "Home Top",
             "End Bottom",
@@ -1940,11 +1951,11 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             "? Help",
             "G Palette",
             "Esc Back",
-        ]
+        ], compact=compact)
     if state.active_screen == "markdown_viewer":
-        return ["Esc Back", "Q Quit"]
+        return _maybe_compact_hints(["Esc Back", "Q Quit"], compact=compact)
     if state.active_screen == "memory":
-        return [
+        return _maybe_compact_hints([
             "Up/Down Move",
             "Home Top",
             "End Bottom",
@@ -1954,59 +1965,104 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             "G Palette",
             "Esc Back",
             "Q Quit",
-        ]
+        ], compact=compact)
     if contextual and state.focused_pane == "approvals":
-        return [
+        return _maybe_compact_hints([
             "Up/Down Move Approval",
             "Home Top",
             "End Bottom",
             "Tab Focus",
-            "1 Tasks",
-            "2 Summary",
-            "3 Approvals",
-            "4 Artifacts",
             "Enter Open Approvals",
             "A Approvals",
             "? Help",
             "G Palette",
             "Q Quit",
-        ]
+        ], compact=compact)
     if contextual and state.focused_pane == "summary":
-        return [
+        return _maybe_compact_hints([
             "G Palette",
             "N New Task",
             "Up/Down Scroll Summary",
             "Home Top",
             "End Bottom",
             "Tab Focus",
-            "1 Tasks",
-            "2 Summary",
-            "3 Approvals",
-            "4 Artifacts",
             "? Help",
             "A Approvals",
             "C Config",
             "Ctrl+R Reconnect",
             "Q Quit",
-        ]
-    return [
+        ], compact=compact)
+    return _maybe_compact_hints([
         "G Palette",
         "N New Task",
         "Up/Down Move",
         "Home Top",
         "End Bottom",
         "Tab Focus",
-        "1 Tasks",
-        "2 Summary",
-        "3 Approvals",
-        "4 Artifacts",
         "? Help",
         "Enter Open Task",
         "A Approvals",
         "C Config",
         "Ctrl+R Reconnect",
         "Q Quit",
-    ]
+    ], compact=compact)
+
+
+def _maybe_compact_hints(hints: list[str], *, compact: bool) -> list[str]:
+    if not compact:
+        return hints
+    compacted: list[str] = []
+    for hint in hints:
+        key, _, action = hint.partition(" ")
+        compacted.append(f"{key} {_compact_hint_action(action)}".rstrip())
+    return compacted
+
+
+def _compact_hint_action(action: str) -> str:
+    replacements = {
+        "Approvals": "Appr",
+        "Approval": "Appr",
+        "Command": "Cmd",
+        "Reconnect": "Retry",
+        "Palette": "Pal",
+        "Navigate": "Nav",
+        "Diagnostics": "Diag",
+        "Artifacts": "Arts",
+        "Summary": "Sum",
+        "Search Events": "Search",
+        "Filter Events": "Filter",
+        "Open Task": "Open",
+        "Move Approval": "Move",
+    }
+    compacted = action
+    for source, target in replacements.items():
+        compacted = compacted.replace(source, target)
+    if compacted == "Back":
+        return "\u2190"
+    return compacted
+
+
+def _selected_task_event_rate(state: AppState) -> str | None:
+    events = _selected_task_events(state)
+    if len(events) < 3:
+        return None
+    recent = events[-5:]
+    timestamps = [_timestamp_seconds(event.timestamp) for event in recent]
+    valid = [timestamp for timestamp in timestamps if timestamp is not None]
+    if len(valid) < 2:
+        return None
+    elapsed = max(1.0, valid[-1] - valid[0])
+    rate = (len(valid) - 1) * 60 / elapsed
+    if rate < 0.5:
+        return None
+    return f"~{max(1, round(rate))} events/min"
+
+
+def _timestamp_seconds(value: str) -> float | None:
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
 
 
 def _selected_task_key(state: AppState) -> tuple[str, str] | None:

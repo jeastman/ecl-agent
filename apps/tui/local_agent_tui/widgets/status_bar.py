@@ -41,7 +41,10 @@ def _render_identity_bar(state: AppState, clock_str: str) -> Text:
         "connecting": STATUS_WARNING,
         "error": STATUS_DANGER,
     }.get(state.connection_status, TEXT_MUTED_DEEP)
-    dot = "●" if state.connection_status == "connected" else "○"
+    heartbeat_active = bool(state.connection_heartbeat_tick % 2)
+    dot = "◉" if state.connection_status == "connected" and heartbeat_active else (
+        "●" if state.connection_status == "connected" else "○"
+    )
     left.append(dot, style=dot_color)
     left.append(" ")
     left.append(
@@ -142,6 +145,7 @@ class StatusBar(DirtyCheckMixin, _Widget):  # type: ignore[misc]
             str(state.runtime_health.get("runtime_name", "runtime")),
             status_bar_model_name(state) or "",
             self._clock_str,
+            state.connection_heartbeat_tick,
         )
         if not self._should_render(signature, attr_name="_last_identity_signature"):
             return

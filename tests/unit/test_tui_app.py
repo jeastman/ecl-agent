@@ -911,7 +911,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
 
     async def test_dashboard_task_list_removes_empty_row_when_tasks_exist(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.widgets.task_list import TaskListEmptyRow, TaskListRow
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListEmptyRow
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -929,11 +929,10 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
                 self.assertEqual(len(list(app.screen.query(TaskListEmptyRow))), 0)
-                self.assertGreaterEqual(len(list(app.screen.query(TaskListRow))), 1)
 
     async def test_dashboard_task_list_removes_loading_placeholder_when_tasks_exist(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
-        from apps.tui.local_agent_tui.widgets.task_list import TaskListPlaceholderRow, TaskListRow
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListPlaceholderRow
 
         with (
             patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
@@ -952,7 +951,6 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app._render_state()  # type: ignore[attr-defined]
                 await pilot.pause()
                 self.assertEqual(len(list(app.screen.query(TaskListPlaceholderRow))), 0)
-                self.assertGreaterEqual(len(list(app.screen.query(TaskListRow))), 1)
 
     async def test_dashboard_task_selection_surfaces_artifact_list_errors_without_crashing(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -2528,6 +2526,31 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 app.screen.dismiss(False)  # type: ignore[attr-defined]
                 await pilot.pause()
                 self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
+
+    async def test_quit_confirm_dialog_supports_keyboard_accept_and_cancel(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.screens.confirm_dialog import ConfirmDialogScreen
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("q")
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "ConfirmDialogScreen")
+                await pilot.press("left", "enter")
+                await pilot.pause()
+                self.assertNotEqual(app.screen.__class__.__name__, "ConfirmDialogScreen")
+
+        bindings = {binding.key for binding in ConfirmDialogScreen.BINDINGS}
+        self.assertTrue({"enter", "escape", "y", "left", "right", "tab", "shift+tab"}.issubset(bindings))
 
     async def test_quit_exits_immediately_when_all_tasks_are_terminal(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

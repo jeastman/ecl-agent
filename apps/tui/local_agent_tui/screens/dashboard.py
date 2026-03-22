@@ -61,9 +61,17 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         root = self.query_one("#dashboard-root", Container)
         main = self.query_one("#dashboard-main", Horizontal)
         side = self.query_one("#dashboard-side-column", Vertical)
+        narrow = state.terminal_width < 100
+        wide = state.terminal_width >= 140
         root.set_class(state.side_column_collapsed, "-side-collapsed")
+        root.set_class(narrow, "-narrow")
+        root.set_class(wide, "-wide")
         main.set_class(state.side_column_collapsed, "-side-collapsed")
+        main.set_class(narrow, "-narrow")
+        main.set_class(wide, "-wide")
         side.set_class(state.side_column_collapsed, "-hidden")
+        side.set_class(narrow, "-narrow")
+        side.set_class(wide, "-wide")
         if state.runtime_snapshot_status == "loading" and not state.task_snapshots:
             tasks_focused = state.focused_pane == "tasks"
             approvals_focused = state.focused_pane == "approvals"
@@ -74,6 +82,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
                 "Loading approvals...",
                 focused=approvals_focused,
                 inbox_mode=False,
+                progress_label=state.approvals_request_progress_label,
             )
             task_summary = self.query_one("#task-summary", VerticalScroll)
             task_summary.border_title = _pane_title(2, "Selected Task", focused=summary_focused)
@@ -86,7 +95,13 @@ class DashboardScreen(Screen):  # type: ignore[misc]
             artifacts_pane.border_title = _pane_title(4, "Recent Artifacts", focused=artifacts_focused)
             artifacts_pane.border_subtitle = "Loading"
             artifacts_pane.set_class(artifacts_focused, "-focused-pane")
-            artifacts_pane.update(loading_renderable("Loading artifacts...", skeleton_lines=4))
+            artifacts_pane.update(
+                loading_renderable(
+                    "Loading artifacts...",
+                    skeleton_lines=4,
+                    progress_label=state.artifacts_request_progress_label,
+                )
+            )
             self.query_one(TaskListWidget).border_title = _pane_title(1, "Tasks", focused=tasks_focused)
             self.query_one(ApprovalQueueWidget).border_title = _pane_title(3, "Approvals Pending", focused=approvals_focused)
             self.query_one("#dashboard-footer", Static).update(footer_hints(state, contextual=True))
@@ -99,12 +114,21 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         task_list = self.query_one(TaskListWidget)
         task_list.update_tasks(tasks, focused=tasks_focused, compact=state.task_list_compact)
         task_list.border_title = _pane_title(1, "Tasks", focused=tasks_focused)
-        self.query_one(ApprovalQueueWidget).update_approvals(
-            pending_approvals_for_selected_task(state, limit=5),
-            focused=approvals_focused,
-            inbox_mode=False,
-        )
-        self.query_one(ApprovalQueueWidget).border_title = _pane_title(3, "Approvals Pending", focused=approvals_focused)
+        approval_queue = self.query_one(ApprovalQueueWidget)
+        if state.approvals_request_status == "loading":
+            approval_queue.show_loading(
+                "Loading approvals...",
+                focused=approvals_focused,
+                inbox_mode=False,
+                progress_label=state.approvals_request_progress_label,
+            )
+        else:
+            approval_queue.update_approvals(
+                pending_approvals_for_selected_task(state, limit=5),
+                focused=approvals_focused,
+                inbox_mode=False,
+            )
+        approval_queue.border_title = _pane_title(3, "Approvals Pending", focused=approvals_focused)
         task_summary = self.query_one("#task-summary", VerticalScroll)
         task_summary.border_title = _pane_title(2, "Selected Task", focused=summary_focused)
         task_summary.border_subtitle = (
@@ -116,8 +140,17 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         artifacts_pane.border_title = _pane_title(4, "Recent Artifacts", focused=artifacts_focused)
         artifacts_pane.border_subtitle = "Focused" if artifacts_focused else ""
         artifacts_pane.set_class(artifacts_focused, "-focused-pane")
-        artifacts = recent_artifacts(state)
-        artifacts_pane.update(_recent_artifacts_renderable(artifacts))
+        if state.artifacts_request_status == "loading":
+            artifacts_pane.update(
+                loading_renderable(
+                    "Loading artifacts...",
+                    skeleton_lines=4,
+                    progress_label=state.artifacts_request_progress_label,
+                )
+            )
+        else:
+            artifacts = recent_artifacts(state)
+            artifacts_pane.update(_recent_artifacts_renderable(artifacts))
         self.query_one("#dashboard-footer", Static).update(footer_hints(state, contextual=True))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:

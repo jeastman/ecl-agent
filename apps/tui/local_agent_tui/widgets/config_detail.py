@@ -6,15 +6,18 @@ from rich.console import Group
 from rich.syntax import Syntax
 from rich.text import Text
 
-from ..compat import Static, _TEXTUAL_IMPORT_ERROR
+from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import ConfigDetailViewModel
 from .loading import loading_renderable
 
 
-class ConfigDetailWidget(Static):  # type: ignore[misc]
+class ConfigDetailWidget(VerticalScroll):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._last_signature: tuple[str, str, str, str] | None = None
+
+    def compose(self) -> ComposeResult:
+        yield Static(id="config-screen-detail-body")
 
     def update_detail(self, model: ConfigDetailViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
@@ -31,7 +34,7 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
             if model.body_format != "text"
             else Text(model.body)
         )
-        self.update(
+        self.query_one("#config-screen-detail-body", Static).update(
             Group(
                 Text(f"Status: {model.status.upper()}"),
                 Text(""),
@@ -44,5 +47,7 @@ class ConfigDetailWidget(Static):  # type: ignore[misc]
 
     def show_loading(self, label: str) -> None:
         self.border_title = "Config Viewer"
-        self.update(loading_renderable(label, skeleton_lines=4))
+        self.query_one("#config-screen-detail-body", Static).update(
+            loading_renderable(label, skeleton_lines=4)
+        )
         self._last_signature = None

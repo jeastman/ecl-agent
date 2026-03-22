@@ -14,12 +14,19 @@ from ._dirty import DirtyCheckMixin
 
 
 class ApprovalQueueWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
-    def show_loading(self, label: str, *, focused: bool, inbox_mode: bool = False) -> None:
+    def show_loading(
+        self,
+        label: str,
+        *,
+        focused: bool,
+        inbox_mode: bool = False,
+        progress_label: str | None = None,
+    ) -> None:
         self._reset_render_cache()
         self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
         self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")
-        self.update(loading_renderable(label, skeleton_lines=4))
+        self.update(loading_renderable(label, skeleton_lines=4, progress_label=progress_label))
 
     def update_approvals(
         self,

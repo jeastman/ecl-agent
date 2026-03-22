@@ -108,9 +108,21 @@ Screen {
     height: 1fr;
 }
 
+#dashboard-main.-narrow {
+    layout: vertical;
+}
+
+#dashboard-main.-wide #dashboard-task-list {
+    width: 22%;
+}
+
 #task-detail-main {
     layout: horizontal;
     height: 1fr;
+}
+
+#task-detail-main.-narrow {
+    layout: vertical;
 }
 
 #approvals-screen-main {
@@ -191,6 +203,43 @@ Screen {
     height: 1fr;
 }
 
+#dashboard-side-column.-narrow {
+    layout: horizontal;
+    width: 1fr;
+    min-width: 0;
+    height: 12;
+    margin-top: 1;
+}
+
+#dashboard-side-column.-narrow #approval-queue,
+#dashboard-side-column.-narrow #recent-artifacts {
+    width: 1fr;
+    height: 1fr;
+}
+
+#dashboard-side-column.-narrow #approval-queue {
+    margin-right: 1;
+}
+
+#dashboard-root.-narrow #dashboard-task-list,
+#dashboard-root.-narrow #task-summary {
+    width: 1fr;
+    margin-right: 0;
+}
+
+#dashboard-root.-narrow #dashboard-task-list {
+    height: 10;
+    margin-bottom: 1;
+}
+
+#dashboard-root.-narrow #task-summary {
+    height: 1fr;
+}
+
+#dashboard-root.-wide #dashboard-side-column {
+    width: 32%;
+}
+
 #dashboard-main.-side-collapsed #task-summary {
     margin-right: 0;
 }
@@ -261,13 +310,39 @@ Screen {
 }
 
 #help-screen-panel {
-    max-height: 80%;
+    height: 85%;
+    max-height: 85%;
+    padding: 1 1 0 1;
 }
 
 #help-screen-title {
     text-style: bold;
     color: $la-text-title;
+    margin-bottom: 0;
+}
+
+#help-screen-subtitle {
+    color: $la-text-secondary;
     margin-bottom: 1;
+}
+
+#help-screen-scroll {
+    height: 1fr;
+    border: round $la-border-subtle;
+    background: $la-bg-base;
+    padding: 0 1;
+    overflow-y: auto;
+}
+
+#help-screen-body {
+    width: 1fr;
+    padding: 0 0 1 0;
+}
+
+#help-screen-footer {
+    color: $la-text-muted-deep;
+    margin-top: 1;
+    padding: 0 0 1 0;
 }
 
 #confirm-dialog-panel.-danger {
@@ -341,6 +416,32 @@ Screen {
     overflow-y: auto;
 }
 
+#task-detail-main.-narrow #task-detail-timeline,
+#task-detail-main.-narrow #task-detail-logs,
+#task-detail-main.-narrow #task-detail-side {
+    width: 1fr;
+    margin-right: 0;
+}
+
+#task-detail-main.-narrow #task-detail-timeline,
+#task-detail-main.-narrow #task-detail-logs {
+    height: 1fr;
+    margin-bottom: 1;
+}
+
+#task-detail-main.-narrow #task-detail-side {
+    height: 16;
+}
+
+#task-detail-main.-wide #task-detail-timeline,
+#task-detail-main.-wide #task-detail-logs {
+    width: 65%;
+}
+
+#task-detail-main.-wide #task-detail-side {
+    width: 35%;
+}
+
 #task-detail-main.-split-50-50 #task-detail-timeline,
 #task-detail-main.-split-50-50 #task-detail-logs {
     width: 50%;
@@ -395,7 +496,14 @@ Screen {
 
 #task-detail-command-status {
     color: $la-text-secondary;
-    margin-bottom: 1;
+    height: auto;
+    margin-bottom: 0;
+}
+
+#task-detail-command-suggestion {
+    height: auto;
+    margin-top: 0;
+    margin-bottom: 0;
 }
 
 #task-detail-notifications.-urgent-pane {
@@ -468,6 +576,21 @@ Screen {
 #config-screen-sections {
     width: 34%;
     margin-right: 1;
+}
+
+#config-screen-sections ListItem {
+    height: auto;
+    min-height: 4;
+    padding: 0 1;
+}
+
+#config-screen-sections ListItem.-selected {
+    background: $la-bg-elevated;
+    tint: $la-focus 5%;
+}
+
+.config-section-row-content {
+    width: 1fr;
 }
 
 #config-screen-detail-column {
@@ -627,6 +750,9 @@ TaskTimelinePromptScreen {
 
 #task-detail-input {
     height: auto;
+    min-height: 4;
+    padding-top: 0;
+    padding-bottom: 0;
 }
 
 .panel {

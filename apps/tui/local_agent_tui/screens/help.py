@@ -1,18 +1,28 @@
 from __future__ import annotations
 
-from rich.console import Group
+from rich.console import Group, RenderableType
+from rich.rule import Rule
+from rich.table import Table
 from rich.text import Text
 
-from ..compat import ComposeResult, Container, ModalScreen, Static, _TEXTUAL_IMPORT_ERROR
+from ..compat import ComposeResult, Container, Key, ModalScreen, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
-from ..store.selectors import footer_hints
+from ..store.selectors import _footer_hint_labels
 
 
 class HelpScreen(ModalScreen[None]):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Container(
             Static("Help", id="help-screen-title"),
-            Static(id="help-screen-body"),
+            Static(
+                "Keyboard-first navigation, task actions, and screen-specific shortcuts.",
+                id="help-screen-subtitle",
+            ),
+            VerticalScroll(
+                Static(id="help-screen-body"),
+                id="help-screen-scroll",
+            ),
+            Static("Use ↑/↓, Page Up/Down, Home/End, Esc, or ?.", id="help-screen-footer"),
             id="help-screen-panel",
         )
 
@@ -21,58 +31,73 @@ class HelpScreen(ModalScreen[None]):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one("#help-screen-body", Static).update(_help_renderable(state))
 
+    def on_mount(self) -> None:
+        self.query_one("#help-screen-scroll", VerticalScroll).focus()
+
+    def on_key(self, event: Key) -> None:
+        scroll = self.query_one("#help-screen-scroll", VerticalScroll)
+        key = event.key
+        if key in {"up", "k"}:
+            scroll.action_scroll_up()
+            event.stop()
+        elif key in {"down", "j"}:
+            scroll.action_scroll_down()
+            event.stop()
+        elif key == "pageup":
+            scroll.action_page_up()
+            event.stop()
+        elif key == "pagedown":
+            scroll.action_page_down()
+            event.stop()
+        elif key == "home":
+            scroll.scroll_home(animate=False)
+            event.stop()
+        elif key == "end":
+            scroll.scroll_end(animate=False)
+            event.stop()
+
 
 def _help_renderable(state: AppState) -> Group:
-    sections: list[object] = []
+    sections: list[RenderableType] = []
 
     overview = Text()
     overview.append("Operate the console with keyboard-first navigation. ", style="bold")
-    overview.append("Use numbered pane jumps for the current screen, Tab to cycle, and G to open the command palette.")
-    sections.extend([Text("Overview", style="bold"), overview, Text("")])
-
-    sections.extend([Text("Current Screen", style="bold"), footer_hints(state, contextual=True), Text("")])
-
+    overview.append(
+        "Use the command palette for discovery, Tab to cycle panes, and direct keys for the highest-signal actions."
+    )
     sections.extend(
         [
-            Text("Screen Shortcuts", style="bold"),
-            Text("Dashboard", style="bold #9aa8b8"),
-            footer_hints(_screen_state("dashboard"), contextual=True),
+            _section_title("Overview"),
+            overview,
             Text(""),
-            Text("Task Detail", style="bold #9aa8b8"),
-            footer_hints(_screen_state("task_detail"), contextual=True),
+            _section_title("Current Screen"),
+            _shortcut_table(_screen_shortcuts(state)),
             Text(""),
-            Text("Approvals", style="bold #9aa8b8"),
-            footer_hints(_screen_state("approvals"), contextual=True),
-            Text(""),
-            Text("Artifacts", style="bold #9aa8b8"),
-            footer_hints(_screen_state("artifacts"), contextual=True),
-            Text(""),
-            Text("Memory", style="bold #9aa8b8"),
-            footer_hints(_screen_state("memory"), contextual=True),
-            Text(""),
-            Text("Config", style="bold #9aa8b8"),
-            footer_hints(_screen_state("config"), contextual=True),
-            Text(""),
-            Text("Diagnostics", style="bold #9aa8b8"),
-            footer_hints(_screen_state("diagnostics"), contextual=True),
-            Text(""),
+            _section_title("Screen Shortcuts"),
         ]
     )
 
+    for screen_name in ("dashboard", "task_detail", "approvals", "artifacts", "memory", "config", "diagnostics"):
+        sections.append(_subsection_title(_screen_label(screen_name)))
+        sections.append(_shortcut_table(_screen_shortcuts(_screen_state(screen_name))))
+        sections.append(Text(""))
+
     palette = Text()
     palette.append("G", style="bold")
-    palette.append(" opens the palette. ")
+    palette.append(" opens the command palette. ")
     palette.append("/task-id", style="bold")
-    palette.append(" jumps directly to a task. Recent commands are shown when the query is empty.")
-    sections.extend([Text("Command Palette", style="bold"), palette, Text("")])
+    palette.append(" jumps directly to a task. Recent commands appear when the query is empty.")
+    sections.extend([_section_title("Command Palette"), palette, Text("")])
 
     commands = Text()
     commands.append("Task commands: ", style="bold")
-    commands.append("resume, authorize, reauthorize, complete-auth, revoke-auth, approvals, artifacts, diagnostics, memory, config")
+    commands.append(
+        "resume, authorize, reauthorize, complete-auth, revoke-auth, approvals, artifacts, diagnostics, memory, config"
+    )
     commands.append("\n")
     commands.append("Extended forms: ", style="bold")
     commands.append("cancel [reason], reply <message>")
-    sections.extend([Text("Task Input", style="bold"), commands, Text("")])
+    sections.extend([_section_title("Task Input"), commands, Text("")])
 
     close = Text()
     close.append("Press ", style="none")
@@ -80,9 +105,47 @@ def _help_renderable(state: AppState) -> Group:
     close.append(" or ")
     close.append("?", style="bold")
     close.append(" to close help.")
-    sections.extend([Text("Close", style="bold"), close])
+    sections.extend([_section_title("Close"), close])
 
     return Group(*sections)
+
+
+def _section_title(title: str) -> Rule:
+    return Rule(title, style="#67b7dc")
+
+
+def _subsection_title(title: str) -> Text:
+    return Text(title, style="bold #9aa8b8")
+
+
+def _shortcut_table(hints: list[tuple[str, str]]) -> Table:
+    table = Table.grid(expand=True, padding=(0, 2))
+    table.add_column(width=16, style="bold #f1f6f8", no_wrap=True)
+    table.add_column(ratio=1, style="#b2bcc4")
+    for key, action in hints:
+        table.add_row(key, action)
+    return table
+
+
+def _screen_shortcuts(state: AppState) -> list[tuple[str, str]]:
+    labels = _footer_hint_labels(state, contextual=True, compact=False)
+    shortcuts: list[tuple[str, str]] = []
+    for label in labels:
+        key, _, action = label.partition(" ")
+        shortcuts.append((key, action))
+    return shortcuts
+
+
+def _screen_label(screen_name: str) -> str:
+    return {
+        "dashboard": "Dashboard",
+        "task_detail": "Task Detail",
+        "approvals": "Approvals",
+        "artifacts": "Artifacts",
+        "memory": "Memory",
+        "config": "Config",
+        "diagnostics": "Diagnostics",
+    }[screen_name]
 
 
 def _screen_state(screen_name: str) -> AppState:

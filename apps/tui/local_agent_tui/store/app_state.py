@@ -84,6 +84,11 @@ class UiMessage(TypedDict, total=False):
     task_list_compact: bool
     side_column_collapsed: bool
     task_detail_split: Literal["50_50", "60_40", "70_30"]
+    terminal_width: int
+    unread_event_counts: dict[str, int]
+    approvals_request_progress_label: str | None
+    artifacts_request_progress_label: str | None
+    connection_heartbeat_tick: int
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -178,6 +183,11 @@ class AppState:
     task_list_compact: bool = False
     side_column_collapsed: bool = False
     task_detail_split: Literal["50_50", "60_40", "70_30"] = "60_40"
+    terminal_width: int = 120
+    unread_event_counts: dict[str, int] = field(default_factory=dict)
+    approvals_request_progress_label: str | None = None
+    artifacts_request_progress_label: str | None = None
+    connection_heartbeat_tick: int = 0
 
 
 class AppStateStore:

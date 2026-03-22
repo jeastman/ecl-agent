@@ -15,15 +15,33 @@ class ToastMessage:
 
 
 class ToastItem(Static):  # type: ignore[misc]
+    _LEVEL_ICONS = {
+        "info": "ℹ",
+        "success": "✓",
+        "warning": "⚠",
+        "error": "✗",
+    }
+
+    def on_mount(self) -> None:
+        self.styles.opacity = 0.0
+        try:
+            self.styles.animate("opacity", 1.0, duration=0.2)
+        except Exception:
+            self.styles.opacity = 1.0
+
     def update_toast(self, toast: ToastMessage) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        self.update(toast.message)
+        level = _toast_level(toast.level)
+        icon = self._LEVEL_ICONS[level]
+        self.update(f"{icon} {toast.message}")
         self.remove_class("-info", "-success", "-warning", "-error")
-        self.add_class(f"-{_toast_level(toast.level)}")
+        self.add_class(f"-{level}")
 
 
 class ToastRack(Vertical):  # type: ignore[misc]
+    _MAX_TOASTS = 3
+
     def compose(self) -> ComposeResult:
         if False:
             yield
@@ -34,13 +52,23 @@ class ToastRack(Vertical):  # type: ignore[misc]
         item = ToastItem(classes="toast-item")
         item.update_toast(toast)
         self.mount(item)
+        self._trim_toast_stack()
         timeout = toast.timeout_seconds
         if timeout is not None and timeout > 0:
             self.set_timer(timeout, lambda: self.dismiss_toast(item))
 
     def dismiss_toast(self, item: ToastItem) -> None:
-        if item.parent is self:
+        if item.parent is not self:
+            return
+        try:
+            item.styles.animate("opacity", 0.0, duration=0.15, on_complete=lambda: item.remove())
+        except Exception:
             item.remove()
+
+    def _trim_toast_stack(self) -> None:
+        toast_items = list(self.query(ToastItem))
+        while len(toast_items) > self._MAX_TOASTS:
+            self.dismiss_toast(toast_items.pop(0))
 
 
 def toast_level_color(level: str) -> str:

@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from apps.tui.local_agent_tui.store.app_state import AppStateStore
+from apps.tui.local_agent_tui.widgets.loading import loading_renderable
 from apps.tui.local_agent_tui.store.selectors import (
     approval_count,
     artifact_browser_rows,
@@ -52,6 +53,28 @@ class TuiStoreTests(unittest.TestCase):
         state = store.snapshot()
         self.assertEqual(state.connection_status, "connected")
         self.assertEqual(state.runtime_health["status"], "ok")
+        self.assertEqual(state.connection_heartbeat_tick, 0)
+
+    def test_terminal_width_and_request_progress_labels_persist_in_ui_state(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "ui",
+                "terminal_width": 96,
+                "approvals_request_progress_label": "Loading approvals (1/2 tasks)...",
+                "artifacts_request_progress_label": "Loading artifacts (1/2 tasks)...",
+            }
+        )
+        state = store.snapshot()
+        self.assertEqual(state.terminal_width, 96)
+        self.assertEqual(
+            state.approvals_request_progress_label,
+            "Loading approvals (1/2 tasks)...",
+        )
+        self.assertEqual(
+            state.artifacts_request_progress_label,
+            "Loading artifacts (1/2 tasks)...",
+        )
 
     def test_connection_label_hides_last_error_when_runtime_is_connected(self) -> None:
         store = AppStateStore()
@@ -112,6 +135,74 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(task_count(state), 1)
         self.assertEqual(approval_count(state), 1)
         self.assertEqual(artifact_count(state), 1)
+
+    def test_unread_event_counts_increment_for_background_task_and_clear_on_selection(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.list",
+                "payload": {
+                    "result": {
+                        "tasks": [
+                            {"task_id": "task_1", "run_id": "run_1", "status": "executing"},
+                            {"task_id": "task_2", "run_id": "run_2", "status": "paused"},
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "selected_task_id": "task_1"})
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "plan.updated",
+                        "timestamp": "2026-03-12T00:00:01Z",
+                        "task_id": "task_2",
+                        "run_id": "run_2",
+                        "payload": {"summary": "Changed"},
+                    }
+                },
+            }
+        )
+        self.assertEqual(store.snapshot().unread_event_counts, {"task_2": 1})
+        store.dispatch({"kind": "ui", "selected_task_id": "task_2"})
+        self.assertEqual(store.snapshot().unread_event_counts, {})
+
+    def test_unread_event_counts_do_not_increment_for_selected_task(self) -> None:
+        store = AppStateStore()
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.list",
+                "payload": {
+                    "result": {
+                        "tasks": [
+                            {"task_id": "task_1", "run_id": "run_1", "status": "executing"},
+                            {"task_id": "task_2", "run_id": "run_2", "status": "paused"},
+                        ]
+                    }
+                },
+            }
+        )
+        store.dispatch({"kind": "ui", "selected_task_id": "task_1", "active_screen": "dashboard"})
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "plan.updated",
+                        "timestamp": "2026-03-12T00:00:01Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {"summary": "Changed"},
+                    }
+                },
+            }
+        )
+        self.assertEqual(store.snapshot().unread_event_counts, {})
 
     def test_task_get_and_list_results_populate_cached_state(self) -> None:
         store = AppStateStore()
@@ -787,6 +878,30 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(plan.current_phase, "planning")
         self.assertEqual(plan.current_step, "Inspect docs")
 
+    def test_selected_task_header_includes_event_rate_for_recent_events(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        for index in range(5):
+            store.dispatch(
+                {
+                    "kind": "event",
+                    "payload": {
+                        "event": {
+                            "event_type": "plan.updated",
+                            "timestamp": f"2026-03-12T00:00:0{index}Z",
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "payload": {"summary": f"step {index}"},
+                        }
+                    },
+                }
+            )
+
+        header = selected_task_header(store.snapshot())
+
+        self.assertIsNotNone(header)
+        self.assertEqual(header.event_rate_label, "~60 events/min")  # type: ignore[union-attr]
+
     def test_task_detail_selectors_surface_remote_mcp_authorization(self) -> None:
         store = AppStateStore()
         self._dispatch_created(store)
@@ -933,6 +1048,27 @@ class TuiStoreTests(unittest.TestCase):
         self.assertTrue(state.task_list_compact)
         self.assertTrue(state.side_column_collapsed)
         self.assertEqual(state.task_detail_split, "70_30")
+
+    def test_loading_renderable_uses_progress_line_and_variable_widths(self) -> None:
+        renderable = loading_renderable(
+            "Loading approvals...",
+            frame=2,
+            skeleton_lines=3,
+            progress_label="Loading approvals (1/2 tasks)...",
+        )
+
+        self.assertEqual(
+            [segment.plain for segment in renderable.renderables],  # type: ignore[attr-defined]
+            [
+                "⠹ Loading approvals...",
+                "",
+                "Loading approvals (1/2 tasks)...",
+                "",
+                "▇" * 36,
+                "▇" * 28,
+                "▇" * 32,
+            ],
+        )
 
     def test_selected_task_summary_projects_progress_and_phase_metadata(self) -> None:
         store = AppStateStore()

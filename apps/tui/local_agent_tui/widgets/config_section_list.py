@@ -6,17 +6,28 @@ from rich.text import Text
 
 from ..compat import Label, ListItem, ListView, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import ConfigSectionItemViewModel
+from ..theme.colors import ACCENT, TEXT_MUTED_DEEP, TEXT_SECONDARY
 
 
 class ConfigSectionRow(ListItem):  # type: ignore[misc]
     def __init__(self, item: ConfigSectionItemViewModel) -> None:
         self.section_id = item.section_id
+        self._label = Label(classes="config-section-row-content")
+        super().__init__(self._label)
+        self.update_item(item)
+
+    def update_item(self, item: ConfigSectionItemViewModel) -> None:
+        self.section_id = item.section_id
         text = Text()
+        text.append("▎ " if item.is_selected else "  ", style=ACCENT if item.is_selected else TEXT_MUTED_DEEP)
         text.append(f"{item.icon} ", style="bold")
-        text.append(item.title, style="bold")
+        text.append(item.title, style="bold" if item.is_selected else "")
         text.append("\n")
-        text.append(item.description)
-        super().__init__(Label(text))
+        text.append("   ")
+        text.append(item.description, style=TEXT_SECONDARY)
+        text.no_wrap = False
+        self._label.update(text)
+        self.set_class(item.is_selected, "-selected")
 
 
 class ConfigSectionListWidget(ListView):  # type: ignore[misc]

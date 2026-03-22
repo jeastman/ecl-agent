@@ -42,6 +42,12 @@ class TestFooterHintsTaskDetail(unittest.TestCase):
         self.assertIn("Back", result.plain)
         self.assertIn("?", result.plain)
 
+    def test_compacts_labels_on_narrow_terminals(self) -> None:
+        state = _state_for_screen("task_detail", terminal_width=80)
+        result = footer_hints(state)
+        self.assertIn("Cmd", result.plain)
+        self.assertIn("←", result.plain)
+
 
 class TestFooterHintsApprovals(unittest.TestCase):
     def test_contains_approve_hint(self) -> None:

@@ -5,13 +5,11 @@ from rich.text import Text
 from ..compat import ComposeResult, Container, Input, Key, Static, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import TaskActionBarViewModel
 from ..theme.colors import DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
-from ..theme.typography import key_hint
 from ._dirty import DirtyCheckMixin
 
 
 class InputBoxWidget(DirtyCheckMixin, Container):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
-        yield Static(id="task-detail-command-actions")
         yield Static(id="task-detail-command-status")
         yield Static(id="task-detail-command-suggestion")
         yield Input(
@@ -29,38 +27,6 @@ class InputBoxWidget(DirtyCheckMixin, Container):  # type: ignore[misc]
         input_widget = self.query_one("#task-detail-command-input", Input)
         input_widget.placeholder = model.input_placeholder
         suggestion_widget = self.query_one("#task-detail-command-suggestion", Static)
-        hints: list[Text] = []
-        if model.command_enabled:
-            hints.append(key_hint("I", "Command"))
-        if model.resume_enabled:
-            hints.append(key_hint("R", "Resume"))
-        if model.auth_enabled:
-            hints.append(key_hint("U", model.auth_label or "Authorize"))
-        if model.complete_auth_enabled:
-            hints.append(key_hint("X", "Complete Auth"))
-        if model.revoke_auth_enabled:
-            hints.append(key_hint("V", "Revoke Auth"))
-        if model.approvals_enabled:
-            hints.append(key_hint("A", f"Approvals {model.approval_count}"))
-        if model.artifact_open_enabled:
-            hints.append(key_hint("O", "Artifacts"))
-        if model.artifact_external_open_enabled:
-            hints.append(key_hint("E", "External Open"))
-        if model.diagnostics_enabled:
-            hints.append(key_hint("D", "Diagnostics"))
-        if model.logs_toggle_enabled:
-            hints.append(key_hint("L", "Hide Logs" if model.logs_visible else "Logs"))
-        if model.back_enabled:
-            hints.append(key_hint("Esc", "Back"))
-        if hints:
-            hint_row = Text()
-            for index, hint in enumerate(hints):
-                if index:
-                    hint_row.append("   ", style=TEXT_SECONDARY)
-                hint_row.append_text(hint)
-            self.query_one("#task-detail-command-actions", Static).update(hint_row)
-        else:
-            self.query_one("#task-detail-command-actions", Static).update(Text())
         status = Text(model.status_message, style=_status_tone_style(model.status_tone))
         self.query_one("#task-detail-command-status", Static).update(status)
         suggestion = Text()
