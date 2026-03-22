@@ -69,6 +69,10 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         self.query_one(TaskHeaderWidget).update_header(selected_task_header(state))
         timeline_focused = state.focused_pane == "timeline"
         side_focused = state.focused_pane == "side"
+        main = self.query_one("#task-detail-main", Horizontal)
+        for split_class in ("-split-50-50", "-split-60-40", "-split-70-30"):
+            main.remove_class(split_class)
+        main.add_class(f"-split-{state.task_detail_split.replace('_', '-')}")
         timeline_widget = self.query_one(EventTimelineWidget)
         timeline_widget.set_class(state.task_detail_show_logs, "-hidden")
         timeline_widget.border_title = _pane_title(1, "Event Timeline", focused=timeline_focused)
@@ -85,6 +89,20 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         artifacts_panel = self.query_one(ArtifactPanelWidget)
         remote_mcp_panel = self.query_one(RemoteMCPAuthorizationWidget)
         notifications_panel = self.query_one(NotificationStripWidget)
+        task = state.task_snapshots.get(state.selected_task_id or "")
+        panel_order = [plan_panel, todo_panel, subagents_panel, artifacts_panel, remote_mcp_panel, notifications_panel]
+        if task is not None and bool(task.get("awaiting_approval")):
+            panel_order = [notifications_panel, plan_panel, todo_panel, subagents_panel, artifacts_panel, remote_mcp_panel]
+        elif task is not None and _has_active_subagent(task):
+            panel_order = [subagents_panel, plan_panel, todo_panel, artifacts_panel, remote_mcp_panel, notifications_panel]
+        side = self.query_one("#task-detail-side", Vertical)
+        anchor = None
+        for panel in panel_order:
+            if anchor is None:
+                side.move_child(panel, before=0)
+            else:
+                side.move_child(panel, after=anchor)
+            anchor = panel
         for panel, title in [
             (plan_panel, "② Plan"),
             (todo_panel, "② Todos"),
@@ -147,3 +165,8 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
 def _pane_title(number: int, title_text: str, *, focused: bool) -> str:
     glyph = {1: "①", 2: "②"}.get(number, str(number))
     return f"{glyph} {title_text}" if not focused else f"> {glyph} {title_text}"
+
+
+def _has_active_subagent(task: dict[str, object]) -> bool:
+    value = task.get("active_subagent")
+    return isinstance(value, str) and bool(value.strip())

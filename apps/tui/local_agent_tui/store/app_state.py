@@ -81,6 +81,9 @@ class UiMessage(TypedDict, total=False):
     task_command_history: list[str]
     task_command_history_index: int | None
     task_command_suggestion: str | None
+    task_list_compact: bool
+    side_column_collapsed: bool
+    task_detail_split: Literal["50_50", "60_40", "70_30"]
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -172,6 +175,9 @@ class AppState:
     task_command_history: list[str] = field(default_factory=list)
     task_command_history_index: int | None = None
     task_command_suggestion: str | None = None
+    task_list_compact: bool = False
+    side_column_collapsed: bool = False
+    task_detail_split: Literal["50_50", "60_40", "70_30"] = "60_40"
 
 
 class AppStateStore:

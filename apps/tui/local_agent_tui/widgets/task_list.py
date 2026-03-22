@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from rich.cells import cell_len
 from rich.console import Group
 from rich.text import Text
 
@@ -23,12 +24,13 @@ class TaskListRow(ListItem):  # type: ignore[misc]
         self.run_id = item.run_id
         self._label = Label(classes="task-list-row-content")
         super().__init__(self._label, classes="task-list-row")
-        self.update_item(item)
+        self.update_item(item, compact=False)
 
-    def update_item(self, item: TaskListItemViewModel) -> None:
+    def update_item(self, item: TaskListItemViewModel, compact: bool, width: int | None = None) -> None:
         self.task_id = item.task_id
         self.run_id = item.run_id
-        self._label.update(_row_content(item))
+        self._label.update(_row_content(item, compact=compact, width=width))
+        self.set_class(compact, "-compact")
 
 
 class TaskListEmptyRow(ListItem):  # type: ignore[misc]
@@ -50,10 +52,10 @@ class TaskListWidget(DirtyCheckMixin, ListView):  # type: ignore[misc]
         super().__init__(*args, **kwargs)
         self._task_id_list: list[str] = []
 
-    def update_tasks(self, items: list[TaskListItemViewModel], *, focused: bool) -> None:
+    def update_tasks(self, items: list[TaskListItemViewModel], *, focused: bool, compact: bool) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
-        if not self._should_render((items, focused)):
+        if not self._should_render((items, focused, compact)):
             return
         if not items:
             self.clear()
@@ -77,7 +79,7 @@ class TaskListWidget(DirtyCheckMixin, ListView):  # type: ignore[misc]
             extra_row.remove()
         existing_rows = existing_rows[: len(items)]
         for index, item in enumerate(items):
-            existing_rows[index].update_item(item)
+            existing_rows[index].update_item(item, compact, self.content_size.width)
             if item.is_selected:
                 selected_index = index
         self._task_id_list = new_task_ids
@@ -105,7 +107,10 @@ def _status_text(status: str) -> Text:
     return Text(status.upper(), style=color)
 
 
-def _row_content(item: TaskListItemViewModel) -> Text:
+def _row_content(item: TaskListItemViewModel, *, compact: bool, width: int | None = None) -> Text:
+    if compact:
+        return _compact_row_content(item, width=width)
+
     lines: list[Text] = []
 
     top = Text()
@@ -114,6 +119,7 @@ def _row_content(item: TaskListItemViewModel) -> Text:
     top.append(_status_symbol(item.status), style=_status_color(item.status))
     top.append(" ")
     top.append(truncate(_objective_preview(item.objective), 48), style="bold")
+    top.no_wrap = True
     top.append("   ")
     top.append(relative_time(item.updated_at), style=TEXT_MUTED)
     if item.artifact_count:
@@ -130,8 +136,33 @@ def _row_content(item: TaskListItemViewModel) -> Text:
     if item.awaiting_approval:
         bottom.append(" · ", style=TEXT_MUTED_DEEP)
         bottom.append("approval", style=WARNING)
+    bottom.no_wrap = True
     lines.append(bottom)
     return Text("\n").join(lines)
+
+
+def _compact_row_content(item: TaskListItemViewModel, *, width: int | None = None) -> Text:
+    top = Text()
+    top_prefix = f"{_selection_glyph(item)} {_status_symbol(item.status)} "
+    top.append(_selection_glyph(item))
+    top.append(" ")
+    top.append(_status_symbol(item.status), style=_status_color(item.status))
+    top.append(" ")
+    available_width = max(10, (width or 36) - cell_len(top_prefix) - 2)
+    top.append(truncate(_objective_preview(item.objective), available_width), style="bold")
+    top.no_wrap = True
+
+    bottom = Text()
+    bottom.append("   ")
+    bottom.append(relative_time(item.updated_at), style=TEXT_MUTED)
+    if item.awaiting_approval:
+        bottom.append("  ")
+        bottom.append("approval", style=WARNING)
+    if item.artifact_count:
+        bottom.append("  ")
+        bottom.append(f" {item.artifact_count} ", style=f"bold black on {ACCENT}")
+    bottom.no_wrap = True
+    return Text("\n").join([top, bottom])
 
 
 def _status_dot(status: str) -> Text:

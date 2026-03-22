@@ -62,3 +62,21 @@ def compact_datetime(iso_timestamp: str) -> str:
         return local_dt.strftime("%Y-%m-%d %H:%M")
     except (ValueError, TypeError, OverflowError):
         return iso_timestamp if isinstance(iso_timestamp, str) else ""
+
+
+def elapsed_duration(iso_timestamp: str) -> str:
+    """ISO 8601 -> compact elapsed duration like '14m 32s'."""
+    try:
+        dt = datetime.fromisoformat(iso_timestamp)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        seconds = max(0, int((datetime.now(tz=timezone.utc) - dt).total_seconds()))
+        hours, rem = divmod(seconds, 3600)
+        minutes, secs = divmod(rem, 60)
+        if hours:
+            return f"{hours}h {minutes}m"
+        if minutes:
+            return f"{minutes}m {secs}s"
+        return f"{secs}s"
+    except (ValueError, TypeError, OverflowError):
+        return iso_timestamp if isinstance(iso_timestamp, str) else ""

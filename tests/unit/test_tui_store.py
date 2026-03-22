@@ -737,7 +737,7 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(header.current_phase, "planning")  # type: ignore[union-attr]
         self.assertEqual(plan.current_step, "Inspect docs")
         self.assertEqual(timeline.events[2].repeat_count, 2)
-        self.assertRegex(timeline.events[2].timestamp_display, r"\d{2}:\d{2}:\d{2}")
+        self.assertRegex(timeline.events[2].timestamp_display, r"(:\d{2}|\d{2}:\d{2}:\d{2})")
         self.assertEqual(subagents[0].subagent_id, "researcher")
         self.assertEqual(subagents[0].status, "RUNNING")
         self.assertEqual(subagents[0].status_icon, "●")
@@ -916,6 +916,122 @@ class TuiStoreTests(unittest.TestCase):
         self.assertEqual(todos.in_progress_count, 1)
         self.assertEqual(todos.pending_count, 1)
         self.assertTrue(todos.items[1].is_active)
+
+    def test_ui_density_flags_round_trip_through_store(self) -> None:
+        store = AppStateStore()
+
+        store.dispatch(
+            {
+                "kind": "ui",
+                "task_list_compact": True,
+                "side_column_collapsed": True,
+                "task_detail_split": "70_30",
+            }
+        )
+
+        state = store.snapshot()
+        self.assertTrue(state.task_list_compact)
+        self.assertTrue(state.side_column_collapsed)
+        self.assertEqual(state.task_detail_split, "70_30")
+
+    def test_selected_task_summary_projects_progress_and_phase_metadata(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "rpc",
+                "name": "task.get",
+                "payload": {
+                    "result": {
+                        "task": {
+                            "task_id": "task_1",
+                            "run_id": "run_1",
+                            "status": "executing",
+                            "objective": "Inspect repo",
+                            "created_at": "2026-03-12T00:00:00Z",
+                            "updated_at": "2026-03-12T00:00:05Z",
+                            "current_phase": "executing",
+                            "todos": [
+                                {"content": "Inspect files", "status": "completed"},
+                                {"content": "Write summary", "status": "in_progress"},
+                                {"content": "Send reply", "status": "pending"},
+                            ],
+                        }
+                    }
+                },
+            }
+        )
+
+        summary = selected_task_summary(store.snapshot())
+
+        self.assertIsNotNone(summary)
+        assert summary is not None
+        self.assertEqual(summary.todo_completed_count, 1)
+        self.assertEqual(summary.todo_total_count, 3)
+        self.assertEqual(summary.progress_percent, 33)
+        self.assertTrue(summary.elapsed_label)
+        self.assertEqual(summary.phase_steps, ("accepted", "planning", "executing", "completed"))
+        self.assertEqual(summary.current_phase_index, 2)
+
+    def test_task_timeline_groups_timestamps_and_collapses_verbose_detail_lines(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "tool.called",
+                        "timestamp": "2026-03-12T00:00:01Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "tool": "write_todos",
+                            "arguments": {
+                                "first": "a",
+                                "second": "b",
+                                "third": "c",
+                                "fourth": "d",
+                            },
+                        },
+                    }
+                },
+            }
+        )
+        store.dispatch(
+            {
+                "kind": "event",
+                "payload": {
+                    "event": {
+                        "event_type": "artifact.created",
+                        "timestamp": "2026-03-12T00:00:02Z",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "payload": {
+                            "artifact": {
+                                "artifact_id": "artifact_1",
+                                "task_id": "task_1",
+                                "run_id": "run_1",
+                            }
+                        },
+                    }
+                },
+            }
+        )
+
+        timeline = task_timeline(store.snapshot())
+
+        tool_event = next(event for event in timeline.events if event.event_type == "tool.called")
+        artifact_event = next(event for event in timeline.events if event.event_type == "artifact.created")
+
+        self.assertTrue(tool_event.timestamp_display.endswith("01"))
+        self.assertTrue(artifact_event.timestamp_display.endswith("02"))
+        self.assertTrue(
+            tool_event.timestamp_display.startswith(":")
+            or artifact_event.timestamp_display.startswith(":")
+        )
+        self.assertEqual(tool_event.collapsed_detail_lines[:2], ["Tool: write_todos", "first: a"])
+        self.assertEqual(tool_event.detail_overflow_count, 3)
 
     def test_tool_called_write_todos_updates_snapshot_todos(self) -> None:
         store = AppStateStore()

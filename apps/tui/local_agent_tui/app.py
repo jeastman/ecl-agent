@@ -91,6 +91,10 @@ class AgentTUI(App):  # type: ignore[misc]
         Binding("l", "toggle_task_logs", "Logs", show=False, priority=True),
         Binding("tab", "focus_next_pane", "Next Pane", show=False, priority=True),
         Binding("shift+tab", "focus_prev_pane", "Prev Pane", show=False, priority=True),
+        Binding("[", "toggle_task_list_compact", "Compact Tasks", show=False, priority=True),
+        Binding("]", "toggle_dashboard_side_column", "Toggle Side", show=False, priority=True),
+        Binding("-", "narrow_task_detail_timeline", "Narrow Timeline", show=False, priority=True),
+        Binding("=", "widen_task_detail_timeline", "Widen Timeline", show=False, priority=True),
         Binding("1", "focus_pane_1", "Pane 1", show=False, priority=True),
         Binding("2", "focus_pane_2", "Pane 2", show=False, priority=True),
         Binding("3", "focus_pane_3", "Pane 3", show=False, priority=True),
@@ -627,6 +631,41 @@ class AgentTUI(App):  # type: ignore[misc]
 
     def action_focus_pane_4(self) -> None:
         self._focus_pane_index(3)
+
+    def action_toggle_task_list_compact(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "dashboard":
+            return
+        self._store.dispatch({"kind": "ui", "task_list_compact": not state.task_list_compact})
+        self._render_state()
+
+    def action_toggle_dashboard_side_column(self) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "dashboard":
+            return
+        self._store.dispatch(
+            {"kind": "ui", "side_column_collapsed": not state.side_column_collapsed}
+        )
+        self._render_state()
+
+    def action_narrow_task_detail_timeline(self) -> None:
+        self._cycle_task_detail_split(1)
+
+    def action_widen_task_detail_timeline(self) -> None:
+        self._cycle_task_detail_split(-1)
+
+    def _cycle_task_detail_split(self, direction: int) -> None:
+        state = self._store.snapshot()
+        if state.active_screen != "task_detail":
+            return
+        order = ["70_30", "60_40", "50_50"]
+        current = state.task_detail_split if state.task_detail_split in order else "60_40"
+        index = order.index(current)
+        next_index = max(0, min(len(order) - 1, index + direction))
+        if next_index == index:
+            return
+        self._store.dispatch({"kind": "ui", "task_detail_split": order[next_index]})
+        self._render_state()
 
     def _focus_pane_index(self, index: int) -> None:
         if isinstance(self.screen, HelpScreen):

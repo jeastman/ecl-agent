@@ -65,8 +65,10 @@ class SubagentActivityWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
         if not self._should_render(items):
             return
         if not items:
+            self.set_class(True, "-empty-panel")
             self.update(render_empty_state("subagents"))
             return
+        self.set_class(False, "-empty-panel")
         lines: list[Text] = []
         lines.append(title("Active Subagents"))
         lines.append(divider(self.content_size.width - 2, style=TEXT_SECONDARY))
@@ -90,8 +92,10 @@ class TodoPanelWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
         if not self._should_render(model):
             return
         if not model.items:
+            self.set_class(True, "-empty-panel")
             self.update(render_empty_state("todos"))
             return
+        self.set_class(False, "-empty-panel")
         lines: list[Text] = []
         summary = Text()
         summary.append(f"◉ {model.in_progress_count}", style=ACCENT)
@@ -115,8 +119,10 @@ class NotificationStripWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
             return
         if not model.items:
             self.set_class(False, "-urgent-pane")
+            self.set_class(True, "-empty-panel")
             self.update(render_empty_state("notifications"))
             return
+        self.set_class(False, "-empty-panel")
         self.set_class(any(item.tone in {"warning", "danger"} for item in model.items), "-urgent-pane")
         lines = [title("Recent Alerts"), divider(self.content_size.width - 2, style=TEXT_SECONDARY)]
         lines.extend(
@@ -143,8 +149,10 @@ class RemoteMCPAuthorizationWidget(DirtyCheckMixin, Static):  # type: ignore[mis
         if not self._should_render(items):
             return
         if not items:
+            self.set_class(True, "-empty-panel")
             self.update(render_empty_state("notifications"))
             return
+        self.set_class(False, "-empty-panel")
         lines: list[Text] = []
         lines.append(title("Authorization Status"))
         lines.append(divider(self.content_size.width - 2, style=TEXT_SECONDARY))

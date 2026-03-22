@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from rich.cells import cell_len
+from rich.console import Console
 from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
@@ -56,7 +58,8 @@ class EventTimelineWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc
             self.scroll_to_home()
             return
         if should_render_body:
-            body.update(Group(*[_render_event_card(event) for event in model.events]))
+            available_width = max(24, (self.content_size.width or 80) - 2)
+            body.update(Group(*[_render_event_card(event, width=available_width) for event in model.events]))
         if self._is_tailing and should_render_body:
             self._schedule_jump_to_latest()
 
@@ -109,40 +112,138 @@ def _timeline_signature(model: TimelineGroupViewModel) -> tuple[str, int]:
     return (f"{last_event.timestamp}:{last_event.event_type}:{last_event.summary}", len(model.events))
 
 
-def _render_event_card(event: TimelineEventViewModel) -> Text:
+_WRAP_CONSOLE = Console(width=80, color_system=None, legacy_windows=False)
+
+
+def _render_event_card(event: TimelineEventViewModel, *, width: int = 80) -> Text:
     lines: list[Text] = []
-    header = Text()
+    header_content = Text()
     if event.show_priority_highlight and event.priority_label:
-        header.append(f"{event.priority_label} ", style="reverse")
-    header.append(event.timestamp_display, style=TEXT_MUTED_DEEP)
-    header.append("  ")
-    header.append(event.severity_label, style=f"bold {_severity_color(event.severity)}")
-    header.append("  ")
-    header.append(event.event_type, style="bold")
+        header_content.append(f"{event.priority_label} ", style="reverse")
+    header_content.append(
+        _aligned_timestamp_display(
+            event.timestamp_display,
+            has_marker=event.show_priority_highlight and bool(event.priority_label),
+        ),
+        style=TEXT_MUTED_DEEP,
+    )
+    header_content.append("  ")
+    header_content.append(event.severity_label, style=f"bold {_severity_color(event.severity)}")
+    header_content.append("  ")
+    header_content.append(f"{event.icon} ", style=_severity_color(event.severity))
+    header_content.append(event.event_type, style="bold")
     if event.repeat_count > 1:
-        header.append(f" ×{event.repeat_count}", style=TEXT_SECONDARY)
+        header_content.append(f" ×{event.repeat_count}", style=TEXT_SECONDARY)
     if event.source_label:
-        header.append("  ")
-        header.append(event.source_label, style=TEXT_SECONDARY)
-    lines.append(header)
+        header_content.append("  ")
+        header_content.append(event.source_label, style=TEXT_SECONDARY)
+    header_prefix = _prefix_text(f"{event.severity_strip} ", _severity_color(event.severity))
+    header_continuation = _prefix_text(
+        f"{event.severity_strip}{' ' * (cell_len(header_prefix.plain) - 1)}",
+        _severity_color(event.severity),
+    )
+    lines.extend(
+        _wrap_prefixed_text(
+            header_content,
+            prefix_first=header_prefix,
+            prefix_continuation=header_continuation,
+            width=width,
+        )
+    )
 
     summary = Text()
-    summary.append("         ")
     summary_text = event.summary
     if event.repeat_count > 1 and not summary_text.endswith("(repeated)"):
         summary_text = f"{summary_text} (repeated)"
     summary.append(summary_text)
-    lines.append(summary)
+    summary_prefix = _prefix_text(f"{event.severity_strip}       ", _severity_color(event.severity))
+    lines.extend(
+        _wrap_prefixed_text(
+            summary,
+            prefix_first=summary_prefix,
+            prefix_continuation=summary_prefix,
+            width=width,
+        )
+    )
 
-    for index, detail in enumerate(event.detail_lines):
-        detail_line = Text()
-        detail_line.append("         ")
-        detail_line.append("└─ " if index == len(event.detail_lines) - 1 else "├─ ", style=TEXT_SECONDARY)
+    for index, detail in enumerate(event.collapsed_detail_lines):
+        detail_line = Text(style=TEXT_SECONDARY)
+        detail_line.append(
+            "└─ " if index == len(event.collapsed_detail_lines) - 1 and not event.detail_overflow_count else "├─ ",
+            style=TEXT_SECONDARY,
+        )
         detail_line.append(detail, style=TEXT_SECONDARY)
-        lines.append(detail_line)
+        detail_prefix = _prefix_text(f"{event.severity_strip}       ", _severity_color(event.severity))
+        detail_continuation = _prefix_text(
+            f"{event.severity_strip}       {' ' * 3}",
+            _severity_color(event.severity),
+        )
+        lines.extend(
+            _wrap_prefixed_text(
+                detail_line,
+                prefix_first=detail_prefix,
+                prefix_continuation=detail_continuation,
+                width=width,
+            )
+        )
+    if event.detail_overflow_count:
+        overflow_line = Text(style=TEXT_MUTED_DEEP)
+        overflow_line.append(f"... +{event.detail_overflow_count} more", style=TEXT_MUTED_DEEP)
+        overflow_prefix = _prefix_text(f"{event.severity_strip}       ", _severity_color(event.severity))
+        lines.extend(
+            _wrap_prefixed_text(
+                overflow_line,
+                prefix_first=overflow_prefix,
+                prefix_continuation=overflow_prefix,
+                width=width,
+            )
+        )
 
     lines.append(Text(""))
     return Text("\n").join(lines[:-1])
+
+
+def _prefix_text(text: str, style: str) -> Text:
+    if not text:
+        return Text()
+    prefix = Text()
+    prefix.append(text[0], style=style)
+    if len(text) > 1:
+        prefix.append(text[1:])
+    return prefix
+
+
+def _wrap_prefixed_text(
+    content: Text,
+    *,
+    prefix_first: Text,
+    prefix_continuation: Text,
+    width: int,
+) -> list[Text]:
+    console = _WRAP_CONSOLE
+    first_width = max(8, width - cell_len(prefix_first.plain))
+    continuation_width = max(8, width - cell_len(prefix_continuation.plain))
+    wrapped = content.wrap(
+        console,
+        first_width,
+        overflow="fold",
+        no_wrap=False,
+    )
+    if not wrapped:
+        return [prefix_first.copy()]
+    lines: list[Text] = []
+    for index, line in enumerate(wrapped):
+        prefix = prefix_first.copy() if index == 0 else prefix_continuation.copy()
+        current_width = first_width if index == 0 else continuation_width
+        if index > 0 and continuation_width != first_width:
+            line = Text(line.plain, style=line.style)
+            line.spans = list(line.spans)
+            continuation_wrapped = line.wrap(console, current_width, overflow="fold", no_wrap=False)
+            if continuation_wrapped:
+                line = continuation_wrapped[0]
+        prefix.append_text(line)
+        lines.append(prefix)
+    return lines
 
 
 def _severity_color(severity: str) -> str:
@@ -151,6 +252,12 @@ def _severity_color(severity: str) -> str:
         "attention": WARNING,
         "success": SUCCESS,
     }.get(severity.lower(), SEVERITY_INFO)
+
+
+def _aligned_timestamp_display(timestamp_display: str, *, has_marker: bool = False) -> str:
+    if has_marker:
+        return timestamp_display
+    return timestamp_display.rjust(8)
 
 
 def _render_event_line(
@@ -175,9 +282,13 @@ def _render_event_line(
         summary=summary,
         severity=severity,
         detail_lines=[],
+        collapsed_detail_lines=[],
+        detail_overflow_count=0,
         repeat_count=repeat_count,
         source_label=source_name,
         show_priority_highlight=highlight,
         priority_label=highlight_label,
+        icon="●",
+        severity_strip="▐",
     )
     return _render_event_card(header)

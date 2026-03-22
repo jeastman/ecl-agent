@@ -20,8 +20,10 @@ class PlanViewWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
         if not self._should_render(model):
             return
         if model.current_phase == "unknown" and model.current_step == "No task selected.":
+            self.set_class(True, "-empty-panel")
             self.update(render_empty_state("plan"))
             return
+        self.set_class(False, "-empty-panel")
         lines: list[Text] = []
         phase_row = Text()
         phase_row.append_text(label("Phase  "))

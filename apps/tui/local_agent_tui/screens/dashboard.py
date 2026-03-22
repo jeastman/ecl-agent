@@ -58,6 +58,12 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
+        root = self.query_one("#dashboard-root", Container)
+        main = self.query_one("#dashboard-main", Horizontal)
+        side = self.query_one("#dashboard-side-column", Vertical)
+        root.set_class(state.side_column_collapsed, "-side-collapsed")
+        main.set_class(state.side_column_collapsed, "-side-collapsed")
+        side.set_class(state.side_column_collapsed, "-hidden")
         if state.runtime_snapshot_status == "loading" and not state.task_snapshots:
             tasks_focused = state.focused_pane == "tasks"
             approvals_focused = state.focused_pane == "approvals"
@@ -91,7 +97,7 @@ class DashboardScreen(Screen):  # type: ignore[misc]
         summary_focused = state.focused_pane == "summary"
         artifacts_focused = state.focused_pane == "artifacts"
         task_list = self.query_one(TaskListWidget)
-        task_list.update_tasks(tasks, focused=tasks_focused)
+        task_list.update_tasks(tasks, focused=tasks_focused, compact=state.task_list_compact)
         task_list.border_title = _pane_title(1, "Tasks", focused=tasks_focused)
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals_for_selected_task(state, limit=5),
@@ -157,6 +163,7 @@ def _task_summary_text(summary: TaskSummaryViewModel) -> Group:
     metadata.add_row("Run", summary.run_id or "unknown")
     metadata.add_row("Created", compact_datetime(summary.created_at))
     metadata.add_row("Updated", compact_datetime(summary.updated_at))
+    metadata.add_row("Elapsed", summary.elapsed_label)
     metadata.add_row("Artifacts", str(summary.artifact_count))
 
     status_line = Text()
@@ -164,7 +171,13 @@ def _task_summary_text(summary: TaskSummaryViewModel) -> Group:
     status_line.append("  ")
     status_line.append_text(label("Next: "))
     status_line.append_text(value(summary.actionable_label))
+    status_line.append("  ")
+    status_line.append_text(label("Phase: "))
+    status_line.append_text(value(summary.current_phase))
     status_panel = Panel(status_line, title="Status", border_style=ACCENT)
+
+    progress = _progress_renderable(summary)
+    phase_timeline = _phase_timeline_renderable(summary)
 
     objective = Text()
     objective.append_text(title("Objective"))
@@ -182,8 +195,90 @@ def _task_summary_text(summary: TaskSummaryViewModel) -> Group:
         hint.append("\n")
         hint.append("Approval required before the task can continue.", style=WARNING)
 
-    metadata_group = Group(title("Metadata"), metadata)
-    return Group(status_panel, objective, latest, metadata_group, hint)
+    metadata_title = Text()
+    metadata_title.append_text(title("Metadata"))
+    metadata_group = Group(metadata_title, metadata)
+    parts: list[object] = [status_panel]
+    if progress is not None:
+        parts.append(Text(""))
+        parts.append(progress)
+    if phase_timeline is not None:
+        parts.append(Text(""))
+        parts.append(phase_timeline)
+    parts.extend(
+        [
+            Text(""),
+            objective,
+            Text(""),
+            latest,
+            Text(""),
+            metadata_group,
+            Text(""),
+            hint,
+        ]
+    )
+    return Group(*parts)
+
+
+def _progress_renderable(summary: TaskSummaryViewModel) -> Text | None:
+    if summary.progress_percent is None:
+        return None
+    total_slots = 10
+    filled = max(0, min(total_slots, round((summary.progress_percent / 100) * total_slots)))
+    bar = "█" * filled + "░" * (total_slots - filled)
+    text = Text()
+    text.append_text(title("Progress"))
+    text.append("\n")
+    text.append(bar, style=ACCENT)
+    text.append(f" {summary.progress_percent}% ", style="bold")
+    text.append(
+        f"({summary.todo_completed_count}/{summary.todo_total_count} items)",
+        style=TEXT_MUTED_DEEP,
+    )
+    return text
+
+
+def _phase_timeline_renderable(summary: TaskSummaryViewModel) -> Text | None:
+    if not summary.phase_steps:
+        return None
+    labels = Text()
+    labels.append_text(title("Phase"))
+    labels.append("\n")
+    segment_width = max(len(step) for step in summary.phase_steps) + 2
+
+    for index, step in enumerate(summary.phase_steps):
+        style = (
+            "bold"
+            if summary.current_phase_index == index
+            else (
+                ACCENT
+                if summary.current_phase_index is not None and index < summary.current_phase_index
+                else TEXT_MUTED_DEEP
+            )
+        )
+        if index:
+            labels.append("──", style=TEXT_MUTED_DEEP)
+        labels.append(step.capitalize().center(segment_width), style=style)
+
+    labels.append("\n")
+
+    for index, _step in enumerate(summary.phase_steps):
+        if summary.current_phase_index is None:
+            glyph = "○"
+            style = TEXT_MUTED_DEEP
+        elif index < summary.current_phase_index:
+            glyph = "✓"
+            style = ACCENT
+        elif index == summary.current_phase_index:
+            glyph = "●"
+            style = ACCENT
+        else:
+            glyph = "○"
+            style = TEXT_MUTED_DEEP
+        if index:
+            labels.append("  ", style=TEXT_MUTED_DEEP)
+        labels.append(glyph.center(segment_width), style=style)
+    return labels
 
 
 def _recent_artifacts_renderable(artifacts: list[ArtifactItemViewModel]) -> Text:

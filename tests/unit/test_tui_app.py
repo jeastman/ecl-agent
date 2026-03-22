@@ -758,8 +758,36 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLessEqual(rows[0].region.height, 4)
                 row_text = str(rows[0].children[0].visual)
                 self.assertIn("Initialize the Enterprise Context Layer", row_text)
-                self.assertNotIn("detail line 20", row_text)
-                self.assertIn("run_15dbf9c5c1ab", row_text)
+
+    async def test_dashboard_density_toggles_update_layout_state(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.widgets.task_list import TaskListRow
+        from textual.containers import Horizontal, Vertical
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.press("[")
+                await pilot.pause()
+                self.assertTrue(app._store.snapshot().task_list_compact)  # type: ignore[attr-defined]
+                row_text = str(list(app.screen.query(TaskListRow))[0].children[0].visual)
+                self.assertIn("\n", row_text)
+                self.assertIn("Mar 12", row_text)
+                await pilot.press("]")
+                await pilot.pause()
+                self.assertTrue(app._store.snapshot().side_column_collapsed)  # type: ignore[attr-defined]
+                dashboard_main = app.screen.query_one("#dashboard-main", Horizontal)
+                self.assertIn("-side-collapsed", dashboard_main.classes)
+                side_column = app.screen.query_one("#dashboard-side-column", Vertical)
+                self.assertIn("-hidden", side_column.classes)
 
     async def test_dashboard_task_list_updates_rows_in_place_when_ids_are_stable(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
@@ -1955,6 +1983,52 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 self.assertLessEqual(header.region.height, 4)
                 self.assertIn("Objective:", str(header_body.visual))
                 self.assertIn("…", str(header_body.visual))
+
+    async def test_task_detail_density_controls_update_split_and_panel_priority(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.containers import Horizontal, Vertical
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test(size=(120, 36)) as pilot:
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("=")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().task_detail_split, "70_30")  # type: ignore[attr-defined]
+                main = app.screen.query_one("#task-detail-main", Horizontal)
+                self.assertIn("-split-70-30", main.classes)
+
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.get",
+                        "payload": {
+                            "result": {
+                                "task": {
+                                    "task_id": "task_1",
+                                    "run_id": "run_1",
+                                    "status": "awaiting_approval",
+                                    "awaiting_approval": True,
+                                    "objective": "Inspect repo",
+                                    "created_at": "2026-03-12T00:00:00Z",
+                                    "updated_at": "2026-03-12T00:00:02Z",
+                                }
+                            }
+                        },
+                    }
+                )
+                await pilot.pause()
+                side = app.screen.query_one("#task-detail-side", Vertical)
+                self.assertEqual(side.children[0].id, "task-detail-notifications")
 
     async def test_task_detail_timeline_and_logs_fill_available_height(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI

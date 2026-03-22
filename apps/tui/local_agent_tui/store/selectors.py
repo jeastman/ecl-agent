@@ -14,6 +14,7 @@ from ..theme.colors import (
 )
 from ..utils.time_format import compact_time as _compact_time
 from ..utils.time_format import compact_datetime as _compact_datetime
+from ..utils.time_format import elapsed_duration as _elapsed_duration
 from ..utils.time_format import relative_time as _relative_time
 from ..utils.text import truncate as _truncate
 from ..utils.text import truncate_id as _truncate_id
@@ -45,6 +46,13 @@ class TaskSummaryViewModel:
     artifact_count: int
     actionable_label: str
     actionable_hint: str
+    current_phase: str
+    todo_completed_count: int
+    todo_total_count: int
+    progress_percent: int | None
+    elapsed_label: str
+    phase_steps: tuple[str, ...]
+    current_phase_index: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,10 +122,14 @@ class TimelineEventViewModel:
     summary: str
     severity: str
     detail_lines: list[str]
+    collapsed_detail_lines: list[str]
+    detail_overflow_count: int
     repeat_count: int
     source_label: str | None
     show_priority_highlight: bool
     priority_label: str | None
+    icon: str
+    severity_strip: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,6 +534,11 @@ def selected_task_summary(state: AppState) -> TaskSummaryViewModel | None:
     task = state.task_snapshots.get(state.selected_task_id)
     if task is None:
         return None
+    todos = _task_todos(task)
+    completed_count = sum(1 for todo in todos if todo["status"] == "completed")
+    total_count = len(todos)
+    progress_percent = int((completed_count / total_count) * 100) if total_count else None
+    current_phase = str(task.get("current_phase") or "unknown")
     return TaskSummaryViewModel(
         task_id=str(task["task_id"]),
         run_id=str(task.get("run_id", "")),
@@ -534,6 +551,13 @@ def selected_task_summary(state: AppState) -> TaskSummaryViewModel | None:
         artifact_count=_int_value(task.get("artifact_count", 0)),
         actionable_label=_actionable_status_label(task),
         actionable_hint=_actionable_status_hint(task),
+        current_phase=current_phase,
+        todo_completed_count=completed_count,
+        todo_total_count=total_count,
+        progress_percent=progress_percent,
+        elapsed_label=_elapsed_duration(str(task.get("created_at", ""))),
+        phase_steps=_phase_steps(),
+        current_phase_index=_phase_index(current_phase),
     )
 
 
@@ -671,21 +695,26 @@ def task_timeline(state: AppState) -> TimelineGroupViewModel:
         ):
             collapsed[-1] = TimelineEventViewModel(
                 timestamp=current.timestamp,
-                timestamp_display=current.timestamp_display,
+                timestamp_display=previous.timestamp_display,
                 event_type=previous.event_type,
                 severity_label=previous.severity_label,
                 summary=previous.summary,
                 severity=previous.severity,
                 detail_lines=previous.detail_lines,
+                collapsed_detail_lines=previous.collapsed_detail_lines,
+                detail_overflow_count=previous.detail_overflow_count,
                 repeat_count=previous.repeat_count + 1,
                 source_label=previous.source_label,
                 show_priority_highlight=(
                     previous.show_priority_highlight or current.show_priority_highlight
                 ),
                 priority_label=previous.priority_label or current.priority_label,
+                icon=previous.icon,
+                severity_strip=previous.severity_strip,
             )
             continue
         collapsed.append(current)
+    collapsed = _group_timeline_timestamps(collapsed)
     summary = timeline_state_summary(state)
     return TimelineGroupViewModel(
         events=collapsed,
@@ -2011,6 +2040,8 @@ def _filtered_task_events(state: AppState) -> list[TaskEventRecord]:
 
 
 def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
+    detail_lines = _timeline_detail_lines(event)
+    collapsed_detail_lines = detail_lines[:2] if len(detail_lines) > 3 else detail_lines
     return TimelineEventViewModel(
         timestamp=event.timestamp,
         timestamp_display=_compact_time(event.timestamp),
@@ -2018,11 +2049,15 @@ def _timeline_event(event: TaskEventRecord) -> TimelineEventViewModel:
         severity_label=_timeline_severity_label(event.severity),
         summary=event.summary,
         severity=event.severity,
-        detail_lines=_timeline_detail_lines(event),
+        detail_lines=detail_lines,
+        collapsed_detail_lines=collapsed_detail_lines,
+        detail_overflow_count=max(0, len(detail_lines) - len(collapsed_detail_lines)),
         repeat_count=1,
         source_label=event.source_name,
         show_priority_highlight=_is_priority_event(event.event_type),
         priority_label=_priority_event_label(event.event_type),
+        icon=_timeline_event_icon(event),
+        severity_strip="▐",
     )
 
 
@@ -2119,6 +2154,22 @@ def _timeline_severity_label(severity: str) -> str:
     }.get(severity.lower(), "INFO")
 
 
+def _timeline_event_icon(event: TaskEventRecord) -> str:
+    if event.severity.lower() == "error" or event.event_type == "task.failed":
+        return "✗"
+    if event.event_type in {"tool.called", "tool.rejected"}:
+        return "🔧"
+    if event.event_type == "plan.updated":
+        return "📋"
+    if event.event_type == "approval.requested":
+        return "⚠"
+    if event.event_type == "artifact.created":
+        return "📎"
+    if event.event_type in {"subagent.started", "subagent.completed"}:
+        return "🔀"
+    return "●"
+
+
 def _timeline_detail_lines(event: TaskEventRecord) -> list[str]:
     if event.event_type == "approval.requested":
         approval = event.payload.get("approval")
@@ -2136,7 +2187,62 @@ def _timeline_detail_lines(event: TaskEventRecord) -> list[str]:
         if isinstance(reason, str) and reason.strip():
             details.append(f"Reason: {reason}")
         return details
+    if event.event_type == "tool.called":
+        details = []
+        tool_name = event.payload.get("tool")
+        if isinstance(tool_name, str) and tool_name.strip():
+            details.append(f"Tool: {tool_name}")
+        arguments = event.payload.get("arguments")
+        if isinstance(arguments, dict):
+            for key, value in list(arguments.items())[:4]:
+                details.append(f"{key}: {value}")
+        return details
     return []
+
+
+def _group_timeline_timestamps(events: list[TimelineEventViewModel]) -> list[TimelineEventViewModel]:
+    grouped: list[TimelineEventViewModel] = []
+    previous_minute: str | None = None
+    for event in events:
+        full_display = event.timestamp_display
+        minute_key = full_display[:5]
+        if previous_minute == minute_key and len(full_display) >= 8:
+            timestamp_display = f":{full_display[-2:]}"
+        else:
+            timestamp_display = full_display
+        grouped.append(
+            TimelineEventViewModel(
+                timestamp=event.timestamp,
+                timestamp_display=timestamp_display,
+                event_type=event.event_type,
+                severity_label=event.severity_label,
+                summary=event.summary,
+                severity=event.severity,
+                detail_lines=event.detail_lines,
+                collapsed_detail_lines=event.collapsed_detail_lines,
+                detail_overflow_count=event.detail_overflow_count,
+                repeat_count=event.repeat_count,
+                source_label=event.source_label,
+                show_priority_highlight=event.show_priority_highlight,
+                priority_label=event.priority_label,
+                icon=event.icon,
+                severity_strip=event.severity_strip,
+            )
+        )
+        previous_minute = minute_key
+    return grouped
+
+
+def _phase_steps() -> tuple[str, ...]:
+    return ("accepted", "planning", "executing", "completed")
+
+
+def _phase_index(phase: str) -> int | None:
+    normalized = phase.strip().lower()
+    try:
+        return _phase_steps().index(normalized)
+    except ValueError:
+        return None
 
 
 def _subagent_status_icon(status: str) -> str:

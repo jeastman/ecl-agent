@@ -16,8 +16,10 @@ class ArtifactPanelWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
         if not self._should_render(items):
             return
         if not items:
+            self.set_class(True, "-empty-panel")
             self.update("No artifacts for this task.")
             return
+        self.set_class(False, "-empty-panel")
         self.update(
             Group(
                 *(

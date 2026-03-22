@@ -172,6 +172,13 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         task_command_suggestion=_normalize_error(
             message.get("task_command_suggestion", state.task_command_suggestion)
         ),
+        task_list_compact=bool(message.get("task_list_compact", state.task_list_compact)),
+        side_column_collapsed=bool(
+            message.get("side_column_collapsed", state.side_column_collapsed)
+        ),
+        task_detail_split=str(
+            message.get("task_detail_split", state.task_detail_split)
+        ),
     )
     selected_artifact_id = message.get("selected_artifact_id")
     if isinstance(selected_artifact_id, str):
