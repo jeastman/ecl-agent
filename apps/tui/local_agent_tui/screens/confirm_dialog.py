@@ -1,32 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.binding import Binding
-    from textual.containers import Container
-    from textual.screen import ModalScreen
-    from textual.widgets import Button, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.binding import Binding
-        from textual.containers import Container
-        from textual.screen import ModalScreen
-        from textual.widgets import Button, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Binding = cast(Any, object)
-        Container = cast(Any, object)
-        ModalScreen = cast(Any, object)
-        Button = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ..compat import Binding, Button, ComposeResult, Container, ModalScreen, Static, _TEXTUAL_IMPORT_ERROR
 
 
 class ConfirmDialogScreen(ModalScreen[bool]):  # type: ignore[misc]

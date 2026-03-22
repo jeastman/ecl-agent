@@ -28,6 +28,7 @@ BORDER_URGENT = "#d96c6c"  # alias of DANGER
 # Four-level text hierarchy
 TEXT_TITLE = "#ffffff"
 TEXT_SECONDARY = "#9aa8b8"
+TEXT_TERTIARY = "#8494a4"
 TEXT_MUTED_DEEP = "#6b7a8a"
 
 # Semantic status

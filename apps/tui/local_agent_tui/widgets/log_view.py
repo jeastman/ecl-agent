@@ -1,34 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.text import Text
 
+from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import LogViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, WARNING
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import VerticalScroll
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class LogViewWidget(VerticalScroll):  # type: ignore[misc]
+class LogViewWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc]
     can_focus = True
 
     def compose(self) -> ComposeResult:
@@ -37,6 +20,8 @@ class LogViewWidget(VerticalScroll):  # type: ignore[misc]
     def update_logs(self, model: LogViewModel, *, visible: bool) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        if not self._should_render((model, visible)):
+            return
         self.border_title = "Logs"
         self.set_class(not visible, "-hidden")
         if not visible:
@@ -54,6 +39,10 @@ class LogViewWidget(VerticalScroll):  # type: ignore[misc]
     def scroll_line(self, delta: int) -> None:
         next_y = max(0.0, min(self.max_scroll_y, self.scroll_y + delta))
         self.scroll_to(y=next_y, animate=False, immediate=True)
+
+    def scroll_page(self, delta: int) -> None:
+        step = max(1, int(getattr(self, "content_size", None).height or 10) // 2)
+        self.scroll_line(step * delta)
 
     def scroll_to_home(self) -> None:
         self.scroll_to(y=0, animate=False, immediate=True)

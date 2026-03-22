@@ -1,13 +1,14 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.markup import escape
 from rich.syntax import Syntax
 from rich.text import Text
 
-from ..renderables import block, metadata_line, muted, text
+from ..compat import ComposeResult, Container, ListView, Screen, Static, Vertical, _TEXTUAL_IMPORT_ERROR
+from ..renderables import text
 from ..store.app_state import AppState
 from ..store.selectors import (
     footer_hints,
@@ -23,32 +24,10 @@ from ..widgets.status_bar import StatusBar
 from ..widgets.toast import ToastRack
 from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container, Vertical
-    from textual.screen import Screen
-    from textual.widgets import ListView, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container, Vertical
-        from textual.screen import Screen
-        from textual.widgets import ListView, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        Vertical = cast(Any, object)
-        Screen = cast(Any, object)
-        ListView = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
-
 
 class MemoryScreen(Screen):  # type: ignore[misc]
+    PANE_ORDER = ["memory_groups", "memory_entries"]
+
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._last_summary: str | None = None
@@ -92,7 +71,7 @@ class MemoryScreen(Screen):  # type: ignore[misc]
             detail = self.query_one("#memory-screen-detail", Static)
             detail.border_title = "Memory Inspector"
             detail.update(loading_renderable("Loading memory details...", skeleton_lines=5))
-            footer = footer_hints(state)
+            footer = footer_hints(state, contextual=True)
             footer.append("\nMemory inspector is read-only.", style=TEXT_SECONDARY)
             if self._last_footer != footer.plain:
                 self.query_one("#memory-screen-footer", Static).update(footer)
@@ -124,7 +103,7 @@ class MemoryScreen(Screen):  # type: ignore[misc]
         if self._last_detail_signature != detail_signature:
             detail.update(_render_memory_detail(detail_model))
             self._last_detail_signature = detail_signature
-        footer = footer_hints(state)
+        footer = footer_hints(state, contextual=True)
         footer.append("\nMemory inspector is read-only.", style=TEXT_SECONDARY)
         if state.memory_request_error:
             footer.append(f"\n{escape(state.memory_request_error)}", style=STATUS_DANGER)

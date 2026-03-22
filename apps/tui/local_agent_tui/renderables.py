@@ -5,7 +5,7 @@ from collections.abc import Iterable, Sequence
 from rich.console import Group, RenderableType
 from rich.text import Text
 
-from .theme.colors import TEXT_MUTED
+from .theme.colors import TEXT_MUTED, TEXT_SECONDARY
 
 
 def text(value: str, *, style: str | None = None) -> Text:
@@ -53,6 +53,10 @@ def metadata_line(pairs: Sequence[tuple[str, str]], *, separator: str = "   ") -
         rendered.append(f"{label}: ", style=TEXT_MUTED)
         rendered.append(value)
     return rendered
+
+
+def divider(width: int, *, style: str = TEXT_SECONDARY) -> Text:
+    return Text("─" * max(4, width), style=style)
 
 
 def section(title: str, body: str | Text | RenderableType) -> Group:

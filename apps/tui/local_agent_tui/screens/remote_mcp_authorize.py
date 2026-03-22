@@ -1,30 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.markup import escape
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container
-    from textual.screen import ModalScreen
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container
-        from textual.screen import ModalScreen
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        ModalScreen = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ..compat import ComposeResult, Container, ModalScreen, Static, _TEXTUAL_IMPORT_ERROR
 
 
 class RemoteMCPAuthorizeScreen(ModalScreen[None]):  # type: ignore[misc]

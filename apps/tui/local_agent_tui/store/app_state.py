@@ -56,6 +56,7 @@ class UiMessage(TypedDict, total=False):
     command_palette_visible: bool
     command_palette_query: str
     command_palette_selected_id: str | None
+    recent_palette_commands: list[str]
     approvals_request_status: str
     approvals_request_error: str | None
     artifacts_request_status: str
@@ -77,6 +78,9 @@ class UiMessage(TypedDict, total=False):
     remote_mcp_provider_id: str | None
     remote_mcp_last_state_token: str | None
     remote_mcp_open_browser_supported: bool
+    task_command_history: list[str]
+    task_command_history_index: int | None
+    task_command_suggestion: str | None
 
 
 RuntimeMessage = ConnectionMessage | RpcMessage | EventMessage | UiMessage
@@ -142,6 +146,7 @@ class AppState:
     command_palette_visible: bool = False
     command_palette_query: str = ""
     command_palette_selected_id: str | None = None
+    recent_palette_commands: list[str] = field(default_factory=list)
     approvals_request_status: str = "idle"
     approvals_request_error: str | None = None
     artifacts_request_status: str = "idle"
@@ -164,6 +169,9 @@ class AppState:
     remote_mcp_provider_id: str | None = None
     remote_mcp_last_state_token: str | None = None
     remote_mcp_open_browser_supported: bool = True
+    task_command_history: list[str] = field(default_factory=list)
+    task_command_history_index: int | None = None
+    task_command_suggestion: str | None = None
 
 
 class AppStateStore:

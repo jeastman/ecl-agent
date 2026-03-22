@@ -108,6 +108,9 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         command_palette_selected_id=message.get(
             "command_palette_selected_id", state.command_palette_selected_id
         ),
+        recent_palette_commands=list(
+            message.get("recent_palette_commands", state.recent_palette_commands)
+        ),
         approvals_request_status=str(
             message.get("approvals_request_status", state.approvals_request_status)
         ),
@@ -161,6 +164,13 @@ def _reduce_ui_message(state: AppState, message: RuntimeMessage) -> AppState:
         ),
         remote_mcp_open_browser_supported=bool(
             message.get("remote_mcp_open_browser_supported", state.remote_mcp_open_browser_supported)
+        ),
+        task_command_history=list(message.get("task_command_history", state.task_command_history)),
+        task_command_history_index=message.get(
+            "task_command_history_index", state.task_command_history_index
+        ),
+        task_command_suggestion=_normalize_error(
+            message.get("task_command_suggestion", state.task_command_suggestion)
         ),
     )
     selected_artifact_id = message.get("selected_artifact_id")

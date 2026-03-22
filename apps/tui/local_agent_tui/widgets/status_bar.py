@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.text import Text
 
+from ..compat import ComposeResult, NoMatches, Static, _TEXTUAL_IMPORT_ERROR, _Widget
 from ..renderables import badge, join, muted, text
 from ..store.app_state import AppState
 from ..store.selectors import (
@@ -23,28 +24,7 @@ from ..theme.colors import (
     TEXT_MUTED_DEEP,
     TEXT_SECONDARY,
 )
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.css.query import NoMatches
-    from textual.widget import Widget as _Widget
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.css.query import NoMatches
-        from textual.widget import Widget as _Widget
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        NoMatches = cast(Any, RuntimeError)
-        _Widget = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
 def _render_identity_bar(state: AppState, clock_str: str) -> Text:
@@ -126,7 +106,7 @@ def _render_context_bar(state: AppState) -> Text:
     return result
 
 
-class StatusBar(_Widget):  # type: ignore[misc]
+class StatusBar(DirtyCheckMixin, _Widget):  # type: ignore[misc]
     """Two-row status bar: identity bar (top) + context bar (bottom).
 
     Extends Widget (not Static) because it composes child Static widgets.
@@ -157,6 +137,14 @@ class StatusBar(_Widget):  # type: ignore[misc]
     def _refresh_identity_bar(self, state: AppState) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             return
+        signature = (
+            state.connection_status,
+            str(state.runtime_health.get("runtime_name", "runtime")),
+            status_bar_model_name(state) or "",
+            self._clock_str,
+        )
+        if not self._should_render(signature, attr_name="_last_identity_signature"):
+            return
         try:
             self.query_one("#identity-bar", Static).update(
                 _render_identity_bar(state, self._clock_str)
@@ -169,6 +157,15 @@ class StatusBar(_Widget):  # type: ignore[misc]
             raise RuntimeError("textual is required") from _TEXTUAL_IMPORT_ERROR
         self._last_state = state
         self._refresh_identity_bar(state)
+        context_signature = (
+            screen_breadcrumb(state).plain,
+            task_count(state),
+            approval_count(state),
+            artifact_count(state),
+            diagnostics_count(state),
+        )
+        if not self._should_render(context_signature, attr_name="_last_context_signature"):
+            return
         try:
             self.query_one("#context-bar", Static).update(_render_context_bar(state))
         except NoMatches:

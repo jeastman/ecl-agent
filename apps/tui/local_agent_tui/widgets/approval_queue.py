@@ -1,33 +1,21 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-
 from rich.console import Group
 from rich.text import Text
 
+from ..compat import Static, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import ApprovalQueueItemViewModel
 from ..theme.empty_states import render_empty_state
 from ..theme.colors import DANGER, WARNING
 from ..theme.typography import muted, status_badge
 from ..utils.text import truncate_id
 from .loading import loading_renderable
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class ApprovalQueueWidget(Static):  # type: ignore[misc]
+class ApprovalQueueWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
     def show_loading(self, label: str, *, focused: bool, inbox_mode: bool = False) -> None:
+        self._reset_render_cache()
         self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
         self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")
@@ -42,6 +30,8 @@ class ApprovalQueueWidget(Static):  # type: ignore[misc]
     ) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        if not self._should_render((items, focused, inbox_mode)):
+            return
         self.border_title = "Approval Requests" if inbox_mode else "Approvals Pending"
         self.border_subtitle = "Focused" if focused else ""
         self.set_class(focused, "-focused-pane")

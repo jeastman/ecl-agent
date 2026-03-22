@@ -15,6 +15,7 @@ from apps.tui.local_agent_tui.theme.typography import (
 from apps.tui.local_agent_tui.theme.empty_states import render_empty_state
 from apps.tui.local_agent_tui.theme.colors import (
     TEXT_TITLE,
+    TEXT_PRIMARY as COLORS_TEXT_PRIMARY,
     TEXT_SECONDARY,
     TEXT_MUTED_DEEP,
     STATUS_RUNNING,
@@ -60,7 +61,7 @@ class TestValue(unittest.TestCase):
         self.assertIn(TEXT_PRIMARY, str(result.style))
 
     def test_text_primary_constant_is_correct(self) -> None:
-        self.assertEqual(TEXT_PRIMARY, "#e8edf2")
+        self.assertEqual(TEXT_PRIMARY, COLORS_TEXT_PRIMARY)
 
 
 class TestMuted(unittest.TestCase):
@@ -118,11 +119,11 @@ class TestStatusBadge(unittest.TestCase):
 
     def test_badge_text_format_with_padding(self) -> None:
         result = status_badge("running")
-        self.assertEqual(result.plain, " RUNNING ")
+        self.assertEqual(result.plain, "  RUNNING  ")
 
     def test_badge_text_is_uppercased(self) -> None:
         result = status_badge("completed")
-        self.assertEqual(result.plain, " COMPLETED ")
+        self.assertEqual(result.plain, "  COMPLETED  ")
 
     def test_case_insensitive_lookup(self) -> None:
         result = status_badge("RUNNING")
@@ -181,6 +182,11 @@ class TestRenderEmptyState(unittest.TestCase):
     def test_unknown_key_returns_text_with_icon(self) -> None:
         result = render_empty_state("nonexistent_key")
         self.assertIn("◇", result.plain)
+
+    def test_empty_state_is_centered_and_no_wrap(self) -> None:
+        result = render_empty_state("tasks")
+        self.assertEqual(result.justify, "center")
+        self.assertTrue(result.no_wrap)
 
     def test_all_known_keys_render_without_error(self) -> None:
         known_keys = [

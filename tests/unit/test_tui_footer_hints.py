@@ -35,11 +35,12 @@ class TestFooterHintsDashboard(unittest.TestCase):
 
 
 class TestFooterHintsTaskDetail(unittest.TestCase):
-    def test_contains_esc_dashboard(self) -> None:
+    def test_contains_esc_back_and_help(self) -> None:
         state = _state_for_screen("task_detail")
         result = footer_hints(state)
         self.assertIn("Esc", result.plain)
-        self.assertIn("Dashboard", result.plain)
+        self.assertIn("Back", result.plain)
+        self.assertIn("?", result.plain)
 
 
 class TestFooterHintsApprovals(unittest.TestCase):

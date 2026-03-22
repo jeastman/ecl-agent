@@ -1,28 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
+from ..compat import ComposeResult, Markdown, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import MarkdownArtifactViewModel
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Markdown
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import VerticalScroll
-        from textual.widgets import Markdown
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Markdown = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 @dataclass(frozen=True, slots=True)

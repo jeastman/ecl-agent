@@ -1,41 +1,17 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.syntax import Syntax
 from rich.text import Text
 
+from ..compat import ComposeResult, Container, Label, ListItem, ListView, Screen, Static, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
 from ..store.selectors import DiagnosticsItemViewModel, diagnostics_items, footer_hints, selected_diagnostics_detail
 from ..widgets.loading import loading_renderable
 from ..widgets.status_bar import StatusBar
 from ..widgets.toast import ToastRack
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container
-    from textual.screen import Screen
-    from textual.widgets import Label, ListItem, ListView, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container
-        from textual.screen import Screen
-        from textual.widgets import Label, ListItem, ListView, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        Screen = cast(Any, object)
-        Label = cast(Any, object)
-        ListItem = cast(Any, object)
-        ListView = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 class DiagnosticRow(ListItem):  # type: ignore[misc]
@@ -76,6 +52,8 @@ class DiagnosticsListWidget(ListView):  # type: ignore[misc]
 
 
 class DiagnosticsScreen(Screen):  # type: ignore[misc]
+    PANE_ORDER = ["diagnostics_list", "diagnostics_detail"]
+
     def compose(self) -> ComposeResult:
         yield Container(
             StatusBar(id="status-bar"),
@@ -94,21 +72,24 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
         list_panel = self.query_one(DiagnosticsListWidget)
+        list_focused = state.focused_pane == "diagnostics_list"
         if state.diagnostics_request_status == "loading":
-            list_panel.show_loading("Loading diagnostics...", focused=True)
+            list_panel.show_loading("Loading diagnostics...", focused=list_focused)
             detail_panel = self.query_one("#diagnostics-screen-detail", Static)
             detail_panel.border_title = "Diagnostics"
+            detail_panel.set_class(state.focused_pane == "diagnostics_detail", "-focused-pane")
             detail_panel.update(loading_renderable("Loading diagnostic details...", skeleton_lines=5))
-            self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state))
+            self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state, contextual=True))
             return
         items = diagnostics_items(state)
-        list_panel.update_items(items, focused=True)
+        list_panel.update_items(items, focused=list_focused)
         if not items:
             list_panel.clear()
             list_panel.append(ListItem(Label(Text("No diagnostics."))))
         detail = selected_diagnostics_detail(state)
         detail_panel = self.query_one("#diagnostics-screen-detail", Static)
         detail_panel.border_title = detail.title
+        detail_panel.set_class(state.focused_pane == "diagnostics_detail", "-focused-pane")
         detail_panel.update(
             _render_diagnostic_detail(
                 detail.title,
@@ -118,7 +99,7 @@ class DiagnosticsScreen(Screen):  # type: ignore[misc]
                 detail.resolution,
             )
         )
-        self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state))
+        self.query_one("#diagnostics-screen-footer", Static).update(footer_hints(state, contextual=True))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id != "diagnostics-screen-list":

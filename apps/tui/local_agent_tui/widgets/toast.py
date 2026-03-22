@@ -1,28 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
+from ..compat import ComposeResult, Static, Vertical, _TEXTUAL_IMPORT_ERROR
 from ..theme.colors import STATUS_DANGER, STATUS_INFO, STATUS_SUCCESS, STATUS_WARNING
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Vertical
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Vertical
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Vertical = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 @dataclass(slots=True)

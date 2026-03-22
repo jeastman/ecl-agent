@@ -1,12 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-
 from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
 
-from ..renderables import badge, block, join, metadata_line, muted, text
+from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
+from ..renderables import badge, block, divider, join, metadata_line, muted, text
 from ..store.selectors import (
     NotificationStripViewModel,
     RemoteMCPAuthorizationViewModel,
@@ -18,28 +17,10 @@ from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_PRIMAR
 from ..theme.empty_states import render_empty_state
 from ..theme.typography import label, muted, status_badge, title, value
 from ..utils.text import truncate, truncate_id
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import VerticalScroll
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
+class TaskHeaderWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc]
     can_focus = True
 
     def compose(self) -> ComposeResult:
@@ -49,6 +30,8 @@ class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Task Header"
+        if not self._should_render(model):
+            return
         body = self.query_one("#task-detail-header-body", Static)
         if model is None:
             body.update("No task selected.")
@@ -75,11 +58,13 @@ class TaskHeaderWidget(VerticalScroll):  # type: ignore[misc]
         body.update(Text("\n").join([heading, objective]))
 
 
-class SubagentActivityWidget(Static):  # type: ignore[misc]
+class SubagentActivityWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
     def update_subagents(self, items: list[SubagentActivityItemViewModel]) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Subagent Activity"
+        if not self._should_render(items):
+            return
         if not items:
             self.update(render_empty_state("subagents"))
             return
@@ -96,11 +81,13 @@ class SubagentActivityWidget(Static):  # type: ignore[misc]
         self.update(Text("\n").join(lines))
 
 
-class TodoPanelWidget(Static):  # type: ignore[misc]
+class TodoPanelWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
     def update_todos(self, model: TodoPanelViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Todos"
+        if not self._should_render(model):
+            return
         if not model.items:
             self.update(render_empty_state("todos"))
             return
@@ -112,17 +99,19 @@ class TodoPanelWidget(Static):  # type: ignore[misc]
         summary.append("  ")
         summary.append(f"✓ {model.completed_count}", style=SUCCESS)
         lines.append(summary)
-        lines.append(Text("─" * 22, style=TEXT_SECONDARY))
+        lines.append(divider(self.content_size.width - 2, style=TEXT_SECONDARY))
         for item in model.items:
             lines.append(_render_todo_line(item.status_icon, item.content, item.status))
         self.update(Text("\n").join(lines))
 
 
-class NotificationStripWidget(Static):  # type: ignore[misc]
+class NotificationStripWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
     def update_notifications(self, model: NotificationStripViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Attention"
+        if not self._should_render(model):
+            return
         if not model.items:
             self.set_class(False, "-urgent-pane")
             self.update(render_empty_state("notifications"))
@@ -145,11 +134,13 @@ class NotificationStripWidget(Static):  # type: ignore[misc]
         )
 
 
-class RemoteMCPAuthorizationWidget(Static):  # type: ignore[misc]
+class RemoteMCPAuthorizationWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
     def update_authorizations(self, items: list[RemoteMCPAuthorizationViewModel]) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Remote MCP Auth"
+        if not self._should_render(items):
+            return
         if not items:
             self.update(render_empty_state("notifications"))
             return

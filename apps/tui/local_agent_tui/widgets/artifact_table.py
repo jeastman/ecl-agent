@@ -1,25 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.text import Text
 
+from ..compat import Label, ListItem, ListView, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import ArtifactBrowserRowViewModel
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.widgets import Label, ListItem, ListView
-else:  # pragma: no cover
-    try:
-        from textual.widgets import Label, ListItem, ListView
-    except ModuleNotFoundError as exc:
-        Label = cast(Any, object)
-        ListItem = cast(Any, object)
-        ListView = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
 class ArtifactTableGroupHeader(ListItem):  # type: ignore[misc]
@@ -51,7 +38,7 @@ class ArtifactTablePlaceholderRow(ListItem):  # type: ignore[misc]
         super().__init__(Label(Text(label)))
 
 
-class ArtifactTableWidget(ListView):  # type: ignore[misc]
+class ArtifactTableWidget(DirtyCheckMixin, ListView):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._row_signature: tuple[tuple[str, str, str, str, str, str], ...] = ()
@@ -65,6 +52,8 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
     ) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        if not self._should_render((items, focused, group_by), attr_name="_last_render_state"):
+            return
         selected_index = None
         signature = tuple(_artifact_row_signature(item) for item in items)
         if signature != self._row_signature:
@@ -94,6 +83,7 @@ class ArtifactTableWidget(ListView):  # type: ignore[misc]
         self.set_class(focused, "-focused-pane")
 
     def show_loading(self, label: str, *, focused: bool, group_by: str) -> None:
+        self._reset_render_cache(attr_name="_last_render_state")
         self.clear()
         self.append(ArtifactTablePlaceholderRow(label))
         self.border_title = f"Artifacts by {group_by}"

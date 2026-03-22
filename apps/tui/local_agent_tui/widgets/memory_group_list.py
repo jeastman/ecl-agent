@@ -1,25 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.text import Text
 
+from ..compat import Label, ListItem, ListView, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import MemoryGroupItemViewModel
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.widgets import Label, ListItem, ListView
-else:  # pragma: no cover
-    try:
-        from textual.widgets import Label, ListItem, ListView
-    except ModuleNotFoundError as exc:
-        Label = cast(Any, object)
-        ListItem = cast(Any, object)
-        ListView = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 class MemoryGroupRow(ListItem):  # type: ignore[misc]

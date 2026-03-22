@@ -349,6 +349,25 @@ class TuiStoreTests(unittest.TestCase):
         items = command_palette(store.snapshot()).items
         self.assertEqual([item.command_id for item in items], ["approve_request"])
 
+    def test_command_palette_prepends_recent_commands_when_query_empty(self) -> None:
+        store = AppStateStore()
+        self._dispatch_created(store)
+        store.dispatch(
+            {
+                "kind": "ui",
+                "recent_palette_commands": ["open_diagnostics", "open_config", "open_diagnostics"],
+            }
+        )
+
+        palette = command_palette(store.snapshot())
+
+        self.assertGreaterEqual(palette.result_count, 2)
+        self.assertEqual(palette.items[0].category, "Recent")
+        self.assertEqual(palette.items[0].command_id, "open_diagnostics")
+        self.assertEqual(palette.items[1].command_id, "open_config")
+        self.assertEqual(palette.items[0].shortcut, "D")
+        self.assertIsNone(palette.empty_message)
+
     def test_task_timeline_respects_filter_and_search_state(self) -> None:
         store = AppStateStore()
         self._dispatch_created(store)

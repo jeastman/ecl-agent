@@ -1,11 +1,17 @@
 from __future__ import annotations
 
 from rich.text import Text
-from .colors import (TEXT_TITLE, TEXT_SECONDARY, TEXT_MUTED_DEEP,
-                     STATUS_RUNNING, STATUS_SUCCESS, STATUS_WARNING,
-                     STATUS_DANGER, STATUS_INFO)
-
-TEXT_PRIMARY = "#e8edf2"  # local constant for value() function
+from .colors import (
+    STATUS_DANGER,
+    STATUS_INFO,
+    STATUS_RUNNING,
+    STATUS_SUCCESS,
+    STATUS_WARNING,
+    TEXT_MUTED_DEEP,
+    TEXT_PRIMARY,
+    TEXT_SECONDARY,
+    TEXT_TITLE,
+)
 
 STATUS_COLORS: dict[str, str] = {
     "executing": STATUS_RUNNING,
@@ -31,7 +37,7 @@ def label(text: str) -> Text:
 
 
 def value(text: str) -> Text:
-    """TEXT_PRIMARY (#e8edf2) colored text."""
+    """TEXT_PRIMARY colored text."""
     return Text(text, style=TEXT_PRIMARY)
 
 
@@ -41,13 +47,13 @@ def muted(text: str) -> Text:
 
 
 def status_badge(status: str) -> Text:
-    """Bold colored ' STATUS ' badge.
+    """Bold colored '  STATUS  ' badge.
 
     Uses STATUS_COLORS dict; falls back to STATUS_INFO for unknown statuses.
-    Format: ' {STATUS.UPPER()} ' with padding spaces.
+    Format: '  {STATUS.UPPER()}  ' with padding spaces.
     """
     color = STATUS_COLORS.get(status.lower(), STATUS_INFO)
-    return Text(f" {status.upper()} ", style=f"bold black on {color}")
+    return Text(f"  {status.upper()}  ", style=f"bold black on {color}")
 
 
 def key_hint(key: str, action: str) -> Text:

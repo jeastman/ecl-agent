@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-
 from rich.markup import escape
 
+from ..compat import ComposeResult, Container, Horizontal, Key, Screen, Static, Vertical, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
 from ..store.selectors import (
     footer_hints,
@@ -35,35 +34,10 @@ from ..widgets.task_detail_panels import (
     TodoPanelWidget,
 )
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container, Horizontal, Vertical
-    from textual.screen import Screen
-    from textual.events import Key
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container, Horizontal, Vertical
-        from textual.events import Key
-        from textual.screen import Screen
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        Horizontal = cast(Any, object)
-        Vertical = cast(Any, object)
-        Key = cast(Any, object)
-        Screen = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
-
 
 class TaskDetailScreen(Screen):  # type: ignore[misc]
+    PANE_ORDER = ["timeline", "side"]
+
     def compose(self) -> ComposeResult:
         yield Container(
             StatusBar(id="status-bar"),
@@ -93,24 +67,45 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
         self.query_one(TaskHeaderWidget).update_header(selected_task_header(state))
+        timeline_focused = state.focused_pane == "timeline"
+        side_focused = state.focused_pane == "side"
         timeline_widget = self.query_one(EventTimelineWidget)
         timeline_widget.set_class(state.task_detail_show_logs, "-hidden")
+        timeline_widget.border_title = _pane_title(1, "Event Timeline", focused=timeline_focused)
         timeline_widget.update_timeline(task_timeline(state))
-        self.query_one(LogViewWidget).update_logs(
+        log_view = self.query_one(LogViewWidget)
+        log_view.border_title = _pane_title(1, "Logs", focused=timeline_focused)
+        log_view.update_logs(
             task_logs(state),
             visible=state.task_detail_show_logs,
         )
-        self.query_one(PlanViewWidget).update_plan(task_plan_view(state))
-        self.query_one(TodoPanelWidget).update_todos(task_todo_view(state))
-        self.query_one(SubagentActivityWidget).update_subagents(task_subagent_activity(state))
-        self.query_one(ArtifactPanelWidget).update_artifacts(task_artifact_panel(state))
-        self.query_one(RemoteMCPAuthorizationWidget).update_authorizations(
+        plan_panel = self.query_one(PlanViewWidget)
+        todo_panel = self.query_one(TodoPanelWidget)
+        subagents_panel = self.query_one(SubagentActivityWidget)
+        artifacts_panel = self.query_one(ArtifactPanelWidget)
+        remote_mcp_panel = self.query_one(RemoteMCPAuthorizationWidget)
+        notifications_panel = self.query_one(NotificationStripWidget)
+        for panel, title in [
+            (plan_panel, "② Plan"),
+            (todo_panel, "② Todos"),
+            (subagents_panel, "② Subagent Activity"),
+            (artifacts_panel, "② Artifacts"),
+            (remote_mcp_panel, "② Remote MCP Auth"),
+            (notifications_panel, "② Attention"),
+        ]:
+            panel.border_title = title
+            panel.set_class(side_focused, "-focused-pane")
+        plan_panel.update_plan(task_plan_view(state))
+        todo_panel.update_todos(task_todo_view(state))
+        subagents_panel.update_subagents(task_subagent_activity(state))
+        artifacts_panel.update_artifacts(task_artifact_panel(state))
+        remote_mcp_panel.update_authorizations(
             selected_remote_mcp_authorizations(state)
         )
-        self.query_one(NotificationStripWidget).update_notifications(task_notifications(state))
+        notifications_panel.update_notifications(task_notifications(state))
         self.query_one(InputBoxWidget).update_actions(task_action_bar(state))
         timeline_state = timeline_state_summary(state)
-        footer = footer_hints(state)
+        footer = footer_hints(state, contextual=True)
         footer.append(
             f"\nTimeline filter: {escape(timeline_state.filter_label)}   "
             f"Search: {escape(timeline_state.search_query) if timeline_state.search_query else 'none'}",
@@ -147,3 +142,8 @@ class TaskDetailScreen(Screen):  # type: ignore[misc]
         elif key in {"G", "shift+g"}:
             log_view.scroll_to_end()
             event.stop()
+
+
+def _pane_title(number: int, title_text: str, *, focused: bool) -> str:
+    glyph = {1: "①", 2: "②"}.get(number, str(number))
+    return f"{glyph} {title_text}" if not focused else f"> {glyph} {title_text}"

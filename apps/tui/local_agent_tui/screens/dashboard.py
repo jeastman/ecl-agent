@@ -1,13 +1,11 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-
 from rich.console import Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 
-from ..renderables import badge, block, highlighted_row, join, metadata_line, muted, text
+from ..compat import ComposeResult, Container, Horizontal, ListView, Screen, Static, Vertical, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
 from ..store.selectors import (
     ArtifactItemViewModel,
@@ -31,34 +29,10 @@ from ..widgets.task_list import TaskListRow, TaskListWidget
 from ..widgets.toast import ToastRack
 from ..theme.colors import ACCENT, DANGER, TEXT_MUTED_DEEP, WARNING
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-    from textual.screen import Screen
-    from textual.widgets import ListView, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container, Horizontal, Vertical, VerticalScroll
-        from textual.screen import Screen
-        from textual.widgets import ListView, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        Horizontal = cast(Any, object)
-        Vertical = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Screen = cast(Any, object)
-        ListView = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
-
 
 class DashboardScreen(Screen):  # type: ignore[misc]
+    PANE_ORDER = ["tasks", "summary", "approvals", "artifacts"]
+
     def compose(self) -> ComposeResult:
         yield Container(
             StatusBar(id="status-bar"),
@@ -85,47 +59,60 @@ class DashboardScreen(Screen):  # type: ignore[misc]
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.query_one(StatusBar).update_from_state(state)
         if state.runtime_snapshot_status == "loading" and not state.task_snapshots:
-            self.query_one(TaskListWidget).show_loading("Loading tasks...", focused=state.focused_pane == "tasks")
+            tasks_focused = state.focused_pane == "tasks"
+            approvals_focused = state.focused_pane == "approvals"
+            artifacts_focused = state.focused_pane == "artifacts"
+            summary_focused = state.focused_pane == "summary"
+            self.query_one(TaskListWidget).show_loading("Loading tasks...", focused=tasks_focused)
             self.query_one(ApprovalQueueWidget).show_loading(
                 "Loading approvals...",
-                focused=state.focused_pane == "approvals",
+                focused=approvals_focused,
                 inbox_mode=False,
             )
             task_summary = self.query_one("#task-summary", VerticalScroll)
-            task_summary.border_title = "Selected Task"
+            task_summary.border_title = _pane_title(2, "Selected Task", focused=summary_focused)
             task_summary.border_subtitle = "Loading"
-            task_summary.set_class(state.focused_pane == "summary", "-focused-pane")
+            task_summary.set_class(summary_focused, "-focused-pane")
             self.query_one("#task-summary-content", Static).update(
                 loading_renderable("Loading dashboard summary...", skeleton_lines=5)
             )
             artifacts_pane = self.query_one("#recent-artifacts", Static)
-            artifacts_pane.border_title = "Recent Artifacts"
+            artifacts_pane.border_title = _pane_title(4, "Recent Artifacts", focused=artifacts_focused)
             artifacts_pane.border_subtitle = "Loading"
-            artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
+            artifacts_pane.set_class(artifacts_focused, "-focused-pane")
             artifacts_pane.update(loading_renderable("Loading artifacts...", skeleton_lines=4))
-            self.query_one("#dashboard-footer", Static).update(footer_hints(state))
+            self.query_one(TaskListWidget).border_title = _pane_title(1, "Tasks", focused=tasks_focused)
+            self.query_one(ApprovalQueueWidget).border_title = _pane_title(3, "Approvals Pending", focused=approvals_focused)
+            self.query_one("#dashboard-footer", Static).update(footer_hints(state, contextual=True))
             return
         tasks = recent_tasks(state)
-        self.query_one(TaskListWidget).update_tasks(tasks, focused=state.focused_pane == "tasks")
+        tasks_focused = state.focused_pane == "tasks"
+        approvals_focused = state.focused_pane == "approvals"
+        summary_focused = state.focused_pane == "summary"
+        artifacts_focused = state.focused_pane == "artifacts"
+        task_list = self.query_one(TaskListWidget)
+        task_list.update_tasks(tasks, focused=tasks_focused)
+        task_list.border_title = _pane_title(1, "Tasks", focused=tasks_focused)
         self.query_one(ApprovalQueueWidget).update_approvals(
             pending_approvals_for_selected_task(state, limit=5),
-            focused=state.focused_pane == "approvals",
+            focused=approvals_focused,
             inbox_mode=False,
         )
+        self.query_one(ApprovalQueueWidget).border_title = _pane_title(3, "Approvals Pending", focused=approvals_focused)
         task_summary = self.query_one("#task-summary", VerticalScroll)
-        task_summary.border_title = "Selected Task"
+        task_summary.border_title = _pane_title(2, "Selected Task", focused=summary_focused)
         task_summary.border_subtitle = (
-            "Focused" if state.focused_pane == "summary" else "Active Task"
+            "Focused" if summary_focused else "Active Task"
         )
-        task_summary.set_class(state.focused_pane == "summary", "-focused-pane")
+        task_summary.set_class(summary_focused, "-focused-pane")
         self.query_one("#task-summary-content", Static).update(_task_summary_renderable(state))
         artifacts_pane = self.query_one("#recent-artifacts", Static)
-        artifacts_pane.border_title = "Recent Artifacts"
-        artifacts_pane.border_subtitle = "Focused" if state.focused_pane == "artifacts" else ""
-        artifacts_pane.set_class(state.focused_pane == "artifacts", "-focused-pane")
+        artifacts_pane.border_title = _pane_title(4, "Recent Artifacts", focused=artifacts_focused)
+        artifacts_pane.border_subtitle = "Focused" if artifacts_focused else ""
+        artifacts_pane.set_class(artifacts_focused, "-focused-pane")
         artifacts = recent_artifacts(state)
         artifacts_pane.update(_recent_artifacts_renderable(artifacts))
-        self.query_one("#dashboard-footer", Static).update(footer_hints(state))
+        self.query_one("#dashboard-footer", Static).update(footer_hints(state, contextual=True))
 
     def on_list_view_highlighted(self, message: ListView.Highlighted) -> None:
         if message.list_view.id != "dashboard-task-list":
@@ -148,7 +135,11 @@ def _task_summary_renderable(state: AppState) -> Text | Group:
             text.append("\n")
             text.append(state.last_error or "Runtime connection failed.", style=DANGER)
             return text
-        return render_empty_state("tasks")
+        text = render_empty_state("tasks")
+        text.append("\n\n")
+        text.append("Welcome\n", style="bold")
+        text.append("Press N to create a task, G to open the command palette, or ? for help.", style=TEXT_MUTED_DEEP)
+        return text
     summary = selected_task_summary(state)
     if summary is None:
         text = render_empty_state("tasks")
@@ -244,3 +235,8 @@ def _artifact_type_label(content_type: str) -> str:
     if "python" in lowered:
         return "python"
     return content_type
+
+
+def _pane_title(number: int, title_text: str, *, focused: bool) -> str:
+    glyph = {1: "①", 2: "②", 3: "③", 4: "④"}.get(number, str(number))
+    return f"{glyph} {title_text}" if not focused else f"> {glyph} {title_text}"

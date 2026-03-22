@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import re
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.text import Text
 
+from ..compat import Label, ListItem, ListView, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import TaskListItemViewModel
 from ..theme.empty_states import render_empty_state
 from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED, TEXT_MUTED_DEEP, WARNING
@@ -13,21 +14,7 @@ from ..theme.typography import status_badge
 from ..utils.time_format import relative_time
 from ..utils.text import truncate
 from ..utils.text import truncate_id
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.widgets import Label, ListItem, ListView
-else:  # pragma: no cover
-    try:
-        from textual.widgets import Label, ListItem, ListView
-    except ModuleNotFoundError as exc:
-        Label = cast(Any, object)
-        ListItem = cast(Any, object)
-        ListView = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
 class TaskListRow(ListItem):  # type: ignore[misc]
@@ -58,7 +45,7 @@ class TaskListPlaceholderRow(ListItem):  # type: ignore[misc]
         super().__init__(Label(Text(label), classes="task-list-row-content"), classes="task-list-row task-list-empty-row")
 
 
-class TaskListWidget(ListView):  # type: ignore[misc]
+class TaskListWidget(DirtyCheckMixin, ListView):  # type: ignore[misc]
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
         self._task_id_list: list[str] = []
@@ -66,6 +53,8 @@ class TaskListWidget(ListView):  # type: ignore[misc]
     def update_tasks(self, items: list[TaskListItemViewModel], *, focused: bool) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        if not self._should_render((items, focused)):
+            return
         if not items:
             self.clear()
             self.append(TaskListEmptyRow())
@@ -101,6 +90,7 @@ class TaskListWidget(ListView):  # type: ignore[misc]
         self.set_class(focused, "-focused-pane")
 
     def show_loading(self, label: str, *, focused: bool) -> None:
+        self._reset_render_cache()
         self.clear()
         self.append(TaskListPlaceholderRow(label))
         self._task_id_list = []

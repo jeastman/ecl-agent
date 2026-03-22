@@ -630,7 +630,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 task_summary_content = app.screen.query_one("#task-summary-content", Static)
                 artifacts = app.screen.query_one("#recent-artifacts", Static)
                 approvals = app.screen.query_one("#approval-queue", Static)
-                self.assertEqual(task_summary.border_title, "Selected Task")
+                self.assertEqual(task_summary.border_title, "② Selected Task")
                 summary_model = selected_task_summary(app._store.snapshot())  # type: ignore[attr-defined]
                 summary_text = f"{summary_model.objective}\n{summary_model.latest_summary}"  # type: ignore[union-attr]
                 self.assertIn("Scanning repository", summary_text)
@@ -1261,6 +1261,52 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     app.close_command_palette()  # type: ignore[attr-defined]
                     await pilot.pause()
 
+    async def test_help_modal_toggles_from_keyboard(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.action_open_help()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "HelpScreen")
+                app.action_open_help()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app.screen.__class__.__name__, "DashboardScreen")
+
+    async def test_numeric_pane_jumps_focus_dashboard_and_task_detail(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                await pilot.press("3")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().focused_pane, "approvals")  # type: ignore[attr-defined]
+                await pilot.press("1")
+                await pilot.pause()
+                app.action_open_task()  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.press("2")
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().focused_pane, "side")  # type: ignore[attr-defined]
+
     async def test_new_task_modal_submits_and_opens_task_detail(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import TextArea
@@ -1842,7 +1888,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     )
                 await pilot.pause()
                 timeline = app.screen.query_one("#task-detail-timeline", EventTimelineWidget)
-                await pilot.press("g")
+                timeline.scroll_to_home()
                 await pilot.pause()
 
                 app._dispatch_and_render(  # type: ignore[attr-defined]
@@ -1862,7 +1908,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
 
                 self.assertTrue(timeline.is_showing_new_events_indicator())
-                await pilot.press("shift+g")
+                timeline.jump_to_latest()
                 await pilot.pause()
                 self.assertFalse(timeline.is_showing_new_events_indicator())
                 self.assertTrue(timeline.is_at_bottom())

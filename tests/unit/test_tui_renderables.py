@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from apps.tui.local_agent_tui.renderables import badge, block, join, metadata_line
+from apps.tui.local_agent_tui.renderables import badge, block, divider, join, metadata_line
+from apps.tui.local_agent_tui.theme.colors import TEXT_SECONDARY
 
 
 class RenderablesTests(unittest.TestCase):
@@ -32,3 +33,12 @@ class RenderablesTests(unittest.TestCase):
     def test_badge_plain_text_is_operator_readable(self) -> None:
         rendered = badge("FAILED", style="red")
         self.assertEqual(rendered.plain, "FAILED")
+
+    def test_divider_clamps_small_widths(self) -> None:
+        rendered = divider(1)
+        self.assertEqual(rendered.plain, "────")
+
+    def test_divider_uses_requested_style(self) -> None:
+        rendered = divider(6, style=TEXT_SECONDARY)
+        self.assertEqual(rendered.plain, "──────")
+        self.assertIn(TEXT_SECONDARY, str(rendered.style))

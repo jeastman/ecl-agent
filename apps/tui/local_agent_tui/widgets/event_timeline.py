@@ -1,36 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.markup import escape
 from rich.text import Text
 
+from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import TimelineEventViewModel, TimelineGroupViewModel
 from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
 from ..theme.empty_states import render_empty_state
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import VerticalScroll
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class EventTimelineWidget(VerticalScroll):  # type: ignore[misc]
+class EventTimelineWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc]
     can_focus = True
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -50,33 +33,31 @@ class EventTimelineWidget(VerticalScroll):  # type: ignore[misc]
         subtitle = f"Filter: {escape(model.filter_label)}"
         if model.search_query:
             subtitle = f"{subtitle} | Search: {escape(model.search_query)}"
-        is_at_bottom = self.is_at_bottom()
-        if is_at_bottom:
-            self._is_tailing = True
         signature = _timeline_signature(model)
         view_state = (model.filter_label, model.search_query)
         body = self.query_one("#task-detail-timeline-body", Static)
+        should_render_body = self._should_render(model, attr_name="_last_rendered_model")
         if view_state != self._last_view_state:
             self._show_new_events_indicator = False
         elif self._is_tailing:
             self._show_new_events_indicator = False
         elif self._last_event_signature is not None and signature != self._last_event_signature:
             self._show_new_events_indicator = True
-        elif is_at_bottom:
-            self._show_new_events_indicator = False
         self._last_event_signature = signature
         self._last_view_state = view_state
         if self._show_new_events_indicator:
             subtitle = f"{subtitle} | \N{DOWNWARDS ARROW} New events"
         self.border_subtitle = subtitle
         if not model.events:
-            body.update(render_empty_state("events"))
+            if should_render_body:
+                body.update(render_empty_state("events"))
             self._show_new_events_indicator = False
             self._is_tailing = True
             self.scroll_to_home()
             return
-        body.update(Group(*[_render_event_card(event) for event in model.events]))
-        if self._is_tailing:
+        if should_render_body:
+            body.update(Group(*[_render_event_card(event) for event in model.events]))
+        if self._is_tailing and should_render_body:
             self._schedule_jump_to_latest()
 
     def scroll_line(self, delta: int) -> None:
@@ -87,6 +68,10 @@ class EventTimelineWidget(VerticalScroll):  # type: ignore[misc]
         if self.is_at_bottom():
             self._is_tailing = True
             self._show_new_events_indicator = False
+
+    def scroll_page(self, delta: int) -> None:
+        step = max(1, int(getattr(self, "content_size", None).height or 10) // 2)
+        self.scroll_line(step * delta)
 
     def scroll_to_home(self) -> None:
         self._is_tailing = False
@@ -105,7 +90,10 @@ class EventTimelineWidget(VerticalScroll):  # type: ignore[misc]
         return self._show_new_events_indicator
 
     def is_at_bottom(self) -> bool:
-        return self._is_tailing or self.max_scroll_y <= 0 or self.scroll_y >= max(self.max_scroll_y - 1, 0)
+        return self._is_tailing or self._viewport_is_at_bottom()
+
+    def _viewport_is_at_bottom(self) -> bool:
+        return self.max_scroll_y > 0 and self.scroll_y >= max(self.max_scroll_y - 1, 0)
 
     def _schedule_jump_to_latest(self) -> None:
         self.call_after_refresh(self._scroll_to_latest_after_refresh)

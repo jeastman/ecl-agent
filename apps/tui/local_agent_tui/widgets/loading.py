@@ -1,24 +1,12 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group, RenderableType
 from rich.text import Text
 
+from ..compat import Static, _TEXTUAL_IMPORT_ERROR
 from ..theme.colors import STATUS_INFO, TEXT_MUTED_DEEP, TEXT_SECONDARY
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 _SPINNER_FRAMES = ("⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏")

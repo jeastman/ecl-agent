@@ -1,35 +1,18 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
 from rich.console import Group
 from rich.syntax import Syntax
 from rich.text import Text
 
+from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import ArtifactPreviewViewModel
 from .loading import loading_renderable
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import VerticalScroll
-    from textual.widgets import Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import VerticalScroll
-        from textual.widgets import Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        VerticalScroll = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
+class ArtifactPreviewWidget(DirtyCheckMixin, VerticalScroll):  # type: ignore[misc]
     can_focus = True
 
     def compose(self) -> ComposeResult:
@@ -39,6 +22,8 @@ class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
     def update_preview(self, model: ArtifactPreviewViewModel) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
+        if not self._should_render(model):
+            return
         self.border_title = f"{model.icon} {model.title}".strip()
         self.query_one("#artifact-preview-meta", Static).update(Text(model.metadata_summary))
         body_widget = self.query_one("#artifact-preview-body", Static)
@@ -53,6 +38,7 @@ class ArtifactPreviewWidget(VerticalScroll):  # type: ignore[misc]
         self.scroll_home(animate=False)
 
     def show_loading(self, label: str) -> None:
+        self._reset_render_cache()
         self.border_title = "Preview"
         self.query_one("#artifact-preview-meta", Static).update(
             loading_renderable(label, skeleton_lines=2)

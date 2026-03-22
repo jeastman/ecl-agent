@@ -1,39 +1,13 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
+from ..compat import Binding, ComposeResult, Container, Horizontal, Input, Screen, Static, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
 from ..store.selectors import selected_markdown_artifact
 from ..widgets.status_bar import StatusBar
 from ..widgets.markdown_viewer import MarkdownSearchState, MarkdownViewerWidget
 from ..widgets.toast import ToastRack
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.binding import Binding
-    from textual.containers import Container, Horizontal
-    from textual.screen import Screen
-    from textual.widgets import Input, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.binding import Binding
-        from textual.containers import Container, Horizontal
-        from textual.screen import Screen
-        from textual.widgets import Input, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Binding = cast(Any, object)
-        Container = cast(Any, object)
-        Horizontal = cast(Any, object)
-        Screen = cast(Any, object)
-        Input = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
 
 
 class MarkdownViewerScreen(Screen):  # type: ignore[misc]

@@ -1,39 +1,19 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
-
 from rich.text import Text
 
-from ..renderables import badge, key_hints, text
+from ..compat import ComposeResult, Container, Input, Key, Static, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import TaskActionBarViewModel
 from ..theme.colors import DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
 from ..theme.typography import key_hint
-
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.containers import Container
-    from textual.widgets import Input, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.containers import Container
-        from textual.widgets import Input, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Container = cast(Any, object)
-        Input = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
+from ._dirty import DirtyCheckMixin
 
 
-class InputBoxWidget(Container):  # type: ignore[misc]
+class InputBoxWidget(DirtyCheckMixin, Container):  # type: ignore[misc]
     def compose(self) -> ComposeResult:
         yield Static(id="task-detail-command-actions")
         yield Static(id="task-detail-command-status")
+        yield Static(id="task-detail-command-suggestion")
         yield Input(
             placeholder="Enter a task command",
             id="task-detail-command-input",
@@ -44,8 +24,11 @@ class InputBoxWidget(Container):  # type: ignore[misc]
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
             raise RuntimeError("textual is required to render the TUI") from _TEXTUAL_IMPORT_ERROR
         self.border_title = "Actions"
+        if not self._should_render(model):
+            return
         input_widget = self.query_one("#task-detail-command-input", Input)
         input_widget.placeholder = model.input_placeholder
+        suggestion_widget = self.query_one("#task-detail-command-suggestion", Static)
         hints: list[Text] = []
         if model.command_enabled:
             hints.append(key_hint("I", "Command"))
@@ -80,6 +63,15 @@ class InputBoxWidget(Container):  # type: ignore[misc]
             self.query_one("#task-detail-command-actions", Static).update(Text())
         status = Text(model.status_message, style=_status_tone_style(model.status_tone))
         self.query_one("#task-detail-command-status", Static).update(status)
+        suggestion = Text()
+        if model.input_suggestion:
+            suggestion.append("Tab ", style=TEXT_SECONDARY)
+            suggestion.append(model.input_suggestion, style=TEXT_MUTED_DEEP)
+        if model.input_history_hint:
+            if suggestion:
+                suggestion.append("   ", style=TEXT_SECONDARY)
+            suggestion.append(model.input_history_hint, style=TEXT_MUTED_DEEP)
+        suggestion_widget.update(suggestion)
 
     def focus_input(self) -> None:
         if _TEXTUAL_IMPORT_ERROR is not None:  # pragma: no cover
@@ -105,6 +97,30 @@ class InputBoxWidget(Container):  # type: ignore[misc]
         if event.input.id != "task-detail-command-input":
             return
         self.app.handle_task_detail_command(event.value)  # type: ignore[attr-defined]
+
+    def on_input_changed(self, event: Input.Changed) -> None:
+        if event.input.id != "task-detail-command-input":
+            return
+        self.app.handle_task_command_text_changed(event.value)  # type: ignore[attr-defined]
+
+    def on_key(self, event: Key) -> None:
+        input_widget = self.query_one("#task-detail-command-input", Input)
+        if event.key == "up" and input_widget.has_focus:
+            self.app.cycle_task_command_history(-1)  # type: ignore[attr-defined]
+            event.stop()
+            return
+        if event.key == "down" and input_widget.has_focus:
+            self.app.cycle_task_command_history(1)  # type: ignore[attr-defined]
+            event.stop()
+            return
+        if event.key == "tab" and input_widget.has_focus:
+            self.app.complete_task_command_input()  # type: ignore[attr-defined]
+            event.stop()
+            return
+
+    def set_input_value(self, value: str) -> None:
+        input_widget = self.query_one("#task-detail-command-input", Input)
+        input_widget.value = value
 
 
 def _status_tone_style(tone: str) -> str:

@@ -141,10 +141,11 @@ Screen {
 #dashboard-task-list {
     width: 30%;
     min-width: 28;
-    border: round $la-border-subtle;
+    border: round $la-border-default;
     margin-right: 1;
-    padding: 0;
+    padding: 0 1;
     background: $la-surface;
+    tint: $la-surface 3%;
 }
 
 .task-list-row {
@@ -167,11 +168,12 @@ Screen {
 
 #task-summary {
     width: 1fr;
-    border: round $la-border-subtle;
+    border: round $la-border-default;
     padding: 1;
     margin-right: 1;
     overflow-y: auto;
     background: $la-surface;
+    tint: $la-surface 3%;
 }
 
 #task-summary-content {
@@ -203,11 +205,13 @@ Screen {
 #task-detail-todos,
 #task-detail-subagents,
 #task-detail-artifacts,
+#task-detail-remote-mcp,
 #task-detail-notifications,
 #task-detail-input,
 #diagnostics-screen-list,
 #diagnostics-screen-detail,
 #command-palette-panel,
+#help-screen-panel,
 #create-task-panel,
 #task-timeline-prompt-panel,
 #confirm-dialog-panel,
@@ -215,19 +219,46 @@ Screen {
 #remote-mcp-authorize-panel,
 #remote-mcp-complete-panel {
     border: round $la-border-subtle;
-    background: $la-surface;
+    background: $la-bg-base;
     padding: 1;
+}
+
+#task-detail-timeline,
+#task-detail-logs,
+#task-detail-header {
+    border: round $la-border-default;
+    background: $la-surface;
+    tint: $la-surface 3%;
+}
+
+#approval-queue,
+#recent-artifacts,
+#task-detail-artifacts,
+#task-detail-notifications,
+#task-detail-remote-mcp {
+    padding: 0 1;
 }
 
 #confirm-dialog-panel,
 #runtime-user-panel,
 #remote-mcp-authorize-panel,
-#remote-mcp-complete-panel {
+#remote-mcp-complete-panel,
+#help-screen-panel {
     width: 64;
     max-width: 80%;
     height: auto;
     border: heavy $la-focus;
     background: $la-bg-overlay;
+}
+
+#help-screen-panel {
+    max-height: 80%;
+}
+
+#help-screen-title {
+    text-style: bold;
+    color: $la-text-title;
+    margin-bottom: 1;
 }
 
 #confirm-dialog-panel.-danger {

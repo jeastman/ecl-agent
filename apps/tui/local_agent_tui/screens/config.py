@@ -1,7 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, cast
+from typing import Any
 
+from rich.markup import escape
+
+from ..compat import Binding, ComposeResult, Container, ListView, Screen, Static, _TEXTUAL_IMPORT_ERROR
 from ..store.app_state import AppState
 from ..store.selectors import (
     config_profiles_summary,
@@ -9,41 +12,15 @@ from ..store.selectors import (
     footer_hints,
     selected_config_detail,
 )
-from ..widgets.loading import loading_renderable
 from ..widgets.config_detail import ConfigDetailWidget
 from ..widgets.config_section_list import ConfigSectionListWidget, ConfigSectionRow
 from ..widgets.status_bar import StatusBar
 from ..widgets.toast import ToastRack
 from ..theme.colors import STATUS_DANGER, TEXT_SECONDARY
 
-_TEXTUAL_IMPORT_ERROR: ModuleNotFoundError | None = None
-
-if TYPE_CHECKING:
-    from textual.app import ComposeResult
-    from textual.binding import Binding
-    from textual.containers import Container
-    from textual.screen import Screen
-    from textual.widgets import ListView, Static
-else:  # pragma: no cover
-    try:
-        from textual.app import ComposeResult
-        from textual.binding import Binding
-        from textual.containers import Container
-        from textual.screen import Screen
-        from textual.widgets import ListView, Static
-    except ModuleNotFoundError as exc:
-        ComposeResult = cast(Any, object)
-        Binding = cast(Any, object)
-        Container = cast(Any, object)
-        Screen = cast(Any, object)
-        ListView = cast(Any, object)
-        Static = cast(Any, object)
-        _TEXTUAL_IMPORT_ERROR = exc
-    else:
-        _TEXTUAL_IMPORT_ERROR = None
-
 
 class ConfigScreen(Screen):  # type: ignore[misc]
+    PANE_ORDER = ["config_sections"]
     BINDINGS = [Binding("c", "refresh_config", "Refresh", show=False, priority=True)]
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
@@ -82,7 +59,7 @@ class ConfigScreen(Screen):  # type: ignore[misc]
         else:
             detail_model = selected_config_detail(state)
             detail_widget.update_detail(detail_model)
-        footer = footer_hints(state)
+        footer = footer_hints(state, contextual=True)
         footer.append("\nConfig viewer is read-only.", style=TEXT_SECONDARY)
         if state.config_request_error:
             footer.append(f"\n{escape(state.config_request_error)}", style=STATUS_DANGER)

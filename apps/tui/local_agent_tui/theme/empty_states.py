@@ -21,13 +21,15 @@ def render_empty_state(key: str) -> Text:
     """Return a centered 3-line Rich Text for a named empty state.
     Falls back gracefully for unknown keys."""
     if key not in EMPTY_STATES:
-        result = Text()
+        result = Text(justify="center")
+        result.no_wrap = True
         result.append("◇\n", style="dim")
         result.append("Nothing here\n", style="dim bold")
         return result
 
     icon, heading, hint = EMPTY_STATES[key]
-    result = Text()
+    result = Text(justify="center")
+    result.no_wrap = True
     result.append(f"{icon}\n", style="dim")
     result.append(f"{heading}\n", style="dim bold")
     result.append(hint, style="dim")
