@@ -49,6 +49,8 @@ class TestFooterHintsApprovals(unittest.TestCase):
         result = footer_hints(state)
         self.assertIn("A", result.plain)
         self.assertIn("Approve", result.plain)
+        self.assertIn("Home", result.plain)
+        self.assertIn("End", result.plain)
 
 
 class TestFooterHintsConfig(unittest.TestCase):
@@ -77,6 +79,8 @@ class TestFooterHintsDiagnostics(unittest.TestCase):
         state = _state_for_screen("diagnostics")
         result = footer_hints(state)
         self.assertIn("Back", result.plain)
+        self.assertIn("Home", result.plain)
+        self.assertIn("End", result.plain)
 
 
 if __name__ == "__main__":

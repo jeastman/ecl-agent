@@ -30,10 +30,31 @@ def _help_renderable(state: AppState) -> Group:
     overview.append("Use numbered pane jumps for the current screen, Tab to cycle, and G to open the command palette.")
     sections.extend([Text("Overview", style="bold"), overview, Text("")])
 
+    sections.extend([Text("Current Screen", style="bold"), footer_hints(state, contextual=True), Text("")])
+
     sections.extend(
         [
-            Text("Current Screen", style="bold"),
-            footer_hints(state, contextual=True),
+            Text("Screen Shortcuts", style="bold"),
+            Text("Dashboard", style="bold #9aa8b8"),
+            footer_hints(_screen_state("dashboard"), contextual=True),
+            Text(""),
+            Text("Task Detail", style="bold #9aa8b8"),
+            footer_hints(_screen_state("task_detail"), contextual=True),
+            Text(""),
+            Text("Approvals", style="bold #9aa8b8"),
+            footer_hints(_screen_state("approvals"), contextual=True),
+            Text(""),
+            Text("Artifacts", style="bold #9aa8b8"),
+            footer_hints(_screen_state("artifacts"), contextual=True),
+            Text(""),
+            Text("Memory", style="bold #9aa8b8"),
+            footer_hints(_screen_state("memory"), contextual=True),
+            Text(""),
+            Text("Config", style="bold #9aa8b8"),
+            footer_hints(_screen_state("config"), contextual=True),
+            Text(""),
+            Text("Diagnostics", style="bold #9aa8b8"),
+            footer_hints(_screen_state("diagnostics"), contextual=True),
             Text(""),
         ]
     )
@@ -62,3 +83,10 @@ def _help_renderable(state: AppState) -> Group:
     sections.extend([Text("Close", style="bold"), close])
 
     return Group(*sections)
+
+
+def _screen_state(screen_name: str) -> AppState:
+    state = AppState(active_screen=screen_name)
+    if screen_name == "task_detail":
+        state.focused_pane = "timeline"
+    return state

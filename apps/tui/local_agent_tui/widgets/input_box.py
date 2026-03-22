@@ -117,6 +117,10 @@ class InputBoxWidget(DirtyCheckMixin, Container):  # type: ignore[misc]
             self.app.complete_task_command_input()  # type: ignore[attr-defined]
             event.stop()
             return
+        if event.key == "enter" and input_widget.has_focus:
+            self.app.handle_task_detail_command(input_widget.value)  # type: ignore[attr-defined]
+            event.stop()
+            return
 
     def set_input_value(self, value: str) -> None:
         input_widget = self.query_one("#task-detail-command-input", Input)

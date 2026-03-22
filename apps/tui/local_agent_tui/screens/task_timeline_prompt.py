@@ -4,10 +4,12 @@ from typing import Any
 
 from rich.markup import escape
 
-from ..compat import ComposeResult, Container, Input, ModalScreen, Static, _TEXTUAL_IMPORT_ERROR
+from ..compat import Binding, ComposeResult, Container, Input, ModalScreen, Static
 
 
 class TaskTimelinePromptScreen(ModalScreen[None]):  # type: ignore[misc]
+    BINDINGS = [Binding("enter", "submit_prompt", "Submit", show=False, priority=True)]
+
     def __init__(self, *, mode: str) -> None:
         super().__init__()
         self._mode = mode
@@ -40,10 +42,21 @@ class TaskTimelinePromptScreen(ModalScreen[None]):  # type: ignore[misc]
         else:
             self.app.submit_task_timeline_filter(event.value)  # type: ignore[attr-defined]
 
+    def action_submit_prompt(self) -> None:
+        value = self.query_one(Input).value
+        if self._mode == "search":
+            self.app.submit_task_timeline_search(value)  # type: ignore[attr-defined]
+        else:
+            self.app.submit_task_timeline_filter(value)  # type: ignore[attr-defined]
+
     def set_status(self, message: str) -> None:
         self.query_one("#task-timeline-prompt-status", Static).update(escape(message))
 
     def on_key(self, event: Any) -> None:
-        if getattr(event, "key", "") == "escape":
+        key = getattr(event, "key", "")
+        if key == "escape":
             self.app.close_task_timeline_prompt()  # type: ignore[attr-defined]
+            event.stop()
+        elif key == "enter":
+            self.action_submit_prompt()
             event.stop()

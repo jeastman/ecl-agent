@@ -38,6 +38,7 @@ STATUS_WARNING = "#f0c36a"   # alias of WARNING
 STATUS_DANGER = "#d96c6c"    # alias of DANGER
 STATUS_INFO = "#67b7dc"      # alias of FOCUS
 STATUS_IDLE = "#6b7a8a"
+SEVERITY_INFO = "#5a9ec4"
 
 # Accent aliases
 ACCENT_PRIMARY = "#67b7dc"   # alias of FOCUS

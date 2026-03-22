@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from apps.tui.local_agent_tui.widgets.event_timeline import _render_event_line
+from apps.tui.local_agent_tui.theme.colors import SEVERITY_INFO
+from apps.tui.local_agent_tui.widgets.event_timeline import _render_event_line, _severity_color
 
 
 class EventTimelineWidgetTests(unittest.TestCase):
@@ -43,3 +44,6 @@ class EventTimelineWidgetTests(unittest.TestCase):
 
         self.assertIn("×3", rendered.plain)
         self.assertIn("npm install (repeated)", rendered.plain)
+
+    def test_info_severity_uses_dedicated_info_color(self) -> None:
+        self.assertEqual(_severity_color("info"), SEVERITY_INFO)

@@ -1,11 +1,10 @@
 from __future__ import annotations
 
 from rich.console import Group
-from rich.markup import escape
 from rich.text import Text
 
 from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
-from ..renderables import badge, block, divider, join, metadata_line, muted, text
+from ..renderables import divider
 from ..store.selectors import (
     NotificationStripViewModel,
     RemoteMCPAuthorizationViewModel,
@@ -69,6 +68,8 @@ class SubagentActivityWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
             self.update(render_empty_state("subagents"))
             return
         lines: list[Text] = []
+        lines.append(title("Active Subagents"))
+        lines.append(divider(self.content_size.width - 2, style=TEXT_SECONDARY))
         for item in items:
             line = Text()
             line.append(f"{item.status_icon} ", style=_status_style(item.status))
@@ -117,21 +118,21 @@ class NotificationStripWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
             self.update(render_empty_state("notifications"))
             return
         self.set_class(any(item.tone in {"warning", "danger"} for item in model.items), "-urgent-pane")
-        self.update(
-            Text("\n").join(
-                [
-                    _render_notification_line(
-                        timestamp=item.timestamp,
-                        timestamp_relative=item.timestamp_relative,
-                        severity=item.severity,
-                        summary=item.summary,
-                        icon=item.icon,
-                        tone=item.tone,
-                    )
-                    for item in model.items
-                ]
-            )
+        lines = [title("Recent Alerts"), divider(self.content_size.width - 2, style=TEXT_SECONDARY)]
+        lines.extend(
+            [
+                _render_notification_line(
+                    timestamp=item.timestamp,
+                    timestamp_relative=item.timestamp_relative,
+                    severity=item.severity,
+                    summary=item.summary,
+                    icon=item.icon,
+                    tone=item.tone,
+                )
+                for item in model.items
+            ]
         )
+        self.update(Text("\n").join(lines))
 
 
 class RemoteMCPAuthorizationWidget(DirtyCheckMixin, Static):  # type: ignore[misc]
@@ -145,6 +146,8 @@ class RemoteMCPAuthorizationWidget(DirtyCheckMixin, Static):  # type: ignore[mis
             self.update(render_empty_state("notifications"))
             return
         lines: list[Text] = []
+        lines.append(title("Authorization Status"))
+        lines.append(divider(self.content_size.width - 2, style=TEXT_SECONDARY))
         for item in items:
             line = Text()
             line.append("🔐 ", style=WARNING)
@@ -159,15 +162,6 @@ class RemoteMCPAuthorizationWidget(DirtyCheckMixin, Static):  # type: ignore[mis
                 lines.append(action_line)
             lines.append(Text(""))
         self.update(Group(*lines[:-1] if lines and not lines[-1].plain.strip() else lines))
-
-
-def _render_notification_line(*, timestamp: str, severity: str, summary: str) -> Group:
-    severity_style = {
-        "error": DANGER,
-        "attention": WARNING,
-        "success": SUCCESS,
-    }.get(severity.lower(), ACCENT)
-    return f"[{color}]\\[{escape(severity.upper())}\\][/]"
 
 
 def _status_style(status: str) -> str:

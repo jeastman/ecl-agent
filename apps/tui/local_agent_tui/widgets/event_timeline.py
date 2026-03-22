@@ -8,7 +8,7 @@ from rich.text import Text
 
 from ..compat import ComposeResult, Static, VerticalScroll, _TEXTUAL_IMPORT_ERROR
 from ..store.selectors import TimelineEventViewModel, TimelineGroupViewModel
-from ..theme.colors import ACCENT, DANGER, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
+from ..theme.colors import DANGER, SEVERITY_INFO, SUCCESS, TEXT_MUTED_DEEP, TEXT_SECONDARY, WARNING
 from ..theme.empty_states import render_empty_state
 from ._dirty import DirtyCheckMixin
 
@@ -150,7 +150,7 @@ def _severity_color(severity: str) -> str:
         "error": DANGER,
         "attention": WARNING,
         "success": SUCCESS,
-    }.get(severity.lower(), ACCENT)
+    }.get(severity.lower(), SEVERITY_INFO)
 
 
 def _render_event_line(

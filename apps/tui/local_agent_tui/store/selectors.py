@@ -1860,17 +1860,17 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             hints.insert(2, "/task-id Jump")
         return hints
     if state.active_screen == "diagnostics":
-        hints = ["Up/Down Move", "Enter Select", "G Palette", "Esc Back", "Q Quit"]
+        hints = ["Up/Down Move", "Enter Select", "Home Top", "End Bottom", "G Palette", "Esc Back", "Q Quit"]
         if contextual:
             hints.insert(2, "Tab Focus")
         return hints
     if state.active_screen == "config":
-        return ["Up/Down Move", "C Refresh", "G Palette", "Esc Back", "Q Quit"]
+        return ["Up/Down Move", "Home Top", "End Bottom", "C Refresh", "G Palette", "Esc Back", "Q Quit"]
     if state.active_screen == "approvals":
-        hints = ["J/K Navigate", "Y Approve", "N Reject", "Enter Details", "Q Quit"]
+        hints = ["J/K Navigate", "Home Top", "End Bottom", "Y Approve", "N Reject", "Enter Details", "Q Quit"]
         if contextual:
-            hints.insert(3, "1 Queue")
-            hints.insert(4, "2 Details")
+            hints.insert(5, "1 Queue")
+            hints.insert(6, "2 Details")
         return hints
     if state.active_screen == "task_detail":
         action_bar = task_action_bar(state)
@@ -1901,6 +1901,8 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
     if state.active_screen == "artifacts":
         return [
             "Up/Down Move",
+            "Home Top",
+            "End Bottom",
             "Enter Open",
             "E External Open",
             "T Group Task",
@@ -1913,10 +1915,22 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
     if state.active_screen == "markdown_viewer":
         return ["Esc Back", "Q Quit"]
     if state.active_screen == "memory":
-        return ["Up/Down Move", "Tab Focus", "M Refresh", "? Help", "G Palette", "Esc Back", "Q Quit"]
+        return [
+            "Up/Down Move",
+            "Home Top",
+            "End Bottom",
+            "Tab Focus",
+            "M Refresh",
+            "? Help",
+            "G Palette",
+            "Esc Back",
+            "Q Quit",
+        ]
     if contextual and state.focused_pane == "approvals":
         return [
             "Up/Down Move Approval",
+            "Home Top",
+            "End Bottom",
             "Tab Focus",
             "1 Tasks",
             "2 Summary",
@@ -1933,6 +1947,8 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
             "G Palette",
             "N New Task",
             "Up/Down Scroll Summary",
+            "Home Top",
+            "End Bottom",
             "Tab Focus",
             "1 Tasks",
             "2 Summary",
@@ -1948,6 +1964,8 @@ def _footer_hint_labels(state: AppState, *, contextual: bool) -> list[str]:
         "G Palette",
         "N New Task",
         "Up/Down Move",
+        "Home Top",
+        "End Bottom",
         "Tab Focus",
         "1 Tasks",
         "2 Summary",

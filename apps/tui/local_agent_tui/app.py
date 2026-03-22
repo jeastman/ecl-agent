@@ -14,7 +14,7 @@ from typing import Any, Callable
 from .actions.approve_request import build_approval_request_action
 from .actions.inspect_memory import build_inspect_memory_action
 from .actions.open_artifact import build_open_artifact_action
-from .compat import App, Binding, ComposeResult, NoMatches, _TEXTUAL_IMPORT_ERROR, ensure_textual
+from .compat import App, Binding, ComposeResult, Input, NoMatches, _TEXTUAL_IMPORT_ERROR, ensure_textual
 from .operator_settings import OperatorSettings, OperatorSettingsStore
 from .protocol.event_stream import consume_task_stream
 from .protocol.protocol_client import ProtocolClient, ProtocolClientError
@@ -722,6 +722,15 @@ class AgentTUI(App):  # type: ignore[misc]
         if isinstance(self.screen, HelpScreen):
             return
         state = self._store.snapshot()
+        if state.active_screen == "markdown_viewer":
+            action = getattr(
+                self.screen,
+                "action_scroll_home" if target == "home" else "action_scroll_end",
+                None,
+            )
+            if callable(action):
+                action()
+            return
         if state.active_screen == "task_detail":
             if not isinstance(self.screen, TaskDetailScreen):
                 return
@@ -737,11 +746,116 @@ class AgentTUI(App):  # type: ignore[misc]
                 timeline_view.scroll_to_home()
             else:
                 timeline_view.jump_to_latest()
+            return
+        self._jump_current_selection(target)
+
+    def _jump_current_selection(self, target: str) -> None:
+        state = self._store.snapshot()
+        if state.active_screen == "dashboard":
+            if state.focused_pane == "summary":
+                if not isinstance(self.screen, DashboardScreen):
+                    return
+                summary_pane = self.screen.query_one("#task-summary")
+                if target == "home":
+                    summary_pane.scroll_home(animate=False)
+                else:
+                    summary_pane.scroll_end(animate=False)
+                return
+            if state.focused_pane == "approvals":
+                self._jump_approval_selection(target)
+                return
+            self._jump_task_selection(target)
+            return
+        if state.active_screen == "approvals":
+            self._jump_approval_selection(target)
+            return
+        if state.active_screen == "artifacts":
+            self._jump_artifact_browser_selection(target)
+            return
+        if state.active_screen == "memory":
+            self._jump_memory_selection(target)
+            return
+        if state.active_screen == "config":
+            self._jump_config_selection(target)
+            return
+        if state.active_screen == "diagnostics":
+            self._jump_diagnostic_selection(target)
+
+    def _jump_task_selection(self, target: str) -> None:
+        state = self._store.snapshot()
+        task_ids = recent_task_ids(state)
+        if not task_ids:
+            return
+        self.handle_dashboard_task_selected(task_ids[0] if target == "home" else task_ids[-1])
+
+    def _jump_approval_selection(self, target: str) -> None:
+        state = self._store.snapshot()
+        approvals = (
+            pending_approvals_for_selected_task(state)
+            if state.active_screen == "dashboard" and state.focused_pane == "approvals"
+            else pending_approvals(state)
+        )
+        if not approvals:
+            return
+        approval_id = approvals[0].approval_id if target == "home" else approvals[-1].approval_id
+        self._store.dispatch({"kind": "ui", "selected_approval_id": approval_id})
+        self._render_state()
+
+    def _jump_artifact_browser_selection(self, target: str) -> None:
+        rows = artifact_browser_rows(self._store.snapshot())
+        if not rows:
+            return
+        artifact_id = rows[0].artifact_id if target == "home" else rows[-1].artifact_id
+        self._store.dispatch({"kind": "ui", "artifact_browser_selected_id": artifact_id})
+        self._render_state()
+        self._queue_selected_artifact_preview_load()
+
+    def _jump_memory_selection(self, target: str) -> None:
+        state = self._store.snapshot()
+        if state.focused_pane == "memory_entries":
+            entries = memory_entry_items(state)
+            if not entries:
+                return
+            memory_id = entries[0].memory_id if target == "home" else entries[-1].memory_id
+            self._store.dispatch({"kind": "ui", "selected_memory_entry_id": memory_id})
+            self._render_state()
+            return
+        groups = memory_scope_groups(state)
+        if not groups:
+            return
+        group_id = groups[0].group_id if target == "home" else groups[-1].group_id
+        self._store.dispatch({"kind": "ui", "selected_memory_group_id": group_id})
+        self._render_state()
+
+    def _jump_config_selection(self, target: str) -> None:
+        sections = config_section_items(self._store.snapshot())
+        if not sections:
+            return
+        section_id = sections[0].section_id if target == "home" else sections[-1].section_id
+        self._store.dispatch({"kind": "ui", "selected_config_section_id": section_id})
+        self._render_state()
+
+    def _jump_diagnostic_selection(self, target: str) -> None:
+        items = diagnostics_items(self._store.snapshot())
+        if not items:
+            return
+        diagnostic_id = items[0].diagnostic_id if target == "home" else items[-1].diagnostic_id
+        self._store.dispatch({"kind": "ui", "selected_diagnostic_id": diagnostic_id})
+        self._render_state()
 
     def action_open_task(self) -> None:
         state = self._store.snapshot()
-        if isinstance(self.screen, (CreateTaskScreen, TaskTimelinePromptScreen)):
+        if isinstance(self.screen, TaskTimelinePromptScreen):
+            self.screen.action_submit_prompt()
             return
+        if isinstance(self.screen, CreateTaskScreen):
+            return
+        if state.active_screen == "task_detail" and isinstance(self.screen, TaskDetailScreen):
+            input_box = self.screen.query_one(InputBoxWidget)
+            input_widget = input_box.query_one("#task-detail-command-input", Input)
+            if input_widget.has_focus:
+                self.handle_task_detail_command(input_widget.value)
+                return
         if state.command_palette_visible:
             self.action_run_palette_command()
             return
@@ -2434,25 +2548,47 @@ def _copy_text_to_clipboard(value: str) -> bool:
 
 
 def _task_command_suggestion_for(value: str, state: Any) -> str | None:
-    normalized = value.strip()
-    if not normalized:
-        return "resume"
-    commands = _supported_task_commands(state)
-    if normalized in commands:
+    typed = value.lstrip()
+    if not typed.strip():
+        candidates = _task_command_completion_candidates(state)
+        return candidates[0] if candidates else None
+    candidates = _task_command_completion_candidates(state)
+    typed_lower = typed.lower()
+    if typed_lower in {candidate.lower() for candidate in candidates}:
         return None
-    root = normalized.split(" ", 1)[0].lower()
-    matches = [command for command in commands if command.startswith(root)]
+    matches = [candidate for candidate in candidates if candidate.lower().startswith(typed_lower)]
+    if not matches:
+        root = typed.split(" ", 1)[0].lower()
+        if " " in typed:
+            matches = [candidate for candidate in candidates if candidate.lower().startswith(f"{root} ")]
+        else:
+            matches = [candidate for candidate in candidates if candidate.lower().startswith(root)]
     if not matches:
         return None
-    suggestion = matches[0]
-    if " " in normalized and root in {"cancel", "reply"}:
-        return None
-    return suggestion
+    for candidate in matches:
+        if candidate.lower() != typed_lower:
+            return candidate
+    return None
 
 
 def _supported_task_commands(state: Any) -> list[str]:
+    return sorted({candidate.split(" ", 1)[0] for candidate in _task_command_completion_candidates(state)})
+
+
+def _task_command_completion_candidates(state: Any) -> list[str]:
     action_bar = task_action_bar(state)
-    commands = ["help", "cancel", "reply", "approvals", "artifacts", "diagnostics", "memory", "config"]
+    commands = [
+        "help",
+        "cancel",
+        "cancel [reason]",
+        "reply",
+        "reply <message>",
+        "approvals",
+        "artifacts",
+        "diagnostics",
+        "memory",
+        "config",
+    ]
     if action_bar.resume_enabled:
         commands.append("resume")
     if action_bar.auth_enabled:

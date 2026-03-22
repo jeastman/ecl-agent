@@ -1307,6 +1307,136 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 self.assertEqual(app._store.snapshot().focused_pane, "side")  # type: ignore[attr-defined]
 
+    async def test_home_and_end_jump_lists_across_screens(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from apps.tui.local_agent_tui.store.selectors import (
+            artifact_browser_rows,
+            config_section_items,
+            diagnostics_items,
+            memory_entry_items,
+            memory_scope_groups,
+            pending_approvals,
+            recent_task_ids,
+        )
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+
+                task_ids = recent_task_ids(app._store.snapshot())  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(task_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_task_id, task_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_task_id, task_ids[0])  # type: ignore[attr-defined]
+
+                app.action_open_approvals()  # type: ignore[attr-defined]
+                await pilot.pause()
+                approval_ids = [item.approval_id for item in pending_approvals(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(approval_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_approval_id, approval_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_approval_id, approval_ids[0])  # type: ignore[attr-defined]
+
+                app.action_back_dashboard()  # type: ignore[attr-defined]
+                await pilot.pause()
+                app.action_open_artifacts()  # type: ignore[attr-defined]
+                await pilot.pause()
+                artifact_ids = [item.artifact_id for item in artifact_browser_rows(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(artifact_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().artifact_browser_selected_id, artifact_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().artifact_browser_selected_id, artifact_ids[0])  # type: ignore[attr-defined]
+
+                app.action_back_dashboard()  # type: ignore[attr-defined]
+                await pilot.pause()
+                app._client._memory_entries["task_1"].append(  # type: ignore[attr-defined]
+                    {
+                        "memory_id": "scratch_2",
+                        "scope": "scratch",
+                        "namespace": "task.notes",
+                        "summary": "Second scratch note",
+                        "content": '{"note":"Follow-up"}',
+                        "provenance": {"task_id": "task_1", "run_id": "run_1"},
+                        "created_at": "2026-03-12T00:00:09Z",
+                        "updated_at": "2026-03-12T00:00:10Z",
+                        "source_run": "run_1",
+                        "confidence": 0.7,
+                    }
+                )
+                app.action_open_memory()  # type: ignore[attr-defined]
+                await pilot.pause()
+                memory_group_ids = [item.group_id for item in memory_scope_groups(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(memory_group_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_memory_group_id, memory_group_ids[-1])  # type: ignore[attr-defined]
+                app._store.dispatch({"kind": "ui", "focused_pane": "memory_entries"})  # type: ignore[attr-defined]
+                app.handle_memory_group_selected(memory_group_ids[0])  # type: ignore[attr-defined]
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                memory_ids = [item.memory_id for item in memory_entry_items(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(memory_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_memory_entry_id, memory_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_memory_entry_id, memory_ids[0])  # type: ignore[attr-defined]
+
+                app.action_back_dashboard()  # type: ignore[attr-defined]
+                await pilot.pause()
+                app.action_open_config()  # type: ignore[attr-defined]
+                await pilot.pause()
+                section_ids = [item.section_id for item in config_section_items(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(section_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_config_section_id, section_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_config_section_id, section_ids[0])  # type: ignore[attr-defined]
+
+                app.action_back_dashboard()  # type: ignore[attr-defined]
+                await pilot.pause()
+                app._client._diagnostics["task_1"].append(  # type: ignore[attr-defined]
+                    {
+                        "diagnostic_id": "diag_2",
+                        "task_id": "task_1",
+                        "run_id": "run_1",
+                        "kind": "policy_warning",
+                        "message": "A second diagnostic is available.",
+                        "created_at": "2026-03-12T00:00:10Z",
+                        "details": {"step": "policy.check", "code": "warn"},
+                    }
+                )
+                app.action_open_diagnostics()  # type: ignore[attr-defined]
+                await pilot.pause()
+                diagnostic_ids = [item.diagnostic_id for item in diagnostics_items(app._store.snapshot())]  # type: ignore[attr-defined]
+                self.assertGreaterEqual(len(diagnostic_ids), 2)
+                app.action_scroll_end()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_diagnostic_id, diagnostic_ids[-1])  # type: ignore[attr-defined]
+                app.action_scroll_home()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(app._store.snapshot().selected_diagnostic_id, diagnostic_ids[0])  # type: ignore[attr-defined]
+
     async def test_new_task_modal_submits_and_opens_task_detail(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from textual.widgets import TextArea
@@ -2659,6 +2789,113 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                     ("task_3", "run_3", "Focus on docs only."),
                 )
 
+    async def test_task_detail_command_input_submits_with_enter_key(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._client._tasks["task_3"] = {  # type: ignore[attr-defined]
+                    "task_id": "task_3",
+                    "run_id": "run_3",
+                    "status": "paused",
+                    "objective": "Review docs",
+                    "created_at": "2026-03-11T00:00:00Z",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "latest_summary": "Which area should I inspect?",
+                    "is_resumable": True,
+                    "pause_reason": "awaiting_user_input",
+                    "links": {"resume": "task.resume", "reply": "task.reply"},
+                }
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.list",
+                        "payload": {"result": {"tasks": list(app._client._tasks.values())}},  # type: ignore[attr-defined]
+                    }
+                )
+                app._store.dispatch({"kind": "ui", "selected_task_id": "task_3"})  # type: ignore[attr-defined]
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("i")
+                await pilot.pause()
+                command_input = app.screen.query_one(Input)
+                command_input.value = "reply Focus on docs only."
+                await pilot.press("enter")
+                await pilot.pause()
+                self.assertEqual(
+                    app._client.reply_calls[-1],  # type: ignore[attr-defined]
+                    ("task_3", "run_3", "Focus on docs only."),
+                )
+
+    async def test_task_command_completion_supports_extended_forms(self) -> None:
+        from apps.tui.local_agent_tui.app import AgentTUI
+        from textual.widgets import Input
+
+        with (
+            patch("apps.tui.local_agent_tui.app.ProtocolClient", _FakeProtocolClient),
+            patch("apps.tui.local_agent_tui.app.consume_task_stream", _fake_consume_task_stream),
+        ):
+            app = AgentTUI(
+                config_path="docs/architecture/runtime.example.toml",
+                task_id=None,
+                run_id=None,
+            )
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app._client._tasks["task_3"] = {  # type: ignore[attr-defined]
+                    "task_id": "task_3",
+                    "run_id": "run_3",
+                    "status": "paused",
+                    "objective": "Review docs",
+                    "created_at": "2026-03-11T00:00:00Z",
+                    "updated_at": "2026-03-11T00:00:00Z",
+                    "latest_summary": "Which area should I inspect?",
+                    "is_resumable": True,
+                    "pause_reason": "awaiting_user_input",
+                    "links": {"resume": "task.resume", "reply": "task.reply"},
+                }
+                app._dispatch_and_render(  # type: ignore[attr-defined]
+                    {
+                        "kind": "rpc",
+                        "name": "task.list",
+                        "payload": {"result": {"tasks": list(app._client._tasks.values())}},  # type: ignore[attr-defined]
+                    }
+                )
+                app._store.dispatch({"kind": "ui", "selected_task_id": "task_3"})  # type: ignore[attr-defined]
+                app._render_state()  # type: ignore[attr-defined]
+                await pilot.pause()
+                await pilot.press("enter")
+                await pilot.pause()
+                await pilot.press("i")
+                await pilot.pause()
+
+                command_input = app.screen.query_one(Input)
+                command_input.value = "reply "
+                app.handle_task_command_text_changed(command_input.value)  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().task_command_suggestion, "reply <message>")  # type: ignore[attr-defined]
+                app.complete_task_command_input()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(command_input.value, "reply <message>")
+
+                command_input.value = "cancel "
+                app.handle_task_command_text_changed(command_input.value)  # type: ignore[attr-defined]
+                self.assertEqual(app._store.snapshot().task_command_suggestion, "cancel [reason]")  # type: ignore[attr-defined]
+                app.complete_task_command_input()  # type: ignore[attr-defined]
+                await pilot.pause()
+                self.assertEqual(command_input.value, "cancel [reason]")
+
     async def test_task_detail_timeline_filter_and_search_prompts_update_state(self) -> None:
         from apps.tui.local_agent_tui.app import AgentTUI
         from apps.tui.local_agent_tui.store.selectors import task_timeline
@@ -2716,7 +2953,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 filter_input = app.screen.query_one(Input)
                 filter_input.value = "tools"
-                await filter_input.action_submit()
+                await pilot.press("enter")
                 await pilot.pause()
                 footer = app.screen.query_one("#task-detail-footer", Static)
                 self.assertIn("Timeline filter: tools", str(footer.visual))
@@ -2729,7 +2966,7 @@ class TuiAppSmokeTests(unittest.IsolatedAsyncioTestCase):
                 await pilot.pause()
                 search_input = app.screen.query_one(Input)
                 search_input.value = "shell"
-                await search_input.action_submit()
+                await pilot.press("enter")
                 await pilot.pause()
                 footer = app.screen.query_one("#task-detail-footer", Static)
                 self.assertIn("Search: shell", str(footer.visual))
